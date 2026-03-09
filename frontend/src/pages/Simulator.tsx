@@ -42,12 +42,12 @@ export default function Simulator() {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Telefone</label>
-            <input type="text" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-400"
+            <input type="text" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white outline-none focus:border-blue-400"
               value={phone} onChange={e => setPhone(e.target.value)} required />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Mensagem</label>
-            <textarea rows={3} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-400 resize-none"
+            <textarea rows={3} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white outline-none focus:border-blue-400 resize-none"
               placeholder="oi, quero saber sobre os filhotes" value={text} onChange={e => setText(e.target.value)} required />
           </div>
           {error && <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</div>}

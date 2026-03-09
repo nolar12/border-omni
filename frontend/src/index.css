@@ -1,6 +1,20 @@
 @import "tailwindcss";
 @plugin "daisyui";
 
+/* ─── Tema border_omni — fundo claro ───────────────────────────────────── */
+[data-theme="border_omni"] {
+  --color-base-100: #ffffff;
+  --color-base-200: #f8fafc;
+  --color-base-300: #f1f5f9;
+  --color-base-content: #1e293b;
+  --color-primary: #2563eb;
+  --color-primary-content: #ffffff;
+  --color-secondary: #64748b;
+  --color-secondary-content: #ffffff;
+  --color-neutral: #334155;
+  --color-neutral-content: #ffffff;
+}
+
 /* Reset root — Vite default override */
 #root {
   max-width: none !important;
@@ -73,3 +87,15 @@ html, body {
 
 /* ─── Mobile safe area ─────────────────────────────────────────────────── */
 .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+
+/* ─── Inputs sempre com texto escuro (evita herança de temas DaisyUI) ──── */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+textarea,
+select {
+  color: #111827 !important;
+  background-color: #ffffff !important;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af !important;
+}

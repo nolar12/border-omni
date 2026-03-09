@@ -25,7 +25,7 @@ export default function Login() {
   }
 
   return (
-    <div data-theme="border_omni" className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 p-4">
+    <div data-theme="light" className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="w-14 h-14 rounded-2xl bg-blue-500 flex items-center justify-center mx-auto mb-4 shadow-lg">
@@ -45,13 +45,13 @@ export default function Login() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
               <input type="email" placeholder="seu@email.com"
-                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition-colors"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white outline-none focus:border-blue-400 transition-colors"
                 value={email} onChange={e => setEmail(e.target.value)} required />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Senha</label>
               <input type="password" placeholder="••••••••"
-                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-blue-400 transition-colors"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white outline-none focus:border-blue-400 transition-colors"
                 value={password} onChange={e => setPassword(e.target.value)} required />
             </div>
             <button type="submit" disabled={loading}

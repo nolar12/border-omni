@@ -107,21 +107,31 @@ class QuickReplySerializer(serializers.ModelSerializer):
 # ─── Channels ────────────────────────────────────────────────────────────────
 
 class ChannelProviderSerializer(serializers.ModelSerializer):
+    access_token_masked = serializers.SerializerMethodField()
+
     class Meta:
         model = ChannelProvider
         fields = [
-            'id', 'provider', 'app_id', 'phone_number_id', 'business_account_id',
-            'instagram_account_id', 'page_id', 'webhook_verify_token', 'webhook_url',
-            'is_active', 'is_simulated', 'verification_status', 'last_verified_at',
-            'created_at', 'updated_at',
+            'id', 'name', 'provider', 'app_id', 'app_secret',
+            'access_token', 'access_token_masked',
+            'phone_number_id', 'business_account_id',
+            'instagram_account_id', 'page_id',
+            'webhook_verify_token', 'webhook_url',
+            'is_active', 'is_simulated', 'verification_status',
+            'last_verified_at', 'created_at', 'updated_at',
         ]
-        # access_token is write-only for security
-        extra_kwargs = {'access_token': {'write_only': True}}
+        extra_kwargs = {
+            'access_token': {'write_only': True, 'required': False, 'allow_blank': True},
+            'app_secret': {'write_only': True, 'required': False, 'allow_blank': True},
+        }
 
-    def get_fields(self):
-        fields = super().get_fields()
-        fields['access_token'] = serializers.CharField(write_only=True, required=False, allow_blank=True)
-        return fields
+    def get_access_token_masked(self, obj):
+        if not obj.access_token:
+            return ''
+        token = obj.access_token
+        if len(token) <= 12:
+            return '••••••••'
+        return token[:6] + '••••••••' + token[-4:]
 
 
 # ─── Plans / Subscriptions ────────────────────────────────────────────────────

@@ -6,6 +6,8 @@ class ChannelProvider(models.Model):
     PROVIDER_CHOICES = [
         ('whatsapp', 'WhatsApp'),
         ('instagram', 'Instagram'),
+        ('facebook', 'Facebook'),
+        ('messenger', 'Messenger'),
     ]
     VERIFICATION_CHOICES = [
         ('verified', 'Verified'),
@@ -17,8 +19,10 @@ class ChannelProvider(models.Model):
         Organization, on_delete=models.CASCADE,
         related_name='channel_providers', null=True, blank=True
     )
+    name = models.CharField(max_length=100, blank=True, default='')
     provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES, default='whatsapp')
     app_id = models.CharField(max_length=200, blank=True, default='')
+    app_secret = models.CharField(max_length=255, blank=True, default='')
     access_token = models.TextField(blank=True, default='')
     phone_number_id = models.CharField(max_length=200, blank=True, default='')
     business_account_id = models.CharField(max_length=200, blank=True, default='')

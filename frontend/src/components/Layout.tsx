@@ -15,7 +15,7 @@ export default function Layout() {
   const isFullHeight = FULLHEIGHT_ROUTES.some(r => location.pathname.startsWith(r));
 
   return (
-    <div data-theme="border_omni" className="flex h-screen overflow-hidden bg-base-100">
+    <div data-theme="border_omni" className="flex h-screen overflow-hidden bg-white">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       {/* Main area pushed right on desktop */}
@@ -30,7 +30,7 @@ export default function Layout() {
         ) : (
           /* Standard scrollable layout for other pages */
           <>
-            <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-4 md:p-6">
+            <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-4 md:p-6 bg-gray-50">
               <Outlet />
             </main>
             <div className="hidden md:block">

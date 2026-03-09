@@ -109,8 +109,12 @@ export interface QuickReply {
 
 export interface ChannelProvider {
   id: number;
-  provider: 'whatsapp' | 'instagram';
+  name: string;
+  provider: 'whatsapp' | 'instagram' | 'facebook' | 'messenger';
   app_id: string;
+  app_secret?: string;
+  access_token?: string;
+  access_token_masked: string;
   phone_number_id: string;
   business_account_id: string;
   instagram_account_id: string;
