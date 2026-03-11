@@ -2,6 +2,21 @@
 
 SaaS de qualificação de leads via WhatsApp com IA conversacional, atendimento humano e arquitetura omnichannel.
 
+curl -X POST "https://graph.facebook.com/v23.0/1040197165841892/messages" \
+  -H "Authorization: Bearer EAAR6WZCer1eYBQ64GhlEp02zFfnDJCIbfMutZAp8phxq21cUnvSwiBR0u6hxUccEyK7raST7sQ6oIAzZBsOZA3quufCb2ZCVOY8EzDnGQsBjsZBRjrbSNHDqYSQGVegTbmQBVDBSoSGIbCfk7RZCJSltPwINXwgw77yKzk2vTEzwqMSp8aeR63bNmnOrARtxa8xkgZDZD" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messaging_product": "whatsapp",
+    "to": "5521972121012",
+    "type": "text",
+    "text": {
+      "body": "Teste da WhatsApp Cloud API - Border Collie Sul"
+    }
+  }'
+
+EAAR6WZCer1eYBQ64GhlEp02zFfnDJCIbfMutZAp8phxq21cUnvSwiBR0u6hxUccEyK7raST7sQ6oIAzZBsOZA3quufCb2ZCVOY8EzDnGQsBjsZBRjrbSNHDqYSQGVegTbmQBVDBSoSGIbCfk7RZCJSltPwINXwgw77yKzk2vTEzwqMSp8aeR63bNmnOrARtxa8xkgZDZD
+
+
 ---
 
 ## Stack
@@ -55,7 +70,7 @@ Acesse:
 | Campo | Valor |
 |---|---|
 | Email | `marcello12souza@gmail.com` |
-| Senha | `admin123` |
+| Senha | `Cello1212!` |
 | DB Host | `localhost:3306` |
 | DB Name | `border_leads` |
 | DB User | `root` / `cello12` |
@@ -100,6 +115,88 @@ border-omni/
 ├── venv/                 # Ambiente Python
 └── start.sh              # Script de inicialização
 ```
+
+---
+
+## Webhook WhatsApp — Configuração com ngrok (desenvolvimento local)
+
+Use ngrok para expor o backend local na internet e configurar o webhook na Meta **antes de publicar no servidor definitivo**.
+
+### 1. Instalar e autenticar o ngrok
+
+> **ngrok já está instalado** em `~/.local/bin/ngrok` e autenticado nesta máquina. Pule para o passo 2.
+
+Em uma nova máquina:
+
+```bash
+# Baixar e instalar
+curl -sLo /tmp/ngrok.tgz https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
+tar xzf /tmp/ngrok.tgz -C ~/.local/bin/
+
+# Autenticar (token em https://dashboard.ngrok.com → Your Authtoken)
+~/.local/bin/ngrok config add-authtoken SEU_AUTHTOKEN_AQUI
+```
+
+### 2. Garantir que o backend está rodando
+
+```bash
+./start.sh start
+# ou apenas o backend:
+cd backend && python manage.py runserver 0.0.0.0:9022
+```
+
+### 3. Criar o túnel HTTPS
+
+```bash
+ngrok http 9022
+```
+
+O ngrok vai exibir algo como:
+
+```
+Forwarding  https://abc123.ngrok-free.app -> http://localhost:9022
+```
+
+Copie a URL `https://...ngrok-free.app` — ela será usada na Meta.
+
+### 4. Configurar o Webhook na Meta (developers.facebook.com)
+
+1. Acesse [developers.facebook.com](https://developers.facebook.com/apps/) → seu App
+2. Vá em **WhatsApp → Configuração**
+3. Na seção **Webhooks**, clique em **Editar**
+4. Preencha:
+
+| Campo | Valor |
+|---|---|
+| **URL de callback** | `https://nonredeemable-superseriously-keyla.ngrok-free.dev/api/webhooks/whatsapp/` |
+| **Token de verificação** | `border_omni_wh_secret` |
+
+5. Clique em **Verificar e salvar** — a Meta vai fazer um `GET` no endpoint e responde automaticamente com o `hub.challenge`
+6. Ative as assinaturas: `messages`, `message_deliveries`, `message_reads`
+
+### 5. Verificar se o webhook está respondendo
+
+```bash
+curl "https://nonredeemable-superseriously-keyla.ngrok-free.dev/api/webhooks/whatsapp/?hub.mode=subscribe&hub.verify_token=border_omni_wh_secret&hub.challenge=12345"
+# Resposta esperada: 12345  ✅
+```
+
+### 6. Reabrir o túnel (se o ngrok cair)
+
+```bash
+~/.local/bin/ngrok http 9022
+# A nova URL gerada deve ser atualizada no painel da Meta
+```
+
+### 7. Trocar para URL definitiva (após deploy AWS)
+
+Quando o backend estiver no ar em produção, volte em **WhatsApp → Configuração → Webhooks** na Meta e troque a URL do ngrok pela URL definitiva:
+
+```
+https://api.seudominio.com/api/webhooks/whatsapp/
+```
+
+> **Atenção:** O ngrok gratuito gera uma URL diferente a cada reinicialização. Se o ngrok cair, repita o passo 4 com a nova URL.
 
 ---
 

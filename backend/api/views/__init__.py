@@ -128,15 +128,21 @@ class LeadViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['post'])
     def assume(self, request, pk=None):
         lead = self.get_object()
+        org = lead.organization
         lead.is_ai_active = False
         lead.assigned_to = request.user
         lead.status = 'HANDOFF'
         lead.save(update_fields=['is_ai_active', 'assigned_to', 'status'])
-        conv, _ = Conversation.objects.get_or_create(lead=lead)
+        conv, _ = Conversation.objects.get_or_create(
+            lead=lead,
+            defaults={'organization': org, 'channel': 'whatsapp', 'state': 'active'},
+        )
+        agent_name = request.user.first_name or request.user.email
         Message.objects.create(
             conversation=conv,
+            organization=org,
             direction='OUT',
-            text=f"👋 Atendimento assumido por {request.user.first_name}.",
+            text=f"👋 Atendimento assumido por {agent_name}.",
         )
         return Response(LeadDetailSerializer(lead).data)
 
@@ -152,11 +158,32 @@ class LeadViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['post'])
     def send_message(self, request, pk=None):
         lead = self.get_object()
+        org = lead.organization
         text = request.data.get('text', '').strip()
         if not text:
             return Response({'detail': 'Texto obrigatório.'}, status=400)
-        conv, _ = Conversation.objects.get_or_create(lead=lead)
-        msg = Message.objects.create(conversation=conv, direction='OUT', text=text)
+        conv, _ = Conversation.objects.get_or_create(
+            lead=lead,
+            defaults={'organization': org, 'channel': 'whatsapp', 'state': 'active'},
+        )
+        msg = Message.objects.create(
+            conversation=conv,
+            organization=org,
+            direction='OUT',
+            text=text,
+        )
+        # Send via WhatsApp if channel is active
+        from apps.channels.models import ChannelProvider
+        channel_provider = ChannelProvider.objects.filter(
+            organization=org, provider='whatsapp', is_active=True,
+        ).first()
+        if channel_provider and channel_provider.access_token and channel_provider.phone_number_id:
+            _send_whatsapp_message(
+                phone_number_id=channel_provider.phone_number_id,
+                access_token=channel_provider.access_token,
+                to=lead.phone,
+                text=text,
+            )
         return Response(MessageSerializer(msg).data, status=201)
 
     @action(detail=True, methods=['post'])
@@ -196,7 +223,55 @@ class WhatsAppWebhookView(APIView):
 
     def post(self, request):
         data = request.data
-        org_key = request.headers.get('X-ORG-KEY') or data.get('organization_key')
+
+        # ── Detecta se é payload real da Meta ou payload do simulador interno ──
+        is_meta_payload = data.get('object') == 'whatsapp_business_account'
+
+        if is_meta_payload:
+            return self._handle_meta_payload(data)
+        else:
+            return self._handle_simulator_payload(data)
+
+    def _handle_meta_payload(self, data):
+        """Processa o payload real enviado pela Meta Cloud API."""
+        try:
+            entry = data['entry'][0]
+            changes = entry['changes'][0]
+            value = changes['value']
+
+            # Ignora notificações que não são mensagens (ex: status de entrega)
+            messages = value.get('messages')
+            if not messages:
+                return Response({'received': True}, status=200)
+
+            msg = messages[0]
+            msg_type = msg.get('type')
+
+            # Só processa mensagens de texto por enquanto
+            if msg_type != 'text':
+                return Response({'received': True, 'note': f'type {msg_type} ignored'}, status=200)
+
+            from_phone = msg['from']           # ex: "5511999999999"
+            text = msg['text']['body'].strip()
+            phone_number_id = value['metadata']['phone_number_id']
+
+            # Encontra o canal e a organização pelo phone_number_id
+            channel = ChannelProvider.objects.filter(phone_number_id=phone_number_id).first()
+            if not channel or not channel.organization:
+                return Response({'detail': 'Channel not found.'}, status=404)
+
+            org = channel.organization
+
+        except (KeyError, IndexError) as e:
+            import logging
+            logging.getLogger('apps').error(f'Webhook Meta payload error: {e} | data: {data}')
+            return Response({'received': True}, status=200)
+
+        return self._process_message(org=org, from_phone=from_phone, text=text, provider='WHATSAPP')
+
+    def _handle_simulator_payload(self, data):
+        """Processa o payload do simulador interno (testes sem Meta)."""
+        org_key = data.get('organization_key') or ''
         from_phone = data.get('from_phone', '')
         text = data.get('text', '').strip()
         provider = data.get('provider', 'WHATSAPP')
@@ -206,32 +281,101 @@ class WhatsAppWebhookView(APIView):
         except Organization.DoesNotExist:
             return Response({'detail': 'Organization not found.'}, status=404)
 
-        lead, created = Lead.objects.get_or_create(
+        return self._process_message(org=org, from_phone=from_phone, text=text, provider=provider)
+
+    def _process_message(self, org, from_phone, text, provider='WHATSAPP'):
+        """Lógica comum: cria/atualiza lead, roda QualifierEngine, salva e envia mensagens."""
+        from django.utils import timezone
+
+        channel = provider.lower() if provider else 'whatsapp'
+
+        lead, _ = Lead.objects.get_or_create(
             organization=org,
             phone=from_phone,
             defaults={
                 'status': 'NEW',
                 'source': 'OTHER',
-                'channels_used': provider,
+                'channels_used': channel,
                 'conversation_state': 'initial',
             }
         )
 
-        if not lead.is_ai_active:
-            conv, _ = Conversation.objects.get_or_create(lead=lead)
-            Message.objects.create(conversation=conv, direction='IN', text=text)
-            return Response({'received': True, 'replies': [], 'lead': _lead_summary(lead)})
+        conv, _ = Conversation.objects.get_or_create(
+            lead=lead,
+            defaults={
+                'organization': org,
+                'channel': channel,
+                'state': 'active',
+                'last_message_at': timezone.now(),
+            }
+        )
+        Conversation.objects.filter(pk=conv.pk).update(last_message_at=timezone.now())
 
-        conv, _ = Conversation.objects.get_or_create(lead=lead)
-        Message.objects.create(conversation=conv, direction='IN', text=text)
+        Message.objects.create(
+            conversation=conv,
+            organization=org,
+            direction='IN',
+            text=text,
+        )
+
+        if not lead.is_ai_active:
+            return Response({'received': True, 'replies': [], 'lead': _lead_summary(lead)})
 
         engine = QualifierEngine(lead)
         replies = engine.process_message(text)
 
+        # Busca o canal WhatsApp da organização para enviar as respostas
+        channel_provider = ChannelProvider.objects.filter(
+            organization=org,
+            provider='whatsapp',
+            is_active=True,
+        ).first()
+
         for reply in replies:
-            Message.objects.create(conversation=conv, direction='OUT', text=reply)
+            Message.objects.create(
+                conversation=conv,
+                organization=org,
+                direction='OUT',
+                text=reply,
+            )
+            # Envia de volta via WhatsApp API se tiver canal configurado
+            if channel_provider and channel_provider.access_token and channel_provider.phone_number_id:
+                _send_whatsapp_message(
+                    phone_number_id=channel_provider.phone_number_id,
+                    access_token=channel_provider.access_token,
+                    to=from_phone,
+                    text=reply,
+                )
 
         return Response({'received': True, 'replies': replies, 'lead': _lead_summary(lead)})
+
+
+def _send_whatsapp_message(phone_number_id, access_token, to, text):
+    """Envia mensagem de texto via WhatsApp Cloud API."""
+    import requests as http_requests
+    import logging
+    logger = logging.getLogger('apps')
+
+    url = f'https://graph.facebook.com/v22.0/{phone_number_id}/messages'
+    payload = {
+        'messaging_product': 'whatsapp',
+        'to': to,
+        'type': 'text',
+        'text': {'body': text, 'preview_url': False},
+    }
+    try:
+        resp = http_requests.post(
+            url,
+            json=payload,
+            headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/json'},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            logger.error(f'WhatsApp send error: {resp.status_code} {resp.text}')
+        else:
+            logger.info(f'WhatsApp message sent to {to}: {text[:50]}')
+    except Exception as e:
+        logger.error(f'WhatsApp send exception: {e}')
 
 
 def _lead_summary(lead):
