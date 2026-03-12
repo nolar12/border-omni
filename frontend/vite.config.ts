@@ -8,6 +8,7 @@ export default defineConfig({
     react(),
   ],
   server: {
+    port: 9021,
     proxy: {
       '/api': {
         target: 'http://localhost:9022',

@@ -187,6 +187,102 @@ class LeadViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(MessageSerializer(msg).data, status=201)
 
     @action(detail=True, methods=['post'])
+    def send_file(self, request, pk=None):
+        """Envia um arquivo (documento, imagem, PDF) via WhatsApp para o lead."""
+        from rest_framework.parsers import MultiPartParser, FormParser
+        from apps.channels.models import ChannelProvider
+        import requests as http_requests
+        import mimetypes
+        import logging
+        logger = logging.getLogger('apps')
+
+        lead = self.get_object()
+        org = lead.organization
+        uploaded = request.FILES.get('file')
+        caption = request.data.get('caption', '').strip()
+
+        if not uploaded:
+            return Response({'detail': 'Arquivo obrigatório.'}, status=400)
+
+        channel_provider = ChannelProvider.objects.filter(
+            organization=org, provider='whatsapp', is_active=True,
+        ).first()
+
+        if not channel_provider or not channel_provider.access_token or not channel_provider.phone_number_id:
+            return Response({'detail': 'Canal WhatsApp não configurado.'}, status=400)
+
+        mime_type = uploaded.content_type or mimetypes.guess_type(uploaded.name)[0] or 'application/octet-stream'
+        is_image = mime_type.startswith('image/')
+
+        # 1. Faz upload da mídia para o Meta e obtém media_id
+        upload_url = f'https://graph.facebook.com/v22.0/{channel_provider.phone_number_id}/media'
+        try:
+            upload_resp = http_requests.post(
+                upload_url,
+                headers={'Authorization': f'Bearer {channel_provider.access_token}'},
+                files={'file': (uploaded.name, uploaded.read(), mime_type)},
+                data={'messaging_product': 'whatsapp'},
+                timeout=30,
+            )
+            if upload_resp.status_code != 200:
+                logger.error(f'Media upload error: {upload_resp.status_code} {upload_resp.text}')
+                return Response({'detail': f'Erro no upload: {upload_resp.text}'}, status=502)
+
+            media_id = upload_resp.json().get('id')
+        except Exception as e:
+            logger.error(f'Media upload exception: {e}')
+            return Response({'detail': f'Erro ao enviar arquivo: {str(e)}'}, status=500)
+
+        # 2. Envia a mensagem com a mídia para o lead
+        msg_url = f'https://graph.facebook.com/v22.0/{channel_provider.phone_number_id}/messages'
+        if is_image:
+            media_payload = {
+                'messaging_product': 'whatsapp',
+                'to': lead.phone,
+                'type': 'image',
+                'image': {'id': media_id, 'caption': caption},
+            }
+        else:
+            media_payload = {
+                'messaging_product': 'whatsapp',
+                'to': lead.phone,
+                'type': 'document',
+                'document': {'id': media_id, 'caption': caption, 'filename': uploaded.name},
+            }
+
+        try:
+            send_resp = http_requests.post(
+                msg_url,
+                json=media_payload,
+                headers={
+                    'Authorization': f'Bearer {channel_provider.access_token}',
+                    'Content-Type': 'application/json',
+                },
+                timeout=15,
+            )
+            if send_resp.status_code != 200:
+                logger.error(f'Media send error: {send_resp.status_code} {send_resp.text}')
+                return Response({'detail': f'Erro ao enviar: {send_resp.text}'}, status=502)
+        except Exception as e:
+            return Response({'detail': f'Erro ao enviar arquivo: {str(e)}'}, status=500)
+
+        # 3. Salva no banco como mensagem OUT
+        conv, _ = Conversation.objects.get_or_create(
+            lead=lead,
+            defaults={'organization': org, 'channel': 'whatsapp', 'state': 'active'},
+        )
+        label = caption or uploaded.name
+        msg_text = f'📎 {uploaded.name}' + (f' — {caption}' if caption else '')
+        msg = Message.objects.create(
+            conversation=conv,
+            organization=org,
+            direction='OUT',
+            text=msg_text,
+        )
+        logger.info(f'File sent to {lead.phone}: {uploaded.name}')
+        return Response(MessageSerializer(msg).data, status=201)
+
+    @action(detail=True, methods=['post'])
     def add_note(self, request, pk=None):
         lead = self.get_object()
         text = request.data.get('text', '').strip()
@@ -216,9 +312,10 @@ class WhatsAppWebhookView(APIView):
 
     def get(self, request):
         verify_token = request.query_params.get('hub.verify_token')
-        challenge = request.query_params.get('hub.challenge')
+        challenge = request.query_params.get('hub.challenge', '')
         if ChannelProvider.objects.filter(webhook_verify_token=verify_token).exists():
-            return Response(int(challenge))
+            from django.http import HttpResponse
+            return HttpResponse(challenge, content_type='text/plain', status=200)
         return Response({'detail': 'Invalid verify token.'}, status=403)
 
     def post(self, request):
@@ -246,28 +343,107 @@ class WhatsAppWebhookView(APIView):
 
             msg = messages[0]
             msg_type = msg.get('type')
-
-            # Só processa mensagens de texto por enquanto
-            if msg_type != 'text':
-                return Response({'received': True, 'note': f'type {msg_type} ignored'}, status=200)
-
-            from_phone = msg['from']           # ex: "5511999999999"
-            text = msg['text']['body'].strip()
+            from_phone = msg['from']
             phone_number_id = value['metadata']['phone_number_id']
 
-            # Encontra o canal e a organização pelo phone_number_id
+            contacts = value.get('contacts', [])
+            contact_name = contacts[0].get('profile', {}).get('name', '') if contacts else ''
+
             channel = ChannelProvider.objects.filter(phone_number_id=phone_number_id).first()
             if not channel or not channel.organization:
                 return Response({'detail': 'Channel not found.'}, status=404)
 
             org = channel.organization
 
+            # ── Mídia recebida (imagem, documento, áudio, vídeo) ──────────────
+            MEDIA_TYPES = {'image', 'document', 'audio', 'video', 'sticker'}
+            if msg_type in MEDIA_TYPES:
+                return self._handle_incoming_media(
+                    org=org, from_phone=from_phone, msg=msg,
+                    msg_type=msg_type, channel=channel, contact_name=contact_name,
+                )
+
+            # ── Texto ─────────────────────────────────────────────────────────
+            if msg_type != 'text':
+                return Response({'received': True, 'note': f'type {msg_type} ignored'}, status=200)
+
+            text = msg['text']['body'].strip()
+
         except (KeyError, IndexError) as e:
             import logging
             logging.getLogger('apps').error(f'Webhook Meta payload error: {e} | data: {data}')
             return Response({'received': True}, status=200)
 
-        return self._process_message(org=org, from_phone=from_phone, text=text, provider='WHATSAPP')
+        return self._process_message(org=org, from_phone=from_phone, text=text, provider='WHATSAPP', contact_name=contact_name)
+
+    def _handle_incoming_media(self, org, from_phone, msg, msg_type, channel, contact_name=''):
+        """Salva mídia recebida pelo cliente (imagem, doc, áudio, vídeo) como mensagem IN."""
+        import requests as http_requests
+        import logging
+        from django.utils import timezone
+        logger = logging.getLogger('apps')
+
+        media_data = msg.get(msg_type, {})
+        media_id   = media_data.get('id', '')
+        caption    = media_data.get('caption', '')
+        filename   = media_data.get('filename', '')
+
+        # Ícone por tipo
+        icons = {'image': '🖼️', 'document': '📄', 'audio': '🎵', 'video': '🎥', 'sticker': '🎭'}
+        icon  = icons.get(msg_type, '📎')
+
+        # Busca a URL de download temporária no Meta
+        media_url = ''
+        if media_id and channel.access_token:
+            try:
+                url_resp = http_requests.get(
+                    f'https://graph.facebook.com/v22.0/{media_id}',
+                    headers={'Authorization': f'Bearer {channel.access_token}'},
+                    timeout=10,
+                )
+                if url_resp.status_code == 200:
+                    media_url = url_resp.json().get('url', '')
+            except Exception as e:
+                logger.warning(f'Could not fetch media URL: {e}')
+
+        # Monta o texto da mensagem
+        label = caption or filename or msg_type
+        if media_url:
+            text = f'{icon} {label}\n{media_url}'
+        else:
+            text = f'{icon} {label or msg_type.capitalize()}'
+
+        # Cria/busca lead e conversa
+        lead, created = Lead.objects.get_or_create(
+            organization=org,
+            phone=from_phone,
+            defaults={
+                'status': 'NEW',
+                'source': 'OTHER',
+                'channels_used': 'whatsapp',
+                'conversation_state': 'initial',
+                'full_name': contact_name or '',
+            }
+        )
+        if not created and contact_name and not lead.full_name:
+            lead.full_name = contact_name
+            lead.save(update_fields=['full_name'])
+
+        conv, _ = Conversation.objects.get_or_create(
+            lead=lead,
+            defaults={'organization': org, 'channel': 'whatsapp', 'state': 'active'},
+        )
+        Conversation.objects.filter(pk=conv.pk).update(last_message_at=timezone.now())
+
+        Message.objects.create(
+            conversation=conv,
+            organization=org,
+            direction='IN',
+            text=text,
+            provider_message_id=media_id,
+        )
+        logger.info(f'Incoming media [{msg_type}] from {from_phone}: {label}')
+        return Response({'received': True, 'type': msg_type})
 
     def _handle_simulator_payload(self, data):
         """Processa o payload do simulador interno (testes sem Meta)."""
@@ -283,13 +459,13 @@ class WhatsAppWebhookView(APIView):
 
         return self._process_message(org=org, from_phone=from_phone, text=text, provider=provider)
 
-    def _process_message(self, org, from_phone, text, provider='WHATSAPP'):
+    def _process_message(self, org, from_phone, text, provider='WHATSAPP', contact_name=''):
         """Lógica comum: cria/atualiza lead, roda QualifierEngine, salva e envia mensagens."""
         from django.utils import timezone
 
         channel = provider.lower() if provider else 'whatsapp'
 
-        lead, _ = Lead.objects.get_or_create(
+        lead, created = Lead.objects.get_or_create(
             organization=org,
             phone=from_phone,
             defaults={
@@ -297,8 +473,14 @@ class WhatsAppWebhookView(APIView):
                 'source': 'OTHER',
                 'channels_used': channel,
                 'conversation_state': 'initial',
+                'full_name': contact_name or '',
             }
         )
+
+        # Atualiza o nome se ainda não tinha e o Meta enviou agora
+        if not created and contact_name and not lead.full_name:
+            lead.full_name = contact_name
+            lead.save(update_fields=['full_name'])
 
         conv, _ = Conversation.objects.get_or_create(
             lead=lead,

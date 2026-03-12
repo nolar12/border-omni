@@ -49,6 +49,48 @@ function LeadRow({ lead, isActive, onClick }: { lead: LeadListItem; isActive: bo
   );
 }
 
+// ─── Message Content renderer (texto, imagem, documento) ─────────────────────
+
+function MessageContent({ text }: { text: string }) {
+  // Detecta padrão: "🖼️ legenda\nhttps://..." ou "📄 legenda\nhttps://..."
+  const lines = text.split('\n');
+  const firstLine = lines[0] || '';
+  const secondLine = lines[1] || '';
+  const isMediaMsg = secondLine.startsWith('https://') && /[🖼️📄🎵🎥🎭📎]/.test(firstLine);
+
+  if (isMediaMsg) {
+    const isImage = firstLine.startsWith('🖼️');
+    return (
+      <div className="space-y-1">
+        {isImage ? (
+          <a href={secondLine} target="_blank" rel="noopener noreferrer">
+            <img
+              src={secondLine}
+              alt={firstLine}
+              className="max-w-[200px] rounded-lg border border-white/20 cursor-pointer hover:opacity-90"
+              onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+            />
+          </a>
+        ) : (
+          <a
+            href={secondLine}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 bg-white/20 rounded-lg px-3 py-2 hover:bg-white/30 transition-colors"
+          >
+            <span className="text-lg">{firstLine.slice(0, 2)}</span>
+            <span className="text-sm underline truncate max-w-[160px]">
+              {firstLine.slice(2).trim() || 'Abrir arquivo'}
+            </span>
+          </a>
+        )}
+      </div>
+    );
+  }
+
+  return <p className="text-sm whitespace-pre-wrap break-words">{text}</p>;
+}
+
 // ─── Chat Panel (right column) ───────────────────────────────────────────────
 
 function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
@@ -60,6 +102,10 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
   const [assuming, setAssuming] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [showQR, setShowQR] = useState(false);
+  const [sendingFile, setSendingFile] = useState(false);
+  const [fileCaption, setFileCaption] = useState('');
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<'chat' | 'info' | 'notes'>('chat');
   const chatEndRef = useRef<HTMLDivElement>(null);
   const user = authService.getCurrentUser();
@@ -108,6 +154,25 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
       setMsgText('');
     } finally {
       setSending(false);
+    }
+  }
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) setPendingFile(file);
+    e.target.value = '';
+  }
+
+  async function handleSendFile() {
+    if (!lead || !pendingFile) return;
+    setSendingFile(true);
+    try {
+      const msg = await leadsService.sendFile(lead.id, pendingFile, fileCaption);
+      setMessages(prev => [...prev, msg]);
+      setPendingFile(null);
+      setFileCaption('');
+    } finally {
+      setSendingFile(false);
     }
   }
 
@@ -207,7 +272,7 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
             {messages.map(msg => (
               <div key={msg.id} className={`flex ${msg.direction === 'OUT' ? 'justify-end' : 'justify-start'}`}>
                 <div className={msg.direction === 'OUT' ? 'chat-bubble-out' : 'chat-bubble-in'}>
-                  <p className="text-sm whitespace-pre-wrap break-words">{msg.text}</p>
+                  <MessageContent text={msg.text} />
                   <p className={`text-[10px] mt-1 opacity-60 ${msg.direction === 'OUT' ? 'text-right' : ''}`}>
                     {new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                   </p>
@@ -219,39 +284,107 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
 
           {/* Input area */}
           {!lead.is_ai_active ? (
-            <div className="border-t border-gray-100 bg-white px-3 py-2 flex gap-2 flex-shrink-0">
-              <button
-                onClick={() => setShowQR(true)}
-                title="Respostas rápidas"
-                className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                </svg>
-              </button>
-              <input
-                type="text"
-                placeholder="Digite sua mensagem..."
-                className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-blue-400 transition-colors"
-                value={msgText}
-                onChange={e => setMsgText(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-              />
-              <button
-                onClick={handleSend}
-                disabled={sending || !msgText.trim()}
-                className="flex items-center justify-center w-9 h-9 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0"
-              >
-                {sending
-                  ? <span className="loading loading-spinner loading-xs" />
-                  : (
-                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <line x1="22" y1="2" x2="11" y2="13"/>
-                      <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            <div className="border-t border-gray-100 bg-white flex-shrink-0">
+
+              {/* Preview de arquivo pendente */}
+              {pendingFile && (
+                <div className="flex items-center gap-2 px-3 pt-2 pb-1">
+                  <div className="flex-1 flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+                    <svg className="w-4 h-4 text-blue-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
                     </svg>
-                  )
-                }
-              </button>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-800 truncate">{pendingFile.name}</p>
+                      <p className="text-xs text-gray-400">{(pendingFile.size / 1024).toFixed(0)} KB</p>
+                    </div>
+                    <button onClick={() => setPendingFile(null)} className="text-gray-400 hover:text-red-500 flex-shrink-0">
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+                  </div>
+                  <button
+                    onClick={handleSendFile}
+                    disabled={sendingFile}
+                    className="flex items-center justify-center w-9 h-9 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0"
+                  >
+                    {sendingFile
+                      ? <span className="loading loading-spinner loading-xs" />
+                      : <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    }
+                  </button>
+                </div>
+              )}
+
+              {/* Legenda opcional para o arquivo */}
+              {pendingFile && (
+                <div className="px-3 pb-1">
+                  <input
+                    type="text"
+                    placeholder="Legenda (opcional)..."
+                    className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 transition-colors"
+                    value={fileCaption}
+                    onChange={e => setFileCaption(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleSendFile()}
+                  />
+                </div>
+              )}
+
+              {/* Barra principal de input */}
+              <div className="px-3 py-2 flex gap-2">
+                {/* Respostas rápidas */}
+                <button
+                  onClick={() => setShowQR(true)}
+                  title="Respostas rápidas"
+                  className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                  </svg>
+                </button>
+
+                {/* Anexar arquivo */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Enviar arquivo / documento"
+                  className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                  </svg>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.gif,.webp,.mp4,.mp3"
+                  onChange={handleFileSelect}
+                />
+
+                <input
+                  type="text"
+                  placeholder="Digite sua mensagem..."
+                  className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-blue-400 transition-colors"
+                  value={msgText}
+                  onChange={e => setMsgText(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={sending || !msgText.trim()}
+                  className="flex items-center justify-center w-9 h-9 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0"
+                >
+                  {sending
+                    ? <span className="loading loading-spinner loading-xs" />
+                    : (
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                        <line x1="22" y1="2" x2="11" y2="13"/>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                      </svg>
+                    )
+                  }
+                </button>
+              </div>
             </div>
           ) : (
             <div className="border-t border-gray-100 bg-blue-50 px-4 py-2.5 flex items-center gap-2 flex-shrink-0">

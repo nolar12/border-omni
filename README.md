@@ -2,20 +2,39 @@
 
 SaaS de qualificação de leads via WhatsApp com IA conversacional, atendimento humano e arquitetura omnichannel.
 
-curl -X POST "https://graph.facebook.com/v23.0/1040197165841892/messages" \
-  -H "Authorization: Bearer EAAR6WZCer1eYBQ64GhlEp02zFfnDJCIbfMutZAp8phxq21cUnvSwiBR0u6hxUccEyK7raST7sQ6oIAzZBsOZA3quufCb2ZCVOY8EzDnGQsBjsZBRjrbSNHDqYSQGVegTbmQBVDBSoSGIbCfk7RZCJSltPwINXwgw77yKzk2vTEzwqMSp8aeR63bNmnOrARtxa8xkgZDZD" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messaging_product": "whatsapp",
-    "to": "5521972121012",
-    "type": "text",
-    "text": {
-      "body": "Teste da WhatsApp Cloud API - Border Collie Sul"
-    }
-  }'
+---
 
-EAAR6WZCer1eYBQ64GhlEp02zFfnDJCIbfMutZAp8phxq21cUnvSwiBR0u6hxUccEyK7raST7sQ6oIAzZBsOZA3quufCb2ZCVOY8EzDnGQsBjsZBRjrbSNHDqYSQGVegTbmQBVDBSoSGIbCfk7RZCJSltPwINXwgw77yKzk2vTEzwqMSp8aeR63bNmnOrARtxa8xkgZDZD
+## 🚀 Iniciar o sistema (desenvolvimento local)
 
+### Opção 1 — Watchdog (recomendado)
+O watchdog inicia o backend e o ngrok automaticamente e os reinicia se caírem.
+
+```bash
+# Na raiz do projeto:
+nohup bash watchdog.sh &
+
+# Acompanhar o log:
+tail -f /tmp/border_omni_watchdog.log
+```
+
+### Opção 2 — Manual
+```bash
+# Terminal 1 — Backend
+cd backend && source ../venv/bin/activate
+python manage.py runserver 0.0.0.0:9022
+
+# Terminal 2 — Frontend
+cd frontend && npm run dev
+
+# Terminal 3 — Ngrok (expor webhook)
+ngrok http 9022
+```
+
+### Parar o watchdog
+```bash
+pkill -f watchdog.sh
+pkill -f "runserver 0.0.0.0:9022"
+```
 
 ---
 

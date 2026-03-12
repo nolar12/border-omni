@@ -49,6 +49,16 @@ export const leadsService = {
     return data;
   },
 
+  async sendFile(id: number, file: File, caption?: string): Promise<Message> {
+    const form = new FormData();
+    form.append('file', file);
+    if (caption) form.append('caption', caption);
+    const { data } = await api.post<Message>(`/leads/${id}/send_file/`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+
   async addNote(id: number, text: string): Promise<Note> {
     const { data } = await api.post<Note>(`/leads/${id}/add_note/`, { text });
     return data;

@@ -2,6 +2,7 @@ STATE_INITIAL = 'initial'
 STATE_Q1_BUDGET = 'q1_budget'
 STATE_Q2_TIMELINE = 'q2_timeline'
 STATE_Q3_HOUSING = 'q3_housing'
+STATE_Q4_NAME = 'q4_name'
 STATE_COMPLETE = 'complete'
 
 STATE_ORDER = [
@@ -9,6 +10,7 @@ STATE_ORDER = [
     STATE_Q1_BUDGET,
     STATE_Q2_TIMELINE,
     STATE_Q3_HOUSING,
+    STATE_Q4_NAME,
     STATE_COMPLETE,
 ]
 
@@ -46,9 +48,13 @@ MESSAGES = {
         "4️⃣ Ainda estou pesquisando, sem prazo definido"
     ),
     STATE_Q3_HOUSING: (
-        "Última pergunta! 🏠 Você mora em *casa* ou *apartamento*?\n\n"
+        "Quase lá! 🏠 Você mora em *casa* ou *apartamento*?\n\n"
         "O Border Collie é uma raça de alta energia e precisa de espaço para se exercitar. "
         "Isso me ajuda a entender qual perfil de filhote combina melhor com você."
+    ),
+    STATE_Q4_NAME: (
+        "Última pergunta, prometo! 😊\n\n"
+        "*Qual é o seu nome?*"
     ),
     STATE_COMPLETE: (
         "✅ *Perfeito, obrigado pelas informações!*\n\n"
@@ -59,9 +65,10 @@ MESSAGES = {
 }
 
 NEXT_STATE = {
-    STATE_INITIAL:   STATE_Q2_TIMELINE,
-    STATE_Q1_BUDGET: STATE_Q2_TIMELINE,
+    STATE_INITIAL:     STATE_Q2_TIMELINE,
+    STATE_Q1_BUDGET:   STATE_Q2_TIMELINE,
     STATE_Q2_TIMELINE: STATE_Q3_HOUSING,
-    STATE_Q3_HOUSING:  STATE_COMPLETE,
+    STATE_Q3_HOUSING:  STATE_Q4_NAME,
+    STATE_Q4_NAME:     STATE_COMPLETE,
     STATE_COMPLETE:    STATE_COMPLETE,
 }

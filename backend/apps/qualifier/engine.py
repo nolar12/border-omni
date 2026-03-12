@@ -1,7 +1,7 @@
 import logging
 from .states import (
     STATE_INITIAL, STATE_Q1_BUDGET, STATE_Q2_TIMELINE, STATE_Q3_HOUSING,
-    STATE_COMPLETE, MESSAGES, NEXT_STATE,
+    STATE_Q4_NAME, STATE_COMPLETE, MESSAGES, NEXT_STATE,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,12 +27,25 @@ class QualifierEngine:
         self._parse_and_update_lead(state, text)
 
         next_state = NEXT_STATE.get(state, STATE_COMPLETE)
+
+        # Pula a pergunta de nome se o lead já tem nome registrado
+        if next_state == STATE_Q4_NAME and self.lead.full_name:
+            next_state = STATE_COMPLETE
+
         self.lead.conversation_state = next_state
 
         if next_state == STATE_COMPLETE:
             self._finalize()
             self.lead.save()
-            return [MESSAGES[STATE_COMPLETE]]
+            first_name = (self.lead.full_name or '').split()[0] if self.lead.full_name else ''
+            greeting = f"✅ *Perfeito, {first_name}! Obrigado pelas informações!*" if first_name else "✅ *Perfeito, obrigado pelas informações!*"
+            complete_msg = (
+                f"{greeting}\n\n"
+                "Um dos nossos especialistas vai entrar em contato em breve para apresentar "
+                "os filhotes disponíveis e tirar todas as suas dúvidas. 🐾\n\n"
+                "_Border Collie Sul — criação responsável com procedência._"
+            )
+            return [complete_msg]
 
         self.lead.save()
         return [MESSAGES[next_state]]
@@ -63,6 +76,11 @@ class QualifierEngine:
                 self.lead.housing_type = 'HOUSE'
             elif any(w in lower for w in ['apart', 'apto', 'flat', 'studio', 'condomínio', 'condominio']):
                 self.lead.housing_type = 'APT'
+
+        elif state == STATE_Q4_NAME:
+            name = text.strip().title()
+            if len(name) >= 2:
+                self.lead.full_name = name
 
     def _finalize(self):
         self.lead.score = self._calculate_score()
