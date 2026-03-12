@@ -14,6 +14,10 @@ export default defineConfig({
         target: 'http://localhost:9022',
         changeOrigin: true,
       },
+      '/media': {
+        target: 'http://localhost:9022',
+        changeOrigin: true,
+      },
     },
   },
 });

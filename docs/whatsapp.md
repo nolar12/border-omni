@@ -1,33 +1,16 @@
-# Configuração WhatsApp — Border Omni
+# WhatsApp Cloud API — Border Omni
 
-## Canal registrado
+## Canal configurado
 
 | Campo | Valor |
 |---|---|
 | App ID | `1260435322688998` |
 | Phone Number ID | `1040197165841892` |
-| Business Account ID | `2133277890774145` |
-| Webhook Token | `border_omni_wh_secret` |
+| Business Account ID (WABA) | `2133277890774145` |
+| Webhook Verify Token | `border_omni_wh_secret` |
 | Organização | Border Collie Sul |
-| Status | pending (verificação pendente) |
-
----
-
-## URL do Webhook
-
-Para receber mensagens do WhatsApp, o Meta precisa de uma URL pública HTTPS apontando para:
-
-```
-https://SEU_DOMINIO/api/webhooks/whatsapp/
-```
-
-Em desenvolvimento, use um túnel HTTPS como [ngrok](https://ngrok.com):
-
-```bash
-ngrok http 9022
-# Copia a URL https://xxxx.ngrok.io
-# Configura como: https://xxxx.ngrok.io/api/webhooks/whatsapp/
-```
+| System User | `borderomniapi` |
+| Token type | System User Token (permanente) |
 
 ---
 
@@ -38,95 +21,241 @@ ngrok http 9022
 3. Em **Webhook**, clique **Editar**:
    - **URL de Callback**: `https://SEU_DOMINIO/api/webhooks/whatsapp/`
    - **Token de Verificação**: `border_omni_wh_secret`
-4. Assine os eventos: **messages**
+4. Assine o evento: **messages**
 5. Clique **Verificar e Salvar**
 
 ---
 
-## Verificação do Webhook (GET)
+## Desenvolvimento local com ngrok
 
-O Meta faz uma requisição GET para verificar o webhook:
+O ngrok cria um túnel HTTPS público apontando para `localhost:9022`.
 
+### Iniciar (forma automática — recomendado)
+```bash
+cd ~/Cathedral/NOLAR/WWW7/border_omni
+nohup bash watchdog.sh &
 ```
-GET /api/webhooks/whatsapp/?hub.mode=subscribe&hub.verify_token=border_omni_wh_secret&hub.challenge=12345
+O watchdog inicia o backend **e** o ngrok automaticamente, e reinicia se qualquer um cair.
+
+### Iniciar manualmente
+```bash
+ngrok http 9022
 ```
 
-O backend retorna o `hub.challenge` se o token bater com algum `ChannelProvider`.
+### URL atual (ngrok gratuito com domínio fixo)
+```
+https://nonredeemable-superseriously-keyla.ngrok-free.dev
+```
+
+### Webhook completo para configurar no Meta
+```
+https://nonredeemable-superseriously-keyla.ngrok-free.dev/api/webhooks/whatsapp/
+```
+
+### Testar se o webhook responde
+```bash
+curl "https://nonredeemable-superseriously-keyla.ngrok-free.dev/api/webhooks/whatsapp/\
+?hub.mode=subscribe\
+&hub.verify_token=border_omni_wh_secret\
+&hub.challenge=1234567890"
+# Deve retornar: 1234567890
+```
 
 ---
 
-## Formato da mensagem inbound (simulado)
+## Subscription do App à WABA
 
-O simulador de webhook pode ser acessado em `http://localhost:9021/simulator` ou via curl:
+Para o Meta enviar eventos de mensagens ao webhook, o App precisa estar inscrito na WABA:
 
 ```bash
-curl -X POST http://localhost:9022/api/webhooks/whatsapp/ \
+curl -X POST \
+  "https://graph.facebook.com/v22.0/2133277890774145/subscribed_apps" \
+  -H "Authorization: Bearer SEU_TOKEN_AQUI"
+```
+
+Verificar inscrição atual:
+```bash
+curl "https://graph.facebook.com/v22.0/2133277890774145/subscribed_apps" \
+  -H "Authorization: Bearer SEU_TOKEN_AQUI"
+```
+
+---
+
+## Envio de mídia no fluxo automatizado (A/B Test)
+
+O QualifierEngine envia mídia (vídeo ou imagem) como **primeiro passo** do fluxo, antes das mensagens de texto. O backend chama `_send_whatsapp_media()` em `api/views/__init__.py`.
+
+```bash
+# Enviar imagem via URL pública
+curl -X POST "https://graph.facebook.com/v22.0/1040197165841892/messages" \
+  -H "Authorization: Bearer SEU_TOKEN_AQUI" \
   -H "Content-Type: application/json" \
-  -H "X-ORG-KEY: efc0e41b-7bec-4cbc-9f29-3c4b08e8a168" \
   -d '{
-    "from_phone": "+5551999888777",
-    "text": "oi quero um filhote",
-    "provider": "WHATSAPP"
+    "messaging_product": "whatsapp",
+    "to": "5521972121012",
+    "type": "image",
+    "image": {
+      "link": "https://SEU_DOMINIO/media/ab_test/variant_b.png",
+      "caption": "Legenda da imagem aqui"
+    }
+  }'
+
+# Enviar vídeo via URL pública
+curl -X POST "https://graph.facebook.com/v22.0/1040197165841892/messages" \
+  -H "Authorization: Bearer SEU_TOKEN_AQUI" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messaging_product": "whatsapp",
+    "to": "5521972121012",
+    "type": "video",
+    "video": {
+      "link": "https://SEU_DOMINIO/media/ab_test/variant_a.mp4",
+      "caption": "Legenda do vídeo aqui"
+    }
   }'
 ```
 
-> A **API Key** da organização aparece na saída do `./start.sh start` ou no comando:
-> ```bash
-> cd backend && source ../venv/bin/activate && python manage.py shell -c "from apps.core.models import Organization; print(Organization.objects.first().api_key)"
-> ```
+> **Atenção:** A URL da mídia deve ser **pública e acessível pelo Meta**. Em desenvolvimento local, use o ngrok para expor o servidor.
 
 ---
 
-## Mensagem real do Meta (formato oficial)
+## Envio de mensagem de texto via API
 
-Para integração real com a WhatsApp Business API, o formato recebido é diferente. O webhook precisará ser adaptado para parsear o payload oficial:
+```bash
+curl -X POST "https://graph.facebook.com/v22.0/1040197165841892/messages" \
+  -H "Authorization: Bearer SEU_TOKEN_AQUI" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messaging_product": "whatsapp",
+    "to": "5521972121012",
+    "type": "text",
+    "text": { "body": "Olá! Mensagem de teste." }
+  }'
+```
 
+---
+
+## Formatos de webhook recebidos
+
+### Mensagem de texto
 ```json
 {
   "object": "whatsapp_business_account",
   "entry": [{
-    "id": "BUSINESS_ACCOUNT_ID",
     "changes": [{
       "value": {
-        "messaging_product": "whatsapp",
+        "metadata": { "phone_number_id": "1040197165841892" },
+        "contacts": [{ "profile": { "name": "Nome do Cliente" } }],
         "messages": [{
-          "from": "5551999888777",
-          "id": "wamid.xxx",
-          "text": { "body": "oi quero um filhote" },
+          "from": "5521972121012",
           "type": "text",
-          "timestamp": "1234567890"
+          "text": { "body": "Oi quero um filhote" }
         }]
-      },
-      "field": "messages"
+      }
     }]
   }]
 }
 ```
 
-**TODO:** Adaptar `WhatsAppWebhookView.post()` para processar o payload oficial do Meta além do formato simplificado atual.
+### Imagem recebida
+```json
+{
+  "messages": [{
+    "type": "image",
+    "image": {
+      "id": "MEDIA_ID",
+      "mime_type": "image/jpeg",
+      "caption": "legenda opcional"
+    }
+  }]
+}
+```
+
+### Documento recebido
+```json
+{
+  "messages": [{
+    "type": "document",
+    "document": {
+      "id": "MEDIA_ID",
+      "mime_type": "application/pdf",
+      "filename": "contrato.pdf"
+    }
+  }]
+}
+```
+
+> **Atenção:** O WhatsApp às vezes envia imagens como `type: "document"` quando o usuário encaminha como arquivo. O backend detecta o tipo real pelo `mime_type` e pela extensão do `filename`.
 
 ---
 
-## Envio de mensagens (API oficial)
+## Tipos de mídia suportados
 
-Para enviar mensagens de volta ao usuário via API oficial:
+| Tipo | Extensões | Limite Meta |
+|---|---|---|
+| Imagem | jpg, jpeg, png, gif, webp | 5 MB |
+| Vídeo | mp4, mov, 3gp | 16 MB |
+| Áudio | mp3, ogg, aac, m4a, opus | 16 MB |
+| Documento | pdf, doc, xls, ppt, txt | 100 MB |
 
-```python
-import requests
+---
 
-def send_whatsapp_message(phone_number_id, access_token, to, text):
-    url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": "text",
-        "text": {"body": text}
-    }
-    return requests.post(url, json=payload, headers=headers)
+## Como o backend processa mídia recebida
+
+1. Webhook chega com `type: "image"` (ou document/video/audio)
+2. Backend chama `GET https://graph.facebook.com/v22.0/{media_id}` → obtém URL temporária
+3. Backend baixa o arquivo usando o access_token do canal
+4. Arquivo salvo em `backend/media/whatsapp/{uuid}_{filename}`
+5. Mensagem salva no banco com texto `🖼️ legenda\n/media/whatsapp/arquivo.jpg`
+6. Frontend converte `/media/...` para `http://localhost:9022/media/...` e exibe
+
+---
+
+## Token de acesso
+
+O token deve ser de um **System User** com permissões:
+- `whatsapp_business_messaging`
+- `whatsapp_business_management`
+
+Tokens de usuário pessoal expiram em 1–60 dias. Tokens de System User são **permanentes**.
+
+### Atualizar token no banco
+```bash
+cd backend && source ../venv/bin/activate
+python manage.py shell -c "
+from apps.channels.models import ChannelProvider
+ch = ChannelProvider.objects.filter(provider='whatsapp').first()
+ch.access_token = 'SEU_NOVO_TOKEN'
+ch.save()
+print('Token atualizado')
+"
 ```
 
-**TODO:** Integrar este envio no `WhatsAppWebhookView` e no `send_message` endpoint da API.
+---
+
+## Simulador interno (desenvolvimento)
+
+Para testar sem depender do WhatsApp real:
+
+```bash
+# Via curl
+curl -X POST http://localhost:9022/api/webhooks/whatsapp/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "from_phone": "+5551999888777",
+    "text": "oi quero um filhote",
+    "provider": "WHATSAPP",
+    "organization_key": "SUA_API_KEY"
+  }'
+```
+
+Ou acesse `http://localhost:9021/simulator` no frontend.
+
+---
+
+## Limitações do Meta em modo de desenvolvimento
+
+- Apenas números adicionados à lista de teste podem receber mensagens
+- Para iniciar conversa: o negócio deve enviar o primeiro template, ou o cliente deve iniciar
+- Números com status "pendente" não podem receber mensagens de texto livre
+- A mensagem de "convite por SMS" aparece quando o número ainda não está registrado no WhatsApp Business

@@ -1,8 +1,12 @@
 import logging
+import random
+from django.conf import settings
 from .states import (
-    STATE_INITIAL, STATE_Q1_BUDGET, STATE_Q2_TIMELINE, STATE_Q3_HOUSING,
-    STATE_Q4_NAME, STATE_COMPLETE, MESSAGES, NEXT_STATE,
+    STATE_INITIAL, STATE_Q1_TIMELINE, STATE_Q2_HOUSING,
+    STATE_Q3_BUDGET, STATE_Q4_PURPOSE, STATE_COMPLETE,
+    MESSAGES, NEXT_STATE, MSG_MEDIA_CAPTION,
 )
+from .parsers import infer_timeline, infer_budget, infer_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -17,35 +21,44 @@ class QualifierEngine:
         if not self.lead.is_ai_active:
             return []
 
-        # First message — send greeting with Q1 embedded
+        # Primeira mensagem: sorteia variante A/B, envia mídia + intro + Q1
         if state == STATE_INITIAL:
-            self.lead.conversation_state = STATE_Q1_BUDGET
+            variants = getattr(settings, 'AB_MEDIA_VARIANTS', {})
+            if variants:
+                variant_key = random.choice(list(variants.keys()))
+                self.lead.ab_variant = variant_key
+            self.lead.conversation_state = STATE_Q1_TIMELINE
             self.lead.status = 'QUALIFYING'
-            self.lead.save(update_fields=['conversation_state', 'status'])
-            return [MESSAGES[STATE_INITIAL]]
+            self.lead.save(update_fields=['conversation_state', 'status', 'ab_variant'])
+
+            replies: list = []
+            if variants and self.lead.ab_variant:
+                variant = variants[self.lead.ab_variant]
+                if variant.get('url'):
+                    replies.append({
+                        'type': variant['type'],
+                        'url': variant['url'],
+                        'caption': variant.get('caption', MSG_MEDIA_CAPTION),
+                    })
+            else:
+                # fallback para configuração legada
+                media_url = getattr(settings, 'QUALIFICATION_MEDIA_URL', '')
+                media_type = getattr(settings, 'QUALIFICATION_MEDIA_TYPE', 'video')
+                if media_url:
+                    replies.append({'type': media_type, 'url': media_url, 'caption': MSG_MEDIA_CAPTION})
+            replies.append(MESSAGES[STATE_INITIAL])
+            replies.append(MESSAGES[STATE_Q1_TIMELINE])
+            return replies
 
         self._parse_and_update_lead(state, text)
 
         next_state = NEXT_STATE.get(state, STATE_COMPLETE)
-
-        # Pula a pergunta de nome se o lead já tem nome registrado
-        if next_state == STATE_Q4_NAME and self.lead.full_name:
-            next_state = STATE_COMPLETE
-
         self.lead.conversation_state = next_state
 
         if next_state == STATE_COMPLETE:
             self._finalize()
             self.lead.save()
-            first_name = (self.lead.full_name or '').split()[0] if self.lead.full_name else ''
-            greeting = f"✅ *Perfeito, {first_name}! Obrigado pelas informações!*" if first_name else "✅ *Perfeito, obrigado pelas informações!*"
-            complete_msg = (
-                f"{greeting}\n\n"
-                "Um dos nossos especialistas vai entrar em contato em breve para apresentar "
-                "os filhotes disponíveis e tirar todas as suas dúvidas. 🐾\n\n"
-                "_Border Collie Sul — criação responsável com procedência._"
-            )
-            return [complete_msg]
+            return [MESSAGES[STATE_COMPLETE]]
 
         self.lead.save()
         return [MESSAGES[next_state]]
@@ -53,38 +66,46 @@ class QualifierEngine:
     def _parse_and_update_lead(self, state: str, text: str):
         lower = text.lower().strip()
 
-        if state == STATE_Q1_BUDGET:
-            if any(c in lower for c in ['1', 'sim', 'consigo', 'dentro', 'ok', 'pode']):
-                self.lead.budget_ok = 'YES'
-            elif any(c in lower for c in ['3', 'não', 'nao', 'planej', 'ainda não']):
-                self.lead.budget_ok = 'NO'
-            else:
-                self.lead.budget_ok = 'MAYBE'
-
-        elif state == STATE_Q2_TIMELINE:
-            if '1' in lower or 'agora' in lower or 'urgente' in lower or 'rápido' in lower:
-                self.lead.timeline = 'NOW'
-            elif '2' in lower or '30' in lower or 'trinta' in lower:
-                self.lead.timeline = 'THIRTY_DAYS'
-            elif '3' in lower or '2' in lower or 'mês' in lower or 'mes' in lower:
+        if state == STATE_Q1_TIMELINE:
+            timeline = infer_timeline(lower)
+            if timeline:
+                self.lead.timeline = timeline
+            elif '4' in lower or 'pesquisando' in lower:
+                self.lead.timeline = 'RESEARCHING'
+            elif '3' in lower or 'mês' in lower or 'mes' in lower:
                 self.lead.timeline = 'SIXTY_PLUS'
             else:
                 self.lead.timeline = 'RESEARCHING'
 
-        elif state == STATE_Q3_HOUSING:
-            if any(w in lower for w in ['casa', 'house', 'sítio', 'sitio', 'chácara', 'chacara', 'rural']):
-                self.lead.housing_type = 'HOUSE'
-            elif any(w in lower for w in ['apart', 'apto', 'flat', 'studio', 'condomínio', 'condominio']):
+        elif state == STATE_Q2_HOUSING:
+            if '3' in lower or any(w in lower for w in ['apart', 'apto', 'flat', 'studio', 'condomínio', 'condominio']):
                 self.lead.housing_type = 'APT'
+            elif '2' in lower or any(w in lower for w in ['sem pátio', 'sem patio', 'sem quintal']):
+                self.lead.housing_type = 'HOUSE_N'
+            elif '1' in lower or any(w in lower for w in ['pátio', 'patio', 'quintal', 'casa', 'sítio', 'sitio', 'chácara', 'chacara', 'rural']):
+                self.lead.housing_type = 'HOUSE_Y'
 
-        elif state == STATE_Q4_NAME:
-            name = text.strip().title()
-            if len(name) >= 2:
-                self.lead.full_name = name
+        elif state == STATE_Q3_BUDGET:
+            budget = infer_budget(lower)
+            if budget:
+                self.lead.budget_ok = budget
+            elif '3' in lower or 'pesquisando' in lower:
+                self.lead.budget_ok = 'NO'
+            else:
+                self.lead.budget_ok = 'MAYBE'
+
+        elif state == STATE_Q4_PURPOSE:
+            if '4' in lower or 'pesquisando' in lower:
+                self.lead.purpose = None
+            else:
+                purpose = infer_purpose(lower)
+                self.lead.purpose = purpose if purpose else None
 
     def _finalize(self):
         self.lead.score = self._calculate_score()
         self.lead.tier = self._determine_tier(self.lead.score)
+        classification_score = self._calculate_classification_score()
+        self.lead.lead_classification = self._determine_classification(classification_score)
         self.lead.status = 'QUALIFIED'
         self._generate_auto_tags()
 
@@ -107,6 +128,26 @@ class QualifierEngine:
             score += 8
 
         return max(0, min(100, score))
+
+    def _calculate_classification_score(self) -> int:
+        lead = self.lead
+        tl  = {'NOW': 3, 'THIRTY_DAYS': 2, 'SIXTY_PLUS': 1, 'RESEARCHING': 0}
+        bud = {'YES': 3, 'MAYBE': 1, 'NO': 0}
+        hs  = {'HOUSE_Y': 2, 'HOUSE_N': 1, 'HOUSE': 1, 'APT': 0}
+        pur = {'COMPANION': 2, 'SPORT': 2, 'WORK': 2}
+        return (
+            tl.get(lead.timeline or '', 0)
+            + bud.get(lead.budget_ok or '', 0)
+            + hs.get(lead.housing_type or '', 0)
+            + pur.get(lead.purpose or '', 0)
+        )
+
+    def _determine_classification(self, score: int) -> str:
+        if score >= 7:
+            return 'HOT_LEAD'
+        if score >= 4:
+            return 'WARM_LEAD'
+        return 'COLD_LEAD'
 
     def _determine_tier(self, score: int) -> str:
         if score >= 65:
@@ -134,6 +175,14 @@ class QualifierEngine:
 
         if lead.budget_ok == 'YES':
             tag_names.append('orcamento-ok')
+
+        purpose_tag = {'COMPANION': 'companhia', 'SPORT': 'esporte', 'WORK': 'trabalho'}
+        if lead.purpose in purpose_tag:
+            tag_names.append(purpose_tag[lead.purpose])
+
+        classification_tag = {'HOT_LEAD': 'hot-lead', 'WARM_LEAD': 'warm-lead', 'COLD_LEAD': 'cold-lead'}
+        if lead.lead_classification in classification_tag:
+            tag_names.append(classification_tag[lead.lead_classification])
 
         for name in tag_names:
             tag, _ = LeadTag.objects.get_or_create(

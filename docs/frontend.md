@@ -27,20 +27,22 @@ frontend/src/
 │   ├── plans.ts           # Planos e assinatura
 │   └── simulator.ts       # Simulador de webhook
 ├── components/
-│   ├── Layout.tsx          # Layout raiz com sidebar + topbar + footer
-│   ├── Sidebar.tsx         # Menu lateral (desktop) + overlay (mobile)
-│   ├── Topbar.tsx          # Logo, notificações, dropdown de usuário
-│   ├── BottomNav.tsx       # Navegação inferior (mobile)
-│   ├── Footer.tsx          # Footer mínimo copyright + versão
-│   ├── PrivateRoute.tsx    # Proteção de rotas autenticadas
-│   ├── AIStatusBadge.tsx   # Badge IA ativa / Nome do agente
-│   ├── TierBadge.tsx       # Badge A/B/C colorido
-│   ├── StatusBadge.tsx     # Badge status do lead
-│   └── QuickReplyDrawer.tsx # Bottom sheet de respostas rápidas
+│   ├── Layout.tsx              # Layout raiz com sidebar + topbar + footer
+│   ├── Sidebar.tsx             # Menu lateral (desktop) + overlay (mobile)
+│   ├── Topbar.tsx              # Logo, notificações, dropdown de usuário
+│   ├── BottomNav.tsx           # Navegação inferior (mobile)
+│   ├── Footer.tsx              # Footer mínimo copyright + versão
+│   ├── PrivateRoute.tsx        # Proteção de rotas autenticadas
+│   ├── AIStatusBadge.tsx       # Badge IA ativa / Nome do agente
+│   ├── TierBadge.tsx           # Badge A/B/C colorido
+│   ├── ClassificationBadge.tsx # Badge HOT🔥 / WARM🟡 / COLD❄️
+│   ├── StatusBadge.tsx         # Badge status do lead
+│   └── QuickReplyDrawer.tsx    # Bottom sheet de respostas rápidas
 └── pages/
     ├── Login.tsx            # Tela de login
     ├── Dashboard.tsx        # Cards de stats + tabela de leads recentes
     ├── LeadsPage.tsx        # Layout 3 colunas omnichannel
+    ├── ABTestPage.tsx       # Visualização de resultados do A/B test
     ├── Simulator.tsx        # Simulador de webhook WhatsApp
     ├── Channels.tsx         # CRUD de canais
     └── Plans.tsx            # Planos SaaS e assinatura atual
@@ -107,6 +109,7 @@ frontend/src/
 /dashboard          → Dashboard
 /leads              → LeadsPage (lista vazia selecionada)
 /leads/:id          → LeadsPage (lead selecionado no chat)
+/ab-test            → ABTestPage (métricas comparativas A/B/C/D)
 /simulator          → Simulator
 /channels           → Channels
 /plans              → Plans

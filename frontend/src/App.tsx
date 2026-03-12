@@ -7,6 +7,7 @@ import LeadsPage from './pages/LeadsPage';
 import Simulator from './pages/Simulator';
 import Channels from './pages/Channels';
 import Plans from './pages/Plans';
+import ABTestPage from './pages/ABTestPage';
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="leads" element={<LeadsPage />} />
           <Route path="leads/:id" element={<LeadsPage />} />
           <Route path="simulator" element={<Simulator />} />
+          <Route path="ab-test" element={<ABTestPage />} />
           <Route path="channels" element={<Channels />} />
           <Route path="plans" element={<Plans />} />
           {/* Placeholder routes para features futuras */}

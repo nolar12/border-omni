@@ -291,6 +291,12 @@ class LeadViewSet(viewsets.ReadOnlyModelViewSet):
         note = Note.objects.create(lead=lead, author=request.user, text=text)
         return Response(NoteSerializer(note).data, status=201)
 
+    @action(detail=True, methods=['delete'])
+    def delete(self, request, pk=None):
+        lead = self.get_object()
+        lead.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=False, methods=['get'])
     def stats(self, request):
         qs = self.get_queryset()
@@ -303,6 +309,25 @@ class LeadViewSet(viewsets.ReadOnlyModelViewSet):
             'qualifying': qs.filter(status='QUALIFYING').count(),
             'qualified': qs.filter(status='QUALIFIED').count(),
         })
+
+    @action(detail=False, methods=['get'])
+    def ab_stats(self, request):
+        from django.db.models import Count, Q, Avg
+        qs = self.get_queryset().filter(ab_variant__isnull=False).exclude(ab_variant='')
+        rows = (
+            qs.values('ab_variant')
+            .annotate(
+                total=Count('id'),
+                completed=Count('id', filter=Q(conversation_state='complete')),
+                qualified=Count('id', filter=Q(status='QUALIFIED')),
+                tier_a=Count('id', filter=Q(tier='A')),
+                tier_b=Count('id', filter=Q(tier='B')),
+                tier_c=Count('id', filter=Q(tier='C')),
+                avg_score=Avg('score'),
+            )
+            .order_by('ab_variant')
+        )
+        return Response(list(rows))
 
 
 # ─── Webhook ──────────────────────────────────────────────────────────────────
@@ -377,39 +402,83 @@ class WhatsAppWebhookView(APIView):
         return self._process_message(org=org, from_phone=from_phone, text=text, provider='WHATSAPP', contact_name=contact_name)
 
     def _handle_incoming_media(self, org, from_phone, msg, msg_type, channel, contact_name=''):
-        """Salva mídia recebida pelo cliente (imagem, doc, áudio, vídeo) como mensagem IN."""
+        """Baixa mídia recebida do cliente, salva localmente e registra como mensagem IN."""
         import requests as http_requests
         import logging
+        import os
+        import uuid
+        import mimetypes
         from django.utils import timezone
+        from django.conf import settings
         logger = logging.getLogger('apps')
 
         media_data = msg.get(msg_type, {})
         media_id   = media_data.get('id', '')
         caption    = media_data.get('caption', '')
         filename   = media_data.get('filename', '')
+        mime_type  = media_data.get('mime_type', '')
 
-        # Ícone por tipo
+        # Detecta tipo real pelo MIME ou extensão do filename
+        effective_type = msg_type
+        if msg_type == 'document' and mime_type:
+            if mime_type.startswith('image/'):
+                effective_type = 'image'
+            elif mime_type.startswith('video/'):
+                effective_type = 'video'
+            elif mime_type.startswith('audio/'):
+                effective_type = 'audio'
+        # Fallback pela extensão do filename
+        if effective_type == 'document' and filename:
+            ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+            if ext in {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'}:
+                effective_type = 'image'
+            elif ext in {'mp4', 'mov', 'avi', 'mkv', '3gp'}:
+                effective_type = 'video'
+            elif ext in {'mp3', 'ogg', 'aac', 'm4a', 'opus'}:
+                effective_type = 'audio'
+
         icons = {'image': '🖼️', 'document': '📄', 'audio': '🎵', 'video': '🎥', 'sticker': '🎭'}
-        icon  = icons.get(msg_type, '📎')
+        icon  = icons.get(effective_type, '📎')
 
-        # Busca a URL de download temporária no Meta
-        media_url = ''
+        local_url = ''
         if media_id and channel.access_token:
             try:
-                url_resp = http_requests.get(
+                # 1. Obtém a URL de download temporária do Meta
+                meta_resp = http_requests.get(
                     f'https://graph.facebook.com/v22.0/{media_id}',
                     headers={'Authorization': f'Bearer {channel.access_token}'},
                     timeout=10,
                 )
-                if url_resp.status_code == 200:
-                    media_url = url_resp.json().get('url', '')
+                if meta_resp.status_code == 200:
+                    download_url = meta_resp.json().get('url', '')
+                    if download_url:
+                        # 2. Baixa o arquivo com o token
+                        dl_resp = http_requests.get(
+                            download_url,
+                            headers={'Authorization': f'Bearer {channel.access_token}'},
+                            timeout=30,
+                        )
+                        if dl_resp.status_code == 200:
+                            # 3. Determina extensão do arquivo
+                            ext = mimetypes.guess_extension(mime_type.split(';')[0]) or ''
+                            if ext == '.jpe': ext = '.jpg'
+                            safe_name = filename or f'{msg_type}_{media_id[:8]}{ext}'
+                            # Evita colisão de nomes
+                            unique_name = f'{uuid.uuid4().hex[:8]}_{safe_name}'
+                            save_dir = os.path.join(settings.MEDIA_ROOT, 'whatsapp')
+                            os.makedirs(save_dir, exist_ok=True)
+                            save_path = os.path.join(save_dir, unique_name)
+                            with open(save_path, 'wb') as f:
+                                f.write(dl_resp.content)
+                            local_url = f'{settings.MEDIA_URL}whatsapp/{unique_name}'
+                            logger.info(f'Media saved: {save_path}')
             except Exception as e:
-                logger.warning(f'Could not fetch media URL: {e}')
+                logger.warning(f'Could not download media {media_id}: {e}')
 
-        # Monta o texto da mensagem
-        label = caption or filename or msg_type
-        if media_url:
-            text = f'{icon} {label}\n{media_url}'
+        # Monta texto da mensagem
+        label = caption or filename or ''
+        if local_url:
+            text = f'{icon} {label}\n{local_url}' if label else f'{icon}\n{local_url}'
         else:
             text = f'{icon} {label or msg_type.capitalize()}'
 
@@ -442,7 +511,7 @@ class WhatsAppWebhookView(APIView):
             text=text,
             provider_message_id=media_id,
         )
-        logger.info(f'Incoming media [{msg_type}] from {from_phone}: {label}')
+        logger.info(f'Incoming [{msg_type}] from {from_phone}: {label or media_id}')
         return Response({'received': True, 'type': msg_type})
 
     def _handle_simulator_payload(self, data):
@@ -513,23 +582,38 @@ class WhatsAppWebhookView(APIView):
             is_active=True,
         ).first()
 
+        reply_texts = []
         for reply in replies:
+            is_media = isinstance(reply, dict)
+            text = reply.get('caption', '') if is_media else reply
+
             Message.objects.create(
                 conversation=conv,
                 organization=org,
                 direction='OUT',
-                text=reply,
+                text=text,
             )
-            # Envia de volta via WhatsApp API se tiver canal configurado
-            if channel_provider and channel_provider.access_token and channel_provider.phone_number_id:
-                _send_whatsapp_message(
-                    phone_number_id=channel_provider.phone_number_id,
-                    access_token=channel_provider.access_token,
-                    to=from_phone,
-                    text=reply,
-                )
+            reply_texts.append(text)
 
-        return Response({'received': True, 'replies': replies, 'lead': _lead_summary(lead)})
+            if channel_provider and channel_provider.access_token and channel_provider.phone_number_id:
+                if is_media:
+                    _send_whatsapp_media(
+                        phone_number_id=channel_provider.phone_number_id,
+                        access_token=channel_provider.access_token,
+                        to=from_phone,
+                        media_type=reply.get('type', 'video'),
+                        url=reply['url'],
+                        caption=text,
+                    )
+                else:
+                    _send_whatsapp_message(
+                        phone_number_id=channel_provider.phone_number_id,
+                        access_token=channel_provider.access_token,
+                        to=from_phone,
+                        text=reply,
+                    )
+
+        return Response({'received': True, 'replies': reply_texts, 'lead': _lead_summary(lead)})
 
 
 def _send_whatsapp_message(phone_number_id, access_token, to, text):
@@ -558,6 +642,35 @@ def _send_whatsapp_message(phone_number_id, access_token, to, text):
             logger.info(f'WhatsApp message sent to {to}: {text[:50]}')
     except Exception as e:
         logger.error(f'WhatsApp send exception: {e}')
+
+
+def _send_whatsapp_media(phone_number_id, access_token, to, media_type, url, caption=''):
+    """Envia vídeo ou imagem via WhatsApp Cloud API usando link público."""
+    import requests as http_requests
+    import logging
+    logger = logging.getLogger('apps')
+
+    send_url = f'https://graph.facebook.com/v22.0/{phone_number_id}/messages'
+    media_key = 'video' if media_type == 'video' else 'image'
+    payload = {
+        'messaging_product': 'whatsapp',
+        'to': to,
+        'type': media_key,
+        media_key: {'link': url, 'caption': caption},
+    }
+    try:
+        resp = http_requests.post(
+            send_url,
+            json=payload,
+            headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/json'},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            logger.error(f'WhatsApp media send error: {resp.status_code} {resp.text}')
+        else:
+            logger.info(f'WhatsApp {media_key} sent to {to}: {url[:60]}')
+    except Exception as e:
+        logger.error(f'WhatsApp media send exception: {e}')
 
 
 def _lead_summary(lead):

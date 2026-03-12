@@ -6,6 +6,7 @@ import type { LeadListItem, Lead, Message } from '../types';
 import TierBadge from '../components/TierBadge';
 import StatusBadge from '../components/StatusBadge';
 import AIStatusBadge from '../components/AIStatusBadge';
+import ClassificationBadge from '../components/ClassificationBadge';
 import QuickReplyDrawer from '../components/QuickReplyDrawer';
 
 // ─── Lead List Item (middle column) ──────────────────────────────────────────
@@ -52,36 +53,71 @@ function LeadRow({ lead, isActive, onClick }: { lead: LeadListItem; isActive: bo
 // ─── Message Content renderer (texto, imagem, documento) ─────────────────────
 
 function MessageContent({ text }: { text: string }) {
-  // Detecta padrão: "🖼️ legenda\nhttps://..." ou "📄 legenda\nhttps://..."
   const lines = text.split('\n');
   const firstLine = lines[0] || '';
   const secondLine = lines[1] || '';
-  const isMediaMsg = secondLine.startsWith('https://') && /[🖼️📄🎵🎥🎭📎]/.test(firstLine);
+
+  const isMediaUrl = (s: string) => s.startsWith('https://') || s.startsWith('http://') || s.startsWith('/media/');
+  const toAbsolute = (s: string) => s.startsWith('/media/') ? `http://localhost:9022${s}` : s;
+  const isMediaMsg = isMediaUrl(secondLine) && /[\u{1F5BC}\u{1F4C4}\u{1F3B5}\u{1F3A5}\u{1F3AD}\u{1F4CE}📎]/u.test(firstLine);
 
   if (isMediaMsg) {
-    const isImage = firstLine.startsWith('🖼️');
+    const url = toAbsolute(secondLine);
+    const isImage = firstLine.startsWith('🖼');
+    const label = firstLine.replace(/^[\s\S]{1,2}/, '').trim() || (isImage ? 'Ver imagem' : 'Abrir arquivo');
+
+    // Detecta pelo emoji OU pela extensão da URL
+    const urlExt = url.split('?')[0].split('.').pop()?.toLowerCase() || '';
+    const imageExts = new Set(['jpg','jpeg','png','gif','webp','heic','heif']);
+    const videoExts = new Set(['mp4','mov','avi','mkv','3gp']);
+    const audioExts = new Set(['mp3','ogg','aac','m4a','opus']);
+
+    const isVideo = firstLine.startsWith('🎥') || videoExts.has(urlExt);
+    const isAudio = firstLine.startsWith('🎵') || audioExts.has(urlExt);
+    const isImageByExt = imageExts.has(urlExt);
+    const isImageFinal = (firstLine.startsWith('🖼') || isImageByExt) && !isVideo && !isAudio;
+
     return (
-      <div className="space-y-1">
-        {isImage ? (
-          <a href={secondLine} target="_blank" rel="noopener noreferrer">
-            <img
-              src={secondLine}
-              alt={firstLine}
-              className="max-w-[200px] rounded-lg border border-white/20 cursor-pointer hover:opacity-90"
-              onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+      <div className="space-y-1.5">
+        {isImageFinal ? (
+          <>
+            <a href={url} target="_blank" rel="noopener noreferrer">
+              <img
+                src={url}
+                alt={label}
+                className="max-w-[220px] rounded-lg border border-white/20 cursor-pointer hover:opacity-90 transition-opacity"
+                onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            </a>
+            {label && <p className="text-xs opacity-70">{label}</p>}
+          </>
+        ) : isVideo ? (
+          <>
+            <video
+              src={url}
+              controls
+              className="max-w-[280px] rounded-lg border border-white/20"
+              style={{ maxHeight: 200 }}
             />
-          </a>
+            {label && <p className="text-xs opacity-70">{label}</p>}
+          </>
+        ) : isAudio ? (
+          <>
+            <audio src={url} controls className="w-full max-w-[260px]" />
+            {label && <p className="text-xs opacity-70">{label}</p>}
+          </>
         ) : (
           <a
-            href={secondLine}
+            href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 bg-white/20 rounded-lg px-3 py-2 hover:bg-white/30 transition-colors"
+            className="flex items-center gap-2 bg-black/10 rounded-xl px-3 py-2 hover:bg-black/20 transition-colors"
           >
-            <span className="text-lg">{firstLine.slice(0, 2)}</span>
-            <span className="text-sm underline truncate max-w-[160px]">
-              {firstLine.slice(2).trim() || 'Abrir arquivo'}
-            </span>
+            <span className="text-xl flex-shrink-0">{firstLine.slice(0, 2)}</span>
+            <div className="min-w-0">
+              <p className="text-sm font-medium truncate">{label}</p>
+              <p className="text-xs opacity-60">Toque para abrir ↗</p>
+            </div>
           </a>
         )}
       </div>
@@ -93,7 +129,7 @@ function MessageContent({ text }: { text: string }) {
 
 // ─── Chat Panel (right column) ───────────────────────────────────────────────
 
-function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
+function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () => void; onDeleted: () => void }) {
   const [lead, setLead] = useState<Lead | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,6 +144,8 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<'chat' | 'info' | 'notes'>('chat');
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const user = authService.getCurrentUser();
 
   useEffect(() => {
@@ -157,20 +195,47 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
     }
   }
 
+  const [fileError, setFileError] = useState('');
+
+  const FILE_LIMITS: Record<string, number> = {
+    'image':    5  * 1024 * 1024,  // 5 MB
+    'video':    16 * 1024 * 1024,  // 16 MB
+    'audio':    16 * 1024 * 1024,  // 16 MB
+    'default': 100 * 1024 * 1024,  // 100 MB
+  };
+
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file) setPendingFile(file);
+    if (!file) return;
     e.target.value = '';
+    setFileError('');
+
+    const kind = file.type.startsWith('image/') ? 'image'
+               : file.type.startsWith('video/') ? 'video'
+               : file.type.startsWith('audio/') ? 'audio'
+               : 'default';
+    const limit = FILE_LIMITS[kind];
+
+    if (file.size > limit) {
+      const limitMB = limit / (1024 * 1024);
+      setFileError(`❌ Arquivo muito grande. Limite do WhatsApp: ${limitMB}MB para ${kind === 'default' ? 'documentos' : kind}.`);
+      return;
+    }
+    setPendingFile(file);
   }
 
   async function handleSendFile() {
     if (!lead || !pendingFile) return;
     setSendingFile(true);
+    setFileError('');
     try {
       const msg = await leadsService.sendFile(lead.id, pendingFile, fileCaption);
       setMessages(prev => [...prev, msg]);
       setPendingFile(null);
       setFileCaption('');
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || 'Erro ao enviar arquivo.';
+      setFileError(`❌ ${detail}`);
     } finally {
       setSendingFile(false);
     }
@@ -182,6 +247,19 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
     const updated = await leadsService.getLead(lead.id);
     setLead(updated);
     setNoteText('');
+  }
+
+  async function handleDelete() {
+    if (!lead) return;
+    setDeleting(true);
+    try {
+      await leadsService.deleteLead(lead.id);
+      onDeleted();
+      onBack();
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
   }
 
   if (loading) {
@@ -226,6 +304,7 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
         <div className="flex items-center gap-2 flex-shrink-0">
           <div className="hidden sm:flex items-center gap-1.5">
             <TierBadge tier={lead.tier} />
+            <ClassificationBadge classification={lead.lead_classification} />
             <AIStatusBadge isAiActive={lead.is_ai_active} assignedTo={lead.assigned_to} />
           </div>
 
@@ -240,6 +319,38 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
           ) : (
             <button onClick={handleRelease} className="btn btn-ghost btn-xs text-blue-600 hidden sm:flex">
               🤖 IA
+            </button>
+          )}
+
+          {/* Delete button */}
+          {confirmDelete ? (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="btn btn-error btn-xs"
+              >
+                {deleting ? <span className="loading loading-spinner loading-xs" /> : 'Confirmar'}
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="btn btn-ghost btn-xs text-gray-400"
+              >
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              title="Excluir lead"
+              className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                <path d="M10 11v6"/><path d="M14 11v6"/>
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+              </svg>
             </button>
           )}
         </div>
@@ -285,6 +396,18 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
           {/* Input area */}
           {!lead.is_ai_active ? (
             <div className="border-t border-gray-100 bg-white flex-shrink-0">
+
+              {/* Aviso de erro de arquivo */}
+              {fileError && (
+                <div className="flex items-center gap-2 px-3 pt-2">
+                  <p className="text-xs text-red-500 flex-1">{fileError}</p>
+                  <button onClick={() => setFileError('')} className="text-red-400 hover:text-red-600">
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </div>
+              )}
 
               {/* Preview de arquivo pendente */}
               {pendingFile && (
@@ -408,8 +531,9 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
       {tab === 'info' && (
         <div className="flex-1 overflow-y-auto p-4 bg-white">
           {/* Mobile actions */}
-          <div className="flex gap-2 mb-4 sm:hidden">
+          <div className="flex flex-wrap gap-2 mb-4 sm:hidden">
             <TierBadge tier={lead.tier} size="md" />
+            <ClassificationBadge classification={lead.lead_classification} size="md" />
             <StatusBadge status={lead.status} />
             {lead.is_ai_active ? (
               <button onClick={handleAssume} className="btn btn-warning btn-xs">🤝 Assumir</button>
@@ -418,11 +542,18 @@ function ChatPanel({ leadId, onBack }: { leadId: number; onBack: () => void }) {
             )}
           </div>
 
+          {lead.lead_classification && (
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-xs text-gray-400">Classificação:</span>
+              <ClassificationBadge classification={lead.lead_classification} size="md" />
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-2">
             {[
               ['Score', `${lead.score}/100`],
               ['Localização', lead.city ? `${lead.city}/${lead.state}` : '—'],
-              ['Moradia', lead.housing_type === 'HOUSE' ? 'Casa' : lead.housing_type === 'APT' ? 'Apartamento' : '—'],
+              ['Moradia', lead.housing_type === 'HOUSE_Y' ? 'Casa c/ pátio' : lead.housing_type === 'HOUSE_N' ? 'Casa s/ pátio' : lead.housing_type === 'HOUSE' ? 'Casa' : lead.housing_type === 'APT' ? 'Apartamento' : '—'],
               ['Tempo/dia', lead.daily_time_minutes ? `${lead.daily_time_minutes}min` : '—'],
               ['Experiência', lead.experience_level?.replace(/_/g, ' ').toLowerCase() ?? '—'],
               ['Orçamento', lead.budget_ok ?? '—'],
@@ -692,6 +823,7 @@ export default function LeadsPage() {
             key={selectedId}
             leadId={selectedId}
             onBack={() => navigate('/leads')}
+            onDeleted={() => load(filters, 1)}
           />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-300 select-none">
