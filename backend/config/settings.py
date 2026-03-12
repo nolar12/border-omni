@@ -93,7 +93,29 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# URL pública de um vídeo/foto de ninhada anterior (configuração legada — substituta pelo A/B abaixo).
+QUALIFICATION_MEDIA_URL = os.getenv('QUALIFICATION_MEDIA_URL', '')
+QUALIFICATION_MEDIA_TYPE = os.getenv('QUALIFICATION_MEDIA_TYPE', 'video')
+
+# A/B test de mídia: 4 variantes sorteadas aleatoriamente para cada novo lead.
+# Configure as URLs públicas das mídias (HTTPS obrigatório para o WhatsApp).
+# Exemplo local via ngrok: https://xxxx.ngrok.io/media/ab_test/variant_a.mp4
+_AB_CAPTION = (
+    "Esse vídeo é de uma ninhada anterior nossa 🐾\n\n"
+    "Só para você conhecer melhor o padrão dos nossos filhotes.\n\n"
+    "A ninhada atual ainda é bem novinha, mas já temos algumas reservas feitas.\n\n"
+    "Vou te fazer 4 perguntinhas rápidas para entender melhor o que você procura."
+)
+AB_MEDIA_VARIANTS = {
+    'A': {'type': 'video', 'url': os.getenv('AB_MEDIA_URL_A', ''), 'caption': _AB_CAPTION},
+    'B': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_B', ''), 'caption': _AB_CAPTION},
+    'C': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_C', ''), 'caption': _AB_CAPTION},
+    'D': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_D', ''), 'caption': _AB_CAPTION},
+}
 
 # CORS
 CORS_ALLOW_ALL_ORIGINS = DEBUG

@@ -36,6 +36,8 @@ export interface AssignedUser {
 export type Tier = 'A' | 'B' | 'C';
 export type LeadStatus = 'NEW' | 'QUALIFYING' | 'QUALIFIED' | 'HANDOFF' | 'CLOSED';
 export type LeadSource = 'INSTAGRAM_AD' | 'ORGANIC' | 'OTHER';
+export type LeadClassification = 'HOT_LEAD' | 'WARM_LEAD' | 'COLD_LEAD';
+export type HousingType = 'HOUSE_Y' | 'HOUSE_N' | 'HOUSE' | 'APT' | 'OTHER';
 
 export interface Lead {
   id: number;
@@ -44,7 +46,7 @@ export interface Lead {
   instagram_handle: string | null;
   city: string | null;
   state: string | null;
-  housing_type: 'HOUSE' | 'APT' | 'OTHER' | null;
+  housing_type: HousingType | null;
   daily_time_minutes: number | null;
   experience_level: 'FIRST_DOG' | 'HAD_DOGS' | 'HAD_HIGH_ENERGY' | null;
   budget_ok: 'YES' | 'NO' | 'MAYBE' | null;
@@ -54,6 +56,7 @@ export interface Lead {
   has_other_pets: boolean;
   score: number;
   tier: Tier | null;
+  lead_classification: LeadClassification | null;
   status: LeadStatus;
   source: LeadSource;
   channels_used: string;
@@ -73,6 +76,7 @@ export interface LeadListItem {
   city: string | null;
   state: string | null;
   tier: Tier | null;
+  lead_classification: LeadClassification | null;
   score: number;
   status: LeadStatus;
   source: LeadSource;

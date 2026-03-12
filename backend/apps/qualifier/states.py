@@ -1,74 +1,85 @@
-STATE_INITIAL = 'initial'
-STATE_Q1_BUDGET = 'q1_budget'
-STATE_Q2_TIMELINE = 'q2_timeline'
-STATE_Q3_HOUSING = 'q3_housing'
-STATE_Q4_NAME = 'q4_name'
-STATE_COMPLETE = 'complete'
+STATE_INITIAL     = 'initial'
+STATE_Q1_TIMELINE = 'q1_timeline'
+STATE_Q2_HOUSING  = 'q2_housing'
+STATE_Q3_BUDGET   = 'q3_budget'
+STATE_Q4_PURPOSE  = 'q4_purpose'
+STATE_COMPLETE    = 'complete'
 
 STATE_ORDER = [
     STATE_INITIAL,
-    STATE_Q1_BUDGET,
-    STATE_Q2_TIMELINE,
-    STATE_Q3_HOUSING,
-    STATE_Q4_NAME,
+    STATE_Q1_TIMELINE,
+    STATE_Q2_HOUSING,
+    STATE_Q3_BUDGET,
+    STATE_Q4_PURPOSE,
     STATE_COMPLETE,
 ]
 
+MSG_MEDIA_CAPTION = (
+    "Esse vídeo é de uma ninhada anterior nossa 🐾\n\n"
+    "Só para você conhecer melhor o padrão dos nossos filhotes.\n\n"
+    "A ninhada atual ainda é bem novinha, mas já temos algumas reservas feitas.\n\n"
+    "Vou te fazer 4 perguntinhas rápidas para entender melhor o que você procura."
+)
+
+MSG_INTRO = (
+    "Olá! 🐕 Aqui é a Border Collie Sul.\n\n"
+    "Nossos filhotes são filhos do Sky e da Leia, com excelente linhagem e criados em ambiente familiar.\n\n"
+    "Eles são entregues com:\n\n"
+    "✔ Pedigree\n"
+    "✔ Microchip\n"
+    "✔ Registro do canil\n"
+    "✔ Vermifugação e primeira vacina\n\n"
+    "Alguns filhotes desta ninhada já estão reservados.\n\n"
+    "Depois das perguntinhas eu já te mostro quais ainda estão disponíveis. 🐾"
+)
+
 MESSAGES = {
-    STATE_INITIAL: (
-        "Olá! 🐕 Aqui é a *Border Collie Sul*!\n\n"
-        "Que alegria receber seu contato! Nossos filhotes são filhos do *Sky* e da *Leia* — "
-        "ambos com *linhagem de campeões*, saúde certificada e temperamento excepcional. "
-        "São criados em ambiente familiar, com seleção genética rigorosa e acompanhamento completo "
-        "antes, durante e após a entrega. 🏆\n\n"
-        "📌 Conheça mais:\n"
-        "🌐 www.bordercolliesul.com.br\n"
-        "📸 Instagram: @bordercolliesul\n\n"
-        "Vou te fazer *3 perguntinhas rápidas* para entender melhor como posso te ajudar, tudo bem?\n\n"
-        "Nossos filhotes têm valor a partir de *R$ 5.000* — um investimento em genética, "
-        "saúde e procedência comprovadas.\n\n"
-        "*Esse valor está dentro do seu planejamento?*\n\n"
-        "1️⃣ Sim, consigo investir esse valor\n"
-        "2️⃣ Preciso de mais informações antes\n"
-        "3️⃣ Ainda não, mas quero me planejar"
-    ),
-    STATE_Q1_BUDGET: (
-        "Nossos filhotes têm valor a partir de *R$ 5.000* — "
-        "filhos do *Sky* e da *Leia*, com linhagem de campeões e saúde certificada.\n\n"
-        "*Esse investimento está dentro do seu planejamento?*\n\n"
-        "1️⃣ Sim, consigo investir esse valor\n"
-        "2️⃣ Preciso de mais informações antes\n"
-        "3️⃣ Ainda não, mas quero me planejar"
-    ),
-    STATE_Q2_TIMELINE: (
-        "Ótimo! E para quando você está pensando em trazer seu Border Collie para casa? 📅\n\n"
+    STATE_INITIAL: MSG_INTRO,
+    STATE_Q1_TIMELINE: (
+        "Para quando você está pensando em trazer seu Border Collie para casa? 📅\n\n"
         "1️⃣ Agora — quero o mais rápido possível\n"
         "2️⃣ Em até 30 dias\n"
         "3️⃣ Em 2 a 3 meses\n"
-        "4️⃣ Ainda estou pesquisando, sem prazo definido"
+        "4️⃣ Ainda estou pesquisando"
     ),
-    STATE_Q3_HOUSING: (
-        "Quase lá! 🏠 Você mora em *casa* ou *apartamento*?\n\n"
-        "O Border Collie é uma raça de alta energia e precisa de espaço para se exercitar. "
-        "Isso me ajuda a entender qual perfil de filhote combina melhor com você."
+    STATE_Q2_HOUSING: (
+        "Legal! Agora me conta uma coisa:\n\n"
+        "Você mora em qual tipo de ambiente? 🏠\n\n"
+        "1️⃣ Casa com pátio\n"
+        "2️⃣ Casa sem pátio\n"
+        "3️⃣ Apartamento"
     ),
-    STATE_Q4_NAME: (
-        "Última pergunta, prometo! 😊\n\n"
-        "*Qual é o seu nome?*"
+    STATE_Q3_BUDGET: (
+        "Perfeito!\n\n"
+        "Só para alinhar expectativas:\n\n"
+        "Nossos filhotes, com pedigree, microchip e todo acompanhamento inicial, "
+        "têm valor a partir de R$ 5.000.\n\n"
+        "Esse investimento está dentro do que você planeja para adquirir seu filhote?\n\n"
+        "1️⃣ Sim, está dentro do planejamento\n"
+        "2️⃣ Talvez, gostaria de entender melhor\n"
+        "3️⃣ Ainda estou pesquisando valores"
+    ),
+    STATE_Q4_PURPOSE: (
+        "Última curiosidade 😊\n\n"
+        "Você procura seu Border Collie principalmente para:\n\n"
+        "1️⃣ Companhia / família\n"
+        "2️⃣ Esporte (agility, frisbee, atividades)\n"
+        "3️⃣ Trabalho ou pastoreio\n"
+        "4️⃣ Ainda estou pesquisando sobre a raça"
     ),
     STATE_COMPLETE: (
-        "✅ *Perfeito, obrigado pelas informações!*\n\n"
-        "Um dos nossos especialistas vai entrar em contato em breve para apresentar "
-        "os filhotes disponíveis e tirar todas as suas dúvidas. 🐾\n\n"
-        "_Border Collie Sul — criação responsável com procedência._"
+        "Perfeito! Obrigado pelas respostas.\n\n"
+        "Vou te mostrar agora quais filhotes ainda estão disponíveis desta ninhada "
+        "e te enviar algumas fotos. 🐾\n\n"
+        "Se quiser, também posso te explicar as diferenças entre eles para te ajudar a escolher."
     ),
 }
 
 NEXT_STATE = {
-    STATE_INITIAL:     STATE_Q2_TIMELINE,
-    STATE_Q1_BUDGET:   STATE_Q2_TIMELINE,
-    STATE_Q2_TIMELINE: STATE_Q3_HOUSING,
-    STATE_Q3_HOUSING:  STATE_Q4_NAME,
-    STATE_Q4_NAME:     STATE_COMPLETE,
+    STATE_INITIAL:     STATE_Q1_TIMELINE,
+    STATE_Q1_TIMELINE: STATE_Q2_HOUSING,
+    STATE_Q2_HOUSING:  STATE_Q3_BUDGET,
+    STATE_Q3_BUDGET:   STATE_Q4_PURPOSE,
+    STATE_Q4_PURPOSE:  STATE_COMPLETE,
     STATE_COMPLETE:    STATE_COMPLETE,
 }

@@ -64,6 +64,10 @@ export const leadsService = {
     return data;
   },
 
+  async deleteLead(id: number): Promise<void> {
+    await api.delete(`/leads/${id}/delete/`);
+  },
+
   async getStats(): Promise<LeadStats> {
     const { data } = await api.get<LeadStats>('/leads/stats/');
     return data;

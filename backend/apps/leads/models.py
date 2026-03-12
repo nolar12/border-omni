@@ -19,9 +19,16 @@ class LeadTag(models.Model):
 
 class Lead(models.Model):
     HOUSING_CHOICES = [
-        ('HOUSE', 'Casa'),
-        ('APT', 'Apartamento'),
-        ('OTHER', 'Outro'),
+        ('HOUSE_Y', 'Casa com pátio'),
+        ('HOUSE_N', 'Casa sem pátio'),
+        ('HOUSE',   'Casa'),
+        ('APT',     'Apartamento'),
+        ('OTHER',   'Outro'),
+    ]
+    CLASSIFICATION_CHOICES = [
+        ('HOT_LEAD',  'Hot Lead'),
+        ('WARM_LEAD', 'Warm Lead'),
+        ('COLD_LEAD', 'Cold Lead'),
     ]
     EXPERIENCE_CHOICES = [
         ('FIRST_DOG', 'Primeiro cão'),
@@ -75,6 +82,8 @@ class Lead(models.Model):
     is_ai_active = models.BooleanField(default=True)
     assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_leads')
     conversation_state = models.CharField(max_length=50, null=True, blank=True)
+    ab_variant = models.CharField(max_length=1, null=True, blank=True)
+    lead_classification = models.CharField(max_length=15, choices=CLASSIFICATION_CHOICES, null=True, blank=True)
     tags = models.ManyToManyField(LeadTag, through='LeadTagAssignment', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

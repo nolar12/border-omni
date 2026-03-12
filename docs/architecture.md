@@ -2,42 +2,49 @@
 
 ## Visão Geral
 
-Border Omni é um SaaS multi-tenant de qualificação de leads via WhatsApp. A IA conduz uma conversa estruturada com o lead, calcula uma pontuação e classifica em Tier A/B/C. Quando necessário, o atendimento é transferido para um humano.
+Border Omni é um SaaS multi-tenant de qualificação de leads via WhatsApp. A IA conduz uma conversa estruturada com o lead (3–4 perguntas), calcula uma pontuação e classifica em Tier A/B/C. Quando necessário, o atendimento é transferido para um agente humano que pode enviar texto, imagens e documentos diretamente pelo painel.
 
 ---
 
-## Fluxo principal
+## Fluxo principal — Mensagem de texto
 
 ```
-WhatsApp User
+WhatsApp User (cliente)
+     │
+     ▼ POST /api/webhooks/whatsapp/   (via ngrok em dev / domínio em prod)
+┌──────────────────────────────────────┐
+│         WhatsAppWebhookView          │
+│  1. Detecta payload Meta vs simulador│
+│  2. Identifica canal pelo phone_id   │
+│  3. Identifica organização           │
+│  4. Captura nome do contato (profile)│
+│  5. Cria/busca Lead por telefone     │
+│  6. Salva mensagem IN                │
+│  7. Chama QualifierEngine            │
+│  8. Salva respostas OUT              │
+│  9. Envia respostas via Meta API     │
+└──────────────────────────────────────┘
+```
+
+---
+
+## Fluxo — Mídia recebida (imagem, vídeo, documento)
+
+```
+WhatsApp User envia foto/vídeo/doc
      │
      ▼ POST /api/webhooks/whatsapp/
-┌──────────────────────────────────┐
-│         WhatsAppWebhookView      │
-│  1. Identifica organização       │
-│  2. Cria/busca Lead por telefone │
-│  3. Salva mensagem (IN)          │
-│  4. Chama QualifierEngine        │
-│  5. Salva respostas (OUT)        │
-└──────────────────────────────────┘
+┌──────────────────────────────────────┐
+│  _handle_incoming_media()            │
+│  1. Detecta tipo real (MIME/extensão)│
+│  2. Obtém URL temporária do Meta API │
+│  3. Baixa o arquivo                  │
+│  4. Salva em /backend/media/whatsapp/│
+│  5. Salva mensagem IN com URL local  │
+└──────────────────────────────────────┘
      │
      ▼
-┌──────────────────────────────────┐
-│         QualifierEngine          │
-│  - State machine (7 perguntas)   │
-│  - Parsers de linguagem natural  │
-│  - Cálculo de score (0-100)      │
-│  - Tier assignment (A/B/C)       │
-│  - Auto-tags                     │
-└──────────────────────────────────┘
-     │
-     ▼
-┌──────────────────────────────────┐
-│         Lead atualizado          │
-│  status: QUALIFIED               │
-│  tier: A | B | C                 │
-│  score: 0-100                    │
-└──────────────────────────────────┘
+Frontend exibe: miniatura / player / link
 ```
 
 ---
@@ -45,22 +52,24 @@ WhatsApp User
 ## Fluxo de Handoff Humano
 
 ```
-Agente vê lead QUALIFIED no painel
+Agente vê lead no painel → clica "Assumir"
      │
      ▼ POST /api/leads/{id}/assume/
-┌───────────────────────────────┐
-│  lead.is_ai_active = False    │
-│  lead.assigned_to = user      │
-│  lead.status = HANDOFF        │
-│  Mensagem automática enviada  │
-└───────────────────────────────┘
+┌───────────────────────────────────────┐
+│  lead.is_ai_active = False            │
+│  lead.assigned_to = agente logado     │
+│  lead.status = HANDOFF                │
+│  Mensagem "👋 Atendimento assumido"   │
+│  enviada via WhatsApp API             │
+└───────────────────────────────────────┘
      │
      ▼
-Agente troca mensagens manualmente
-POST /api/leads/{id}/send_message/
+Agente digita mensagens ou envia arquivos
+POST /api/leads/{id}/send_message/   → texto enviado via Meta API
+POST /api/leads/{id}/send_file/      → arquivo enviado via Meta API
      │
-     ▼ POST /api/leads/{id}/release/
-Devolve para IA (opcional)
+     ▼ POST /api/leads/{id}/release/  (opcional)
+Devolve para IA
 ```
 
 ---
@@ -68,37 +77,83 @@ Devolve para IA (opcional)
 ## Arquitetura de Camadas
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    FRONTEND (React)                  │
-│  localhost:9021                                      │
-│                                                      │
-│  Topbar ──── Sidebar ──── Content                   │
-│              Dashboard                               │
-│              LeadsPage (3 colunas)                   │
-│              Channels / Plans / Simulator            │
-└─────────────────────┬───────────────────────────────┘
-                      │ HTTP /api/*
-                      │ (proxy Vite → 9022)
-┌─────────────────────▼───────────────────────────────┐
-│                   BACKEND (Django)                   │
-│  localhost:9022                                      │
-│                                                      │
-│  /api/auth/          JWT Auth                        │
-│  /api/leads/         CRUD + actions                  │
-│  /api/channels/      ChannelProvider CRUD            │
-│  /api/quick-replies/ Templates                       │
-│  /api/plans/         Planos SaaS                     │
-│  /api/subscription/  Assinatura atual                │
-│  /api/webhooks/      WhatsApp inbound                │
-└─────────────────────┬───────────────────────────────┘
-                      │ PyMySQL
-┌─────────────────────▼───────────────────────────────┐
-│                  MySQL (border_leads)                 │
-│  organizations, leads, conversations, messages       │
-│  channels_channelprovider, quick_replies, notes      │
-│  plans, subscriptions, user_profiles                 │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                    FRONTEND (React + Vite)            │
+│  localhost:9021                                       │
+│                                                       │
+│  Topbar ──── Sidebar ──── Content                    │
+│              Dashboard                                │
+│              LeadsPage (3 colunas)                    │
+│                ├── Lista de leads (col 2)             │
+│                └── Chat + Perfil + Notas (col 3)      │
+│              Channels / Plans / Simulator             │
+└──────────────────┬───────────────────────────────────┘
+                   │ HTTP /api/*  e  /media/*
+                   │ (proxy Vite → 9022)
+┌──────────────────▼───────────────────────────────────┐
+│                   BACKEND (Django 4.2)                │
+│  localhost:9022                                       │
+│                                                       │
+│  /api/auth/          JWT Auth (login / refresh)       │
+│  /api/leads/         CRUD + assume/release/send       │
+│  /api/channels/      ChannelProvider CRUD             │
+│  /api/quick-replies/ Respostas rápidas                │
+│  /api/plans/         Planos SaaS                      │
+│  /api/webhooks/      WhatsApp inbound (Meta + sim)    │
+│  /media/             Arquivos recebidos (imagens etc) │
+└──────────────────┬───────────────────────────────────┘
+                   │ PyMySQL
+┌──────────────────▼───────────────────────────────────┐
+│                  MySQL (border_leads)                  │
+│  organizations, leads, conversations, messages        │
+│  channels_channelprovider, quick_replies, notes       │
+│  plans, subscriptions, user_profiles                  │
+└──────────────────────────────────────────────────────┘
 ```
+
+---
+
+## QualifierEngine — Máquina de Estados (atual)
+
+```
+initial
+   │  (primeira mensagem → envia saudação + Q1)
+   ▼
+q1_budget     → orçamento: R$ 5.000 cabe? (1/2/3)
+   │
+   ▼
+q2_timeline   → quando quer o filhote? (1/2/3/4)
+   │
+   ▼
+q3_housing    → mora em casa ou apartamento?
+   │
+   ├── lead.full_name já existe? ──► complete
+   │
+   ▼
+q4_name       → "Qual é o seu nome?" (só se sem nome)
+   │
+   ▼
+complete      → score calculado, tier A/B/C atribuído
+```
+
+### Score (0–100)
+
+| Critério | Pontos |
+|---|---|
+| Orçamento confirmado (YES) | 40 |
+| Quer agora (NOW) | 35 |
+| Mora em casa | 25 |
+| Orçamento talvez (MAYBE) | 20 |
+| Em até 30 dias | 25 |
+| Apartamento | 8 |
+
+### Tiers
+
+| Score | Tier | Significado |
+|---|---|---|
+| ≥ 65 | **A** | Lead quente — prioridade máxima |
+| 35–64 | **B** | Lead morno — tem interesse mas com restrições |
+| < 35 | **C** | Lead frio — orçamento não confirmado / sem prazo |
 
 ---
 
@@ -118,60 +173,10 @@ O isolamento é feito nas views DRF filtrando sempre por `request.user.profile.o
 
 ---
 
-## QualifierEngine — Máquina de Estados
-
-```
-initial
-   │
-   ▼
-q1_location   → cidade/estado
-   │
-   ▼
-q2_housing    → casa / apartamento
-   │
-   ▼
-q3_time       → horas/dia disponíveis
-   │
-   ▼
-q4_experience → experiência com cães
-   │
-   ▼
-q5_budget     → orçamento mensal
-   │
-   ▼
-q6_timeline   → quando quer adquirir
-   │
-   ▼
-q7_purpose    → finalidade (companheiro/esporte/trabalho)
-   │
-   ▼
-complete      → score calculado, tier atribuído
-```
-
-### Score (0–100)
-
-| Critério | Pontos |
-|---|---|
-| Casa com quintal | 20 |
-| 4h+ por dia | 25 |
-| Experiência com alta energia | 20 |
-| Orçamento confirmado | 20 |
-| Quer agora (NOW) | 15 |
-| Tem filhos pequenos | -5 |
-
-### Tiers
-
-| Score | Tier |
-|---|---|
-| 70–100 | A (quente) |
-| 40–69 | B (morno) |
-| 0–39 | C (frio) |
-
----
-
 ## Segurança
 
-- JWT (access 24h, refresh 7d com rotação)
+- JWT (access 24h, refresh 7d com rotação automática)
 - Todos os endpoints requerem autenticação exceto `/api/auth/login`, `/api/auth/register` e `/api/webhooks/whatsapp/`
 - O webhook WhatsApp é validado por `webhook_verify_token` da `ChannelProvider`
-- O isolamento multi-tenant é feito por FK de organização nas queries
+- Tokens de acesso (`access_token`, `app_secret`) são `write_only` no serializer — nunca expostos na API
+- Isolamento multi-tenant via FK de organização em todas as queries
