@@ -2,11 +2,10 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { leadsService } from '../services/leads';
 import { authService } from '../services/auth';
-import type { LeadListItem, Lead, Message } from '../types';
+import type { LeadListItem, Lead, Message, ChannelType } from '../types';
 import TierBadge from '../components/TierBadge';
 import StatusBadge from '../components/StatusBadge';
 import AIStatusBadge from '../components/AIStatusBadge';
-import ClassificationBadge from '../components/ClassificationBadge';
 import QuickReplyDrawer from '../components/QuickReplyDrawer';
 
 // ─── Lead List Item (middle column) ──────────────────────────────────────────
@@ -15,31 +14,73 @@ function LeadRow({ lead, isActive, onClick }: { lead: LeadListItem; isActive: bo
   const name = lead.full_name || lead.phone;
   const initials = name.slice(0, 2).toUpperCase();
   const timeAgo = new Date(lead.updated_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const needsReply = lead.last_message_direction === 'IN' && lead.status !== 'CLOSED';
+  const isClosed = lead.status === 'CLOSED';
 
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-3 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors text-left ${
-        isActive ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
+      className={`w-full flex items-center gap-3 px-3 py-3 border-b border-gray-100 transition-colors text-left ${
+        isActive
+          ? 'bg-blue-50 border-l-2 border-l-blue-500'
+          : isClosed
+            ? 'opacity-50 hover:opacity-70'
+            : needsReply
+              ? 'bg-amber-50 hover:bg-amber-100'
+              : 'hover:bg-gray-50'
       }`}
     >
       {/* Avatar */}
-      <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold ${
-        lead.is_ai_active ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'
+      <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
+        isClosed
+          ? 'bg-gray-100'
+          : lead.is_ai_active
+            ? 'bg-blue-50'
+            : 'bg-green-50'
       }`}>
-        {initials}
+        <ChannelIcon
+          channel={(lead.channels_used?.split(',')[0].trim() as ChannelType) || 'whatsapp'}
+          size="md"
+        />
       </div>
 
       {/* Info */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-1 mb-0.5">
-          <p className="text-sm font-semibold text-gray-800 truncate">{name}</p>
-          <span className="text-xs text-gray-400 flex-shrink-0">{timeAgo}</span>
+          <p className={`text-sm truncate ${
+            isClosed
+              ? 'font-normal text-gray-400'
+              : needsReply
+                ? 'font-bold text-gray-900'
+                : 'font-semibold text-gray-800'
+          }`}>
+            {name}
+          </p>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {needsReply && (
+              <span className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" title="Aguardando resposta" />
+            )}
+            <span className="text-xs text-gray-400">{timeAgo}</span>
+          </div>
         </div>
         <div className="flex items-center gap-1.5">
-          <TierBadge tier={lead.tier} />
-          <StatusBadge status={lead.status} />
-          {!lead.is_ai_active && lead.assigned_to && (
+          {!isClosed && <TierBadge tier={lead.tier} />}
+          {isClosed
+            ? <StatusBadge status={lead.status} />
+            : lead.lead_classification
+              ? (
+                <span className={`inline-flex items-center gap-0.5 text-xs font-semibold rounded-md px-1.5 py-0.5 ${
+                  lead.lead_classification === 'HOT_LEAD'  ? 'bg-red-100 text-red-700'    :
+                  lead.lead_classification === 'WARM_LEAD' ? 'bg-amber-100 text-amber-700' :
+                                                             'bg-blue-100 text-blue-600'
+                }`}>
+                  {lead.lead_classification === 'HOT_LEAD' ? '🔥' : lead.lead_classification === 'WARM_LEAD' ? '🟡' : '❄️'}
+                  {lead.lead_classification === 'HOT_LEAD' ? 'Hot' : lead.lead_classification === 'WARM_LEAD' ? 'Warm' : 'Cold'}
+                </span>
+              )
+              : <StatusBadge status={lead.status} />
+          }
+          {!lead.is_ai_active && lead.assigned_to && !isClosed && (
             <span className="text-xs text-gray-400 truncate">
               → {lead.assigned_to.first_name}
             </span>
@@ -47,6 +88,42 @@ function LeadRow({ lead, isActive, onClick }: { lead: LeadListItem; isActive: bo
         </div>
       </div>
     </button>
+  );
+}
+
+// ─── Message Status Icon (✓ ✓✓ lido) ─────────────────────────────────────────
+
+type MsgStatus = 'sent' | 'delivered' | 'read' | 'failed' | null;
+
+function MessageStatusIcon({ status }: { status: MsgStatus }) {
+  if (!status || status === 'failed') {
+    return (
+      <svg className="inline w-3 h-3 opacity-50" viewBox="0 0 16 11" fill="currentColor">
+        <path d="M11.071.653a.75.75 0 0 1 .023 1.06L5.458 7.899 4 6.44l-.554.555a.75.75 0 1 1-1.062-1.06l1.085-1.086a.75.75 0 0 1 1.061 0l1.458 1.458 5.023-5.631a.75.75 0 0 1 1.06-.023Z"/>
+      </svg>
+    );
+  }
+  if (status === 'sent') {
+    return (
+      <svg className="inline w-3.5 h-3 opacity-60" viewBox="0 0 16 11" fill="currentColor">
+        <path d="M11.071.653a.75.75 0 0 1 .023 1.06L5.458 7.899 4 6.44l-.554.555a.75.75 0 1 1-1.062-1.06l1.085-1.086a.75.75 0 0 1 1.061 0l1.458 1.458 5.023-5.631a.75.75 0 0 1 1.06-.023Z"/>
+      </svg>
+    );
+  }
+  if (status === 'delivered') {
+    return (
+      <svg className="inline w-4 h-3 opacity-60" viewBox="0 0 18 11" fill="currentColor">
+        <path d="M5.458 7.899 4 6.44l-.554.555a.75.75 0 1 1-1.062-1.06l1.085-1.086a.75.75 0 0 1 1.061 0l1.458 1.458 5.023-5.631a.75.75 0 0 1 1.083 1.037L6.52 8.96a.75.75 0 0 1-1.062-.06Z"/>
+        <path d="M14.071.653a.75.75 0 0 1 .023 1.06L8.458 7.899l-.53-.53 5.083-5.693a.75.75 0 0 1 1.06-.023Z"/>
+      </svg>
+    );
+  }
+  // read → duplo tique verde
+  return (
+    <svg className="inline w-4 h-3.5" viewBox="0 0 18 11" fill="#25D366" stroke="#25D366" strokeWidth="0.6" strokeLinejoin="round">
+      <path d="M5.458 7.899 4 6.44l-.554.555a.75.75 0 1 1-1.062-1.06l1.085-1.086a.75.75 0 0 1 1.061 0l1.458 1.458 5.023-5.631a.75.75 0 0 1 1.083 1.037L6.52 8.96a.75.75 0 0 1-1.062-.06Z"/>
+      <path d="M14.071.653a.75.75 0 0 1 .023 1.06L8.458 7.899l-.53-.53 5.083-5.693a.75.75 0 0 1 1.06-.023Z"/>
+    </svg>
   );
 }
 
@@ -127,6 +204,42 @@ function MessageContent({ text }: { text: string }) {
   return <p className="text-sm whitespace-pre-wrap break-words">{text}</p>;
 }
 
+// ─── Channel helpers ──────────────────────────────────────────────────────────
+
+const CHANNEL_LABELS: Record<ChannelType, string> = {
+  whatsapp: 'WhatsApp',
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  messenger: 'Messenger',
+};
+
+function ChannelIcon({ channel, size = 'sm' }: { channel: ChannelType; size?: 'xs' | 'sm' | 'md' }) {
+  const cls = size === 'xs' ? 'w-3 h-3' : size === 'md' ? 'w-5 h-5' : 'w-4 h-4';
+  if (channel === 'whatsapp') {
+    return (
+      <svg className={`${cls} text-green-500`} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+        <path d="M12 0C5.373 0 0 5.373 0 12c0 2.128.558 4.127 1.534 5.859L.057 23.082a.75.75 0 0 0 .916.937l5.403-1.416A11.945 11.945 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.885 0-3.652-.508-5.165-1.395l-.361-.215-3.739.98.997-3.64-.235-.376A9.96 9.96 0 0 1 2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/>
+      </svg>
+    );
+  }
+  if (channel === 'instagram') {
+    return (
+      <svg className={`${cls} text-pink-500`} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 1 0 0 12.324 6.162 6.162 0 0 0 0-12.324zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.406-11.845a1.44 1.44 0 1 0 0 2.881 1.44 1.44 0 0 0 0-2.881z"/>
+      </svg>
+    );
+  }
+  if (channel === 'facebook' || channel === 'messenger') {
+    return (
+      <svg className={`${cls} text-blue-600`} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0C5.373 0 0 5.373 0 12c0 5.99 4.388 10.954 10.125 11.854V15.47H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.384C19.612 22.954 24 17.99 24 12c0-6.627-5.373-12-12-12z"/>
+      </svg>
+    );
+  }
+  return <span className={`${cls === 'w-3 h-3' ? 'text-xs' : 'text-sm'}`}>💬</span>;
+}
+
 // ─── Chat Panel (right column) ───────────────────────────────────────────────
 
 function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () => void; onDeleted: () => void }) {
@@ -146,16 +259,28 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [showClassMenu, setShowClassMenu] = useState(false);
+  const [ragSuggestion, setRagSuggestion] = useState<string | null>(null);
+  const [loadingSuggestion, setLoadingSuggestion] = useState(false);
+  const lastSuggestedMsgId = useRef<number | null>(null);
+  const [cordialityPreview, setCordialityPreview] = useState<{ original: string; enhanced: string } | null>(null);
+  const [enhancing, setEnhancing] = useState(false);
+  const [selectedChannel, setSelectedChannel] = useState<ChannelType | null>(null);
   const user = authService.getCurrentUser();
 
   useEffect(() => {
     setLoading(true);
     setTab('chat');
-    Promise.all([
-      leadsService.getLead(leadId),
-      leadsService.getMessages(leadId),
-    ]).then(([l, msgs]) => {
+    leadsService.getLead(leadId).then(async (l) => {
       setLead(l);
+      // Seleciona o canal da conversa mais recente como padrão
+      const mostRecent = [...(l.conversations ?? [])].sort(
+        (a, b) => new Date(b.last_message_at ?? b.created_at).getTime() - new Date(a.last_message_at ?? a.created_at).getTime()
+      )[0];
+      const defaultChannel = mostRecent?.channel ?? null;
+      setSelectedChannel(defaultChannel);
+      const msgs = await leadsService.getMessages(leadId, defaultChannel ?? undefined);
       setMessages(msgs);
     }).finally(() => setLoading(false));
   }, [leadId]);
@@ -163,6 +288,41 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Recarrega mensagens quando o canal selecionado muda
+  useEffect(() => {
+    if (!leadId) return;
+    leadsService.getMessages(leadId, selectedChannel ?? undefined).then(setMessages).catch(() => {});
+  }, [selectedChannel, leadId]);
+
+  // Polling silencioso de mensagens — detecta novas mensagens do lead sem recarregar a página
+  useEffect(() => {
+    if (!leadId) return;
+    const timer = setInterval(async () => {
+      try {
+        const msgs = await leadsService.getMessages(leadId, selectedChannel ?? undefined);
+        setMessages(prev => {
+          if (msgs.length === prev.length) return prev; // sem mudança
+          return msgs;
+        });
+      } catch { /* silencia erros de rede */ }
+    }, 8_000);
+    return () => clearInterval(timer);
+  }, [leadId, selectedChannel]);
+
+  // Sugere resposta RAG quando nova mensagem IN chega e atendente está no controle
+  useEffect(() => {
+    if (!lead || lead.is_ai_active || messages.length === 0) return;
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg.direction !== 'IN') return;
+    if (lastSuggestedMsgId.current === lastMsg.id) return;
+    lastSuggestedMsgId.current = lastMsg.id;
+    setRagSuggestion(null);
+    setLoadingSuggestion(true);
+    leadsService.suggestResponse(lead.id, lastMsg.text).then(suggestion => {
+      if (suggestion) setRagSuggestion(suggestion);
+    }).finally(() => setLoadingSuggestion(false));
+  }, [messages, lead]);
 
   async function handleAssume() {
     if (!lead) return;
@@ -185,11 +345,33 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
 
   async function handleSend() {
     if (!lead || !msgText.trim()) return;
-    setSending(true);
+    const rawText = msgText.trim();
+    setEnhancing(true);
     try {
-      const msg = await leadsService.sendMessage(lead.id, msgText.trim());
+      const result = await leadsService.enhanceMessage(lead.id, rawText);
+      if (result.changed) {
+        setCordialityPreview({ original: result.original, enhanced: result.enhanced });
+        return;
+      }
+      // Texto não foi alterado — envia direto
+      setSending(true);
+      const msg = await leadsService.sendMessage(lead.id, rawText);
       setMessages(prev => [...prev, msg]);
       setMsgText('');
+    } finally {
+      setEnhancing(false);
+      setSending(false);
+    }
+  }
+
+  async function handleSendEnhanced() {
+    if (!lead || !cordialityPreview) return;
+    setSending(true);
+    try {
+      const msg = await leadsService.sendMessage(lead.id, cordialityPreview.enhanced);
+      setMessages(prev => [...prev, msg]);
+      setMsgText('');
+      setCordialityPreview(null);
     } finally {
       setSending(false);
     }
@@ -249,6 +431,25 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     setNoteText('');
   }
 
+  async function handleClose() {
+    if (!lead) return;
+    setClosing(true);
+    try {
+      const updated = await leadsService.closeLead(lead.id);
+      setLead(updated);
+      onDeleted(); // recarrega a lista
+    } finally {
+      setClosing(false);
+    }
+  }
+
+  async function handleReopen() {
+    if (!lead) return;
+    const updated = await leadsService.reopenLead(lead.id);
+    setLead(updated);
+    onDeleted();
+  }
+
   async function handleDelete() {
     if (!lead) return;
     setDeleting(true);
@@ -292,19 +493,100 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
           </span>
         </div>
 
-        {/* Lead info */}
+        {/* Lead info + channel selector */}
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-gray-800 text-sm truncate">
             {lead.full_name || lead.phone}
           </p>
-          <p className="text-xs text-gray-400">{lead.phone}</p>
+          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+            {lead.conversations && lead.conversations.length > 1 ? (
+              lead.conversations.map((conv) => (
+                <button
+                  key={conv.id}
+                  onClick={() => setSelectedChannel(conv.channel)}
+                  className={`inline-flex items-center gap-1 text-xs rounded-full px-2 py-0.5 transition-colors ${
+                    selectedChannel === conv.channel
+                      ? 'bg-blue-100 text-blue-700 font-semibold'
+                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                  }`}
+                >
+                  <ChannelIcon channel={conv.channel} size="xs" />
+                  {CHANNEL_LABELS[conv.channel]}
+                </button>
+              ))
+            ) : (
+              <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                <ChannelIcon channel={selectedChannel ?? 'whatsapp'} size="xs" />
+                {lead.phone || lead.facebook_psid || lead.instagram_user_id || ''}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Badges + actions */}
         <div className="flex items-center gap-2 flex-shrink-0">
           <div className="hidden sm:flex items-center gap-1.5">
             <TierBadge tier={lead.tier} />
-            <ClassificationBadge classification={lead.lead_classification} />
+
+            {/* Classification dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowClassMenu(v => !v)}
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-semibold transition-colors hover:opacity-80"
+                style={{ minWidth: 52 }}
+                title="Alterar classificação"
+              >
+                {lead.lead_classification === 'HOT_LEAD'  && <><span>🔥</span><span className="text-red-700">Hot</span></>}
+                {lead.lead_classification === 'WARM_LEAD' && <><span>🟡</span><span className="text-amber-700">Warm</span></>}
+                {lead.lead_classification === 'COLD_LEAD' && <><span>❄️</span><span className="text-blue-600">Cold</span></>}
+                {!lead.lead_classification && <span className="text-gray-400 italic">+ classificar</span>}
+                <svg className="w-3 h-3 text-gray-400 ml-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+
+              {showClassMenu && (
+                <>
+                  {/* backdrop */}
+                  <div className="fixed inset-0 z-10" onClick={() => setShowClassMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[130px]">
+                    {([
+                      { value: 'HOT_LEAD',  label: 'Hot',  icon: '🔥', cls: 'hover:bg-red-50 text-gray-700 hover:text-red-700' },
+                      { value: 'WARM_LEAD', label: 'Warm', icon: '🟡', cls: 'hover:bg-amber-50 text-gray-700 hover:text-amber-700' },
+                      { value: 'COLD_LEAD', label: 'Cold', icon: '❄️', cls: 'hover:bg-blue-50 text-gray-700 hover:text-blue-600' },
+                    ] as const).map(({ value, label, icon, cls }) => (
+                      <button
+                        key={value}
+                        onClick={async () => {
+                          setShowClassMenu(false);
+                          const next = lead.lead_classification === value ? null : value;
+                          const updated = await leadsService.updateLead(lead.id, { lead_classification: next });
+                          setLead(updated);
+                        }}
+                        className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm ${cls} ${lead.lead_classification === value ? 'font-bold' : ''}`}
+                      >
+                        <span>{icon}</span>{label}
+                        {lead.lead_classification === value && <span className="ml-auto text-xs opacity-50">✓</span>}
+                      </button>
+                    ))}
+                    {lead.lead_classification && (
+                      <>
+                        <div className="border-t border-gray-100 my-1" />
+                        <button
+                          onClick={async () => {
+                            setShowClassMenu(false);
+                            const updated = await leadsService.updateLead(lead.id, { lead_classification: null });
+                            setLead(updated);
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-400 hover:bg-gray-50"
+                        >
+                          <span>✕</span> Remover
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+
             <AIStatusBadge isAiActive={lead.is_ai_active} assignedTo={lead.assigned_to} />
           </div>
 
@@ -319,6 +601,36 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
           ) : (
             <button onClick={handleRelease} className="btn btn-ghost btn-xs text-blue-600 hidden sm:flex">
               🤖 IA
+            </button>
+          )}
+
+          {/* Close / Reopen button */}
+          {lead.status === 'CLOSED' ? (
+            <button
+              onClick={handleReopen}
+              title="Reabrir lead"
+              className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-300 hover:bg-green-50 hover:text-green-600 transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <polyline points="1 4 1 10 7 10"/>
+                <path d="M3.51 15a9 9 0 1 0 .49-3.5"/>
+              </svg>
+            </button>
+          ) : (
+            <button
+              onClick={handleClose}
+              disabled={closing}
+              title="Fechar conversa"
+              className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-300 hover:bg-gray-100 hover:text-gray-500 transition-colors"
+            >
+              {closing
+                ? <span className="loading loading-spinner loading-xs" />
+                : (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                )
+              }
             </button>
           )}
 
@@ -380,22 +692,104 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
             {messages.length === 0 && (
               <p className="text-center text-gray-400 text-xs pt-8">Nenhuma mensagem ainda.</p>
             )}
-            {messages.map(msg => (
-              <div key={msg.id} className={`flex ${msg.direction === 'OUT' ? 'justify-end' : 'justify-start'}`}>
-                <div className={msg.direction === 'OUT' ? 'chat-bubble-out' : 'chat-bubble-in'}>
-                  <MessageContent text={msg.text} />
-                  <p className={`text-[10px] mt-1 opacity-60 ${msg.direction === 'OUT' ? 'text-right' : ''}`}>
-                    {new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                  </p>
+            {messages.map(msg => {
+              const isComment = msg.text.startsWith('[Comentário]');
+              const isSuggestion = msg.text.startsWith('[Sugestão]');
+              const displayText = isComment
+                ? msg.text.replace(/^\[Comentário\]\s*/, '')
+                : isSuggestion
+                  ? msg.text.replace(/^\[Sugestão\]\s*/, '')
+                  : msg.text;
+
+              if (isComment) {
+                return (
+                  <div key={msg.id} className="flex justify-start">
+                    <div className="max-w-[75%] bg-pink-50 border border-pink-200 rounded-2xl rounded-tl-sm px-3 py-2">
+                      <div className="flex items-center gap-1 mb-1">
+                        <ChannelIcon channel="instagram" size="xs" />
+                        <span className="text-[10px] font-semibold text-pink-600 uppercase tracking-wide">Comentário</span>
+                      </div>
+                      <MessageContent text={displayText} />
+                      <p className="text-[10px] mt-1 opacity-50">
+                        {new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                );
+              }
+
+              if (isSuggestion) {
+                return (
+                  <div key={msg.id} className="flex justify-end">
+                    <div className="max-w-[75%] bg-amber-50 border border-amber-200 rounded-2xl rounded-tr-sm px-3 py-2">
+                      <div className="flex items-center gap-1 mb-1">
+                        <span className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide">💡 Sugestão IA</span>
+                      </div>
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap break-words">{displayText}</p>
+                      {!lead.is_ai_active && (
+                        <button
+                          onClick={() => setMsgText(displayText)}
+                          className="mt-2 text-xs px-2.5 py-1 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors font-medium"
+                        >
+                          Usar como resposta
+                        </button>
+                      )}
+                      <p className="text-[10px] mt-1 opacity-50 text-right">
+                        {new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div key={msg.id} className={`flex ${msg.direction === 'OUT' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={msg.direction === 'OUT' ? 'chat-bubble-out' : 'chat-bubble-in'}>
+                    <MessageContent text={msg.text} />
+                    <p className={`text-[10px] mt-1 opacity-60 ${msg.direction === 'OUT' ? 'text-right' : ''} flex items-center gap-0.5 ${msg.direction === 'OUT' ? 'justify-end' : ''}`}>
+                      <span>{new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                      {msg.direction === 'OUT' && <MessageStatusIcon status={msg.msg_status} />}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             <div ref={chatEndRef} />
           </div>
 
           {/* Input area */}
           {!lead.is_ai_active ? (
             <div className="border-t border-gray-100 bg-white flex-shrink-0">
+
+              {/* Banner de sugestão RAG */}
+              {(loadingSuggestion || ragSuggestion) && (
+                <div className="flex items-start gap-2 px-3 pt-2 pb-1">
+                  <div className="flex-1 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                    <span className="text-amber-500 text-sm flex-shrink-0 mt-0.5">💡</span>
+                    {loadingSuggestion && !ragSuggestion ? (
+                      <span className="text-xs text-amber-600 italic">Gerando sugestão...</span>
+                    ) : (
+                      <p className="text-xs text-gray-700 flex-1 leading-relaxed">{ragSuggestion}</p>
+                    )}
+                  </div>
+                  {ragSuggestion && (
+                    <div className="flex flex-col gap-1 flex-shrink-0">
+                      <button
+                        onClick={() => { setMsgText(ragSuggestion); setRagSuggestion(null); }}
+                        className="text-xs px-2 py-1 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors font-medium"
+                      >
+                        Usar
+                      </button>
+                      <button
+                        onClick={() => setRagSuggestion(null)}
+                        className="text-xs px-2 py-1 rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors"
+                      >
+                        Ignorar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Aviso de erro de arquivo */}
               {fileError && (
@@ -489,15 +883,16 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                   placeholder="Digite sua mensagem..."
                   className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-blue-400 transition-colors"
                   value={msgText}
-                  onChange={e => setMsgText(e.target.value)}
+                  onChange={e => { setMsgText(e.target.value); if (ragSuggestion) setRagSuggestion(null); }}
                   onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
                 />
                 <button
                   onClick={handleSend}
-                  disabled={sending || !msgText.trim()}
+                  disabled={sending || enhancing || !msgText.trim()}
                   className="flex items-center justify-center w-9 h-9 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0"
+                  title={enhancing ? 'Aprimorando mensagem...' : 'Enviar'}
                 >
-                  {sending
+                  {(sending || enhancing)
                     ? <span className="loading loading-spinner loading-xs" />
                     : (
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -533,7 +928,6 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
           {/* Mobile actions */}
           <div className="flex flex-wrap gap-2 mb-4 sm:hidden">
             <TierBadge tier={lead.tier} size="md" />
-            <ClassificationBadge classification={lead.lead_classification} size="md" />
             <StatusBadge status={lead.status} />
             {lead.is_ai_active ? (
               <button onClick={handleAssume} className="btn btn-warning btn-xs">🤝 Assumir</button>
@@ -542,12 +936,6 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
             )}
           </div>
 
-          {lead.lead_classification && (
-            <div className="mb-3 flex items-center gap-2">
-              <span className="text-xs text-gray-400">Classificação:</span>
-              <ClassificationBadge classification={lead.lead_classification} size="md" />
-            </div>
-          )}
 
           <div className="grid grid-cols-2 gap-2">
             {[
@@ -628,6 +1016,59 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
         userName={agentName}
         leadName={lead.full_name ?? ''}
       />
+
+      {/* ── Modal de aprovação de cordialidade ── */}
+      {cordialityPreview && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                </svg>
+              </div>
+              <div>
+                <p className="font-semibold text-gray-800 text-sm">Mensagem aprimorada</p>
+                <p className="text-xs text-gray-500">A IA tornou sua mensagem mais cordial. Deseja enviá-la?</p>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="px-5 py-4 space-y-3 max-h-72 overflow-y-auto">
+              <div>
+                <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">Original</p>
+                <p className="text-sm text-gray-500 bg-gray-50 rounded-xl px-3 py-2.5 whitespace-pre-wrap leading-relaxed">
+                  {cordialityPreview.original}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-blue-500 uppercase tracking-wide mb-1">Versão aprimorada</p>
+                <p className="text-sm text-gray-800 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 whitespace-pre-wrap leading-relaxed">
+                  {cordialityPreview.enhanced}
+                </p>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center gap-2 px-5 py-4 border-t border-gray-100 bg-gray-50">
+              <button
+                onClick={() => setCordialityPreview(null)}
+                className="flex-1 py-2 rounded-xl text-sm font-medium text-gray-600 bg-white border border-gray-200 hover:bg-gray-100 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSendEnhanced}
+                disabled={sending}
+                className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                {sending ? <span className="loading loading-spinner loading-xs" /> : 'Enviar versão aprimorada'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -656,15 +1097,18 @@ export default function LeadsPage() {
   const [filters, setFilters] = useState<LeadFilter>(FILTER_DEFAULTS);
   const [showFilters, setShowFilters] = useState(false);
 
-  const load = useCallback((f: LeadFilter = filters, p: number = 1) => {
-    setLoading(true);
+  const buildParams = (f: LeadFilter, p: number) => {
     const params: Record<string, string | number | boolean> = { page: p };
     if (f.tier) params.tier = f.tier;
     if (f.status) params.status = f.status;
     if (f.is_ai_active) params.is_ai_active = f.is_ai_active === 'true';
     if (f.search) params.search = f.search;
+    return params;
+  };
 
-    leadsService.getLeads(params as never)
+  const load = useCallback((f: LeadFilter = filters, p: number = 1) => {
+    setLoading(true);
+    leadsService.getLeads(buildParams(f, p) as never)
       .then(data => {
         setLeads(p === 1 ? data.results : prev => [...prev, ...data.results]);
         setTotal(data.count);
@@ -674,7 +1118,21 @@ export default function LeadsPage() {
       .finally(() => setLoading(false));
   }, [filters]);
 
+  // Polling silencioso da lista — sem spinner, só atualiza os dados
+  const silentRefresh = useCallback((f: LeadFilter = filters) => {
+    leadsService.getLeads(buildParams(f, 1) as never).then(data => {
+      setLeads(data.results);
+      setTotal(data.count);
+      setHasMore(!!data.next);
+    }).catch(() => {});
+  }, [filters]);
+
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => silentRefresh(filters), 15_000);
+    return () => clearInterval(timer);
+  }, [filters, silentRefresh]);
 
   function applyFilter(key: keyof LeadFilter, value: string) {
     const next = { ...filters, [key]: value };
@@ -791,7 +1249,14 @@ export default function LeadsPage() {
             </div>
           ) : (
             <>
-              {leads.map(lead => (
+              {[...leads]
+                .sort((a, b) => {
+                  const aClosed = a.status === 'CLOSED' ? 2 : a.last_message_direction === 'IN' ? 0 : 1;
+                  const bClosed = b.status === 'CLOSED' ? 2 : b.last_message_direction === 'IN' ? 0 : 1;
+                  if (aClosed !== bClosed) return aClosed - bClosed;
+                  return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+                })
+                .map(lead => (
                 <LeadRow
                   key={lead.id}
                   lead={lead}

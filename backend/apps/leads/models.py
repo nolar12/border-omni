@@ -62,6 +62,8 @@ class Lead(models.Model):
 
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='leads')
     phone = models.CharField(max_length=30)
+    facebook_psid = models.CharField(max_length=100, null=True, blank=True)
+    instagram_user_id = models.CharField(max_length=100, null=True, blank=True)
     full_name = models.CharField(max_length=200, null=True, blank=True)
     instagram_handle = models.CharField(max_length=100, null=True, blank=True)
     city = models.CharField(max_length=100, null=True, blank=True)

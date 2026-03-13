@@ -31,6 +31,7 @@ LOCAL_APPS = [
     'apps.quick_replies',
     'apps.channels',
     'apps.qualifier',
+    'apps.rag',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -104,17 +105,14 @@ QUALIFICATION_MEDIA_TYPE = os.getenv('QUALIFICATION_MEDIA_TYPE', 'video')
 # A/B test de mídia: 4 variantes sorteadas aleatoriamente para cada novo lead.
 # Configure as URLs públicas das mídias (HTTPS obrigatório para o WhatsApp).
 # Exemplo local via ngrok: https://xxxx.ngrok.io/media/ab_test/variant_a.mp4
-_AB_CAPTION = (
-    "Esse vídeo é de uma ninhada anterior nossa 🐾\n\n"
-    "Só para você conhecer melhor o padrão dos nossos filhotes.\n\n"
-    "A ninhada atual ainda é bem novinha, mas já temos algumas reservas feitas.\n\n"
-    "Vou te fazer 4 perguntinhas rápidas para entender melhor o que você procura."
-)
+_AB_CAPTION_VIDEO = ''
+_AB_CAPTION_IMAGE = ''
+_NGROK = 'https://nonredeemable-superseriously-keyla.ngrok-free.dev'
 AB_MEDIA_VARIANTS = {
-    'A': {'type': 'video', 'url': os.getenv('AB_MEDIA_URL_A', ''), 'caption': _AB_CAPTION},
-    'B': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_B', ''), 'caption': _AB_CAPTION},
-    'C': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_C', ''), 'caption': _AB_CAPTION},
-    'D': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_D', ''), 'caption': _AB_CAPTION},
+    'A': {'type': 'video', 'url': os.getenv('AB_MEDIA_URL_A', f'{_NGROK}/media/ab_test/variant_a.mp4'), 'caption': _AB_CAPTION_VIDEO},
+    'B': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_B', f'{_NGROK}/media/ab_test/variant_b.png'), 'caption': _AB_CAPTION_IMAGE},
+    'C': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_C', f'{_NGROK}/media/ab_test/variant_c.png'), 'caption': _AB_CAPTION_IMAGE},
+    'D': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_D', f'{_NGROK}/media/ab_test/variant_d.png'), 'caption': _AB_CAPTION_IMAGE},
 }
 
 # CORS
@@ -148,6 +146,10 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
+
+# Supabase — infraestrutura vetorial compartilhada (dados isolados por organization_id)
+SUPABASE_URL = os.getenv('SUPABASE_URL', '')
+SUPABASE_SERVICE_KEY = os.getenv('SUPABASE_SERVICE_KEY', '')
 
 # Logging
 LOGGING = {

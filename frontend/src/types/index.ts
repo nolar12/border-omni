@@ -42,6 +42,8 @@ export type HousingType = 'HOUSE_Y' | 'HOUSE_N' | 'HOUSE' | 'APT' | 'OTHER';
 export interface Lead {
   id: number;
   phone: string;
+  facebook_psid: string | null;
+  instagram_user_id: string | null;
   full_name: string | null;
   instagram_handle: string | null;
   city: string | null;
@@ -65,6 +67,7 @@ export interface Lead {
   tags: string[];
   notes: Note[];
   conversation_state: string | null;
+  conversations: Conversation[];
   created_at: string;
   updated_at: string;
 }
@@ -80,11 +83,23 @@ export interface LeadListItem {
   score: number;
   status: LeadStatus;
   source: LeadSource;
+  channels_used: string;
   is_ai_active: boolean;
   assigned_to: AssignedUser | null;
   tags: string[];
+  last_message_direction: 'IN' | 'OUT' | null;
   created_at: string;
   updated_at: string;
+}
+
+export type ChannelType = 'whatsapp' | 'instagram' | 'facebook' | 'messenger';
+
+export interface Conversation {
+  id: number;
+  channel: ChannelType;
+  state: 'active' | 'closed' | 'pending';
+  last_message_at: string | null;
+  created_at: string;
 }
 
 export interface Message {
@@ -92,6 +107,7 @@ export interface Message {
   direction: 'IN' | 'OUT';
   text: string;
   provider_message_id: string | null;
+  msg_status: 'sent' | 'delivered' | 'read' | 'failed' | null;
   created_at: string;
 }
 
@@ -102,9 +118,24 @@ export interface Note {
   created_at: string;
 }
 
+export interface QuickReplyCategory {
+  id: number;
+  name: string;
+  sort_order: number;
+  created_at: string;
+}
+
 export interface QuickReply {
   id: number;
-  category: 'GREETING' | 'PRICING' | 'AVAILABILITY' | 'SCHEDULING' | 'INFO' | 'CLOSING';
+  // New structured fields
+  category_ref: number | null;
+  category_name: string;
+  title: string;
+  body: string;
+  sort_order: number;
+  is_personal: boolean;
+  // Legacy fields kept for backward compat
+  category: string;
   text: string;
   shortcut: string;
   is_active: boolean;

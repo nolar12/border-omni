@@ -13,6 +13,14 @@ LOG_DIR="$ROOT/logs"
 
 mkdir -p "$LOG_DIR"
 
+# Carrega variáveis de ambiente do .env se existir
+if [ -f "$ROOT/.env" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$ROOT/.env"
+  set +a
+fi
+
 # ─── Colors ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 info()    { echo -e "${CYAN}[border-omni]${NC} $*"; }
@@ -86,16 +94,37 @@ start_frontend() {
   success "Frontend rodando → http://localhost:9021  (log: logs/frontend.log)"
 }
 
+NGROK_DOMAIN="borderomni.ngrok.app"
+
+# ─── Start ngrok ─────────────────────────────────────────────────────────────
+start_ngrok() {
+  info "Iniciando ngrok com domínio fixo $NGROK_DOMAIN..."
+  pkill -f "ngrok http" 2>/dev/null
+  sleep 1
+  ngrok http 9022 --url="$NGROK_DOMAIN" > "$LOG_DIR/ngrok.log" 2>&1 &
+  NGROK_PID=$!
+  echo $NGROK_PID > "$LOG_DIR/ngrok.pid"
+  sleep 6
+  NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tunnels'][0]['public_url'])" 2>/dev/null)
+  if [ -n "$NGROK_URL" ]; then
+    success "Ngrok ativo → $NGROK_URL  (log: logs/ngrok.log)"
+  else
+    warn "Ngrok iniciado mas URL não detectada. Verifique logs/ngrok.log"
+  fi
+}
+
 # ─── Stop all ────────────────────────────────────────────────────────────────
 stop_all() {
   info "Encerrando serviços..."
-  for pidfile in "$LOG_DIR/backend.pid" "$LOG_DIR/frontend.pid"; do
+  for pidfile in "$LOG_DIR/backend.pid" "$LOG_DIR/frontend.pid" "$LOG_DIR/ngrok.pid"; do
     if [ -f "$pidfile" ]; then
       pid=$(cat "$pidfile")
       kill "$pid" 2>/dev/null && info "PID $pid encerrado" || true
       rm -f "$pidfile"
     fi
   done
+  pkill -f "ngrok http" 2>/dev/null || true
   kill_port 9021
   kill_port 9022
   success "Serviços encerrados."
@@ -111,12 +140,17 @@ case "${1:-start}" in
     echo ""
     start_backend
     start_frontend
+    start_ngrok
     echo ""
     echo -e "${GREEN}✅ Sistema iniciado!${NC}"
     echo -e "   Frontend:  ${CYAN}http://localhost:9021${NC}"
     echo -e "   Backend:   ${CYAN}http://localhost:9022${NC}"
     echo -e "   Admin:     ${CYAN}http://localhost:9022/admin${NC}"
     echo -e "   Login:     marcello12souza@gmail.com / admin123"
+    echo ""
+    echo -e "   Webhooks públicos (ngrok fixo):"
+    echo -e "   WhatsApp:  ${CYAN}https://$NGROK_DOMAIN/api/webhooks/whatsapp/${NC}"
+    echo -e "   Meta:      ${CYAN}https://$NGROK_DOMAIN/api/webhooks/meta/${NC}"
     echo ""
     echo -e "   Para encerrar: ${YELLOW}./start.sh stop${NC}"
     echo ""

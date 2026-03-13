@@ -14,12 +14,10 @@ STATE_ORDER = [
     STATE_COMPLETE,
 ]
 
-MSG_MEDIA_CAPTION = (
-    "Esse vídeo é de uma ninhada anterior nossa 🐾\n\n"
-    "Só para você conhecer melhor o padrão dos nossos filhotes.\n\n"
-    "A ninhada atual ainda é bem novinha, mas já temos algumas reservas feitas.\n\n"
-    "Vou te fazer 4 perguntinhas rápidas para entender melhor o que você procura."
-)
+MSG_MEDIA_CAPTION_VIDEO = ''
+MSG_MEDIA_CAPTION_IMAGE = ''
+# Alias para compatibilidade com o fallback legado (sempre vídeo)
+MSG_MEDIA_CAPTION = MSG_MEDIA_CAPTION_VIDEO
 
 MSG_INTRO = (
     "Olá! 🐕 Aqui é a Border Collie Sul.\n\n"
@@ -68,10 +66,9 @@ MESSAGES = {
         "4️⃣ Ainda estou pesquisando sobre a raça"
     ),
     STATE_COMPLETE: (
-        "Perfeito! Obrigado pelas respostas.\n\n"
-        "Vou te mostrar agora quais filhotes ainda estão disponíveis desta ninhada "
-        "e te enviar algumas fotos. 🐾\n\n"
-        "Se quiser, também posso te explicar as diferenças entre eles para te ajudar a escolher."
+        "Perfeito! Obrigado pelas respostas. 🐾\n\n"
+        "Estamos juntando as fotos e opções disponíveis da nova ninhada para te enviar.\n\n"
+        "Entraremos em contato em breve!"
     ),
 }
 

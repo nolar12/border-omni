@@ -14,6 +14,14 @@ LOG_FILE="/tmp/border_omni_watchdog.log"
 BACKEND_LOG="/tmp/backend.log"
 CHECK_INTERVAL=20   # segundos entre cada verificação
 
+# Carrega variáveis de ambiente do .env se existir
+if [ -f "$PROJECT_DIR/.env" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$PROJECT_DIR/.env"
+  set +a
+fi
+
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
@@ -28,18 +36,22 @@ start_backend() {
   log "✅ Backend iniciado (PID: $!)"
 }
 
+NGROK_DOMAIN="borderomni.ngrok.app"
+
 start_ngrok() {
-  log "🌐 Iniciando ngrok na porta $BACKEND_PORT..."
+  log "🌐 Iniciando ngrok com domínio fixo $NGROK_DOMAIN..."
   pkill -f "ngrok http" 2>/dev/null
   sleep 1
-  nohup ngrok http "$BACKEND_PORT" --log=stdout >> /tmp/ngrok.log 2>&1 &
-  sleep 4
+  nohup ngrok http "$BACKEND_PORT" --url="$NGROK_DOMAIN" >> /tmp/ngrok.log 2>&1 &
+  sleep 6
 
   NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tunnels'][0]['public_url'])" 2>/dev/null)
 
   if [ -n "$NGROK_URL" ]; then
     log "✅ Ngrok ativo: $NGROK_URL"
+    log "   WhatsApp webhook : $NGROK_URL/api/webhooks/whatsapp/"
+    log "   Meta webhook     : $NGROK_URL/api/webhooks/meta/"
   else
     log "⚠️  Ngrok iniciado mas URL não detectada ainda."
   fi

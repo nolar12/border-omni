@@ -2,24 +2,26 @@ import logging
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
 from django.db import transaction
-from rest_framework import viewsets, status
+from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.core.models import Organization, UserProfile, Plan, Subscription
+from apps.core.models import Organization, UserProfile, Plan, Subscription, AgentConfig
 from apps.leads.models import Lead, Note
 from apps.conversations.models import Conversation, Message
-from apps.quick_replies.models import QuickReply
+from apps.quick_replies.models import QuickReply, QuickReplyCategory
 from apps.channels.models import ChannelProvider
 from apps.qualifier.engine import QualifierEngine
 
 from api.serializers import (
     UserSerializer, LeadListSerializer, LeadDetailSerializer,
-    MessageSerializer, NoteSerializer, QuickReplySerializer,
+    MessageSerializer, NoteSerializer,
+    QuickReplySerializer, QuickReplyCategorySerializer,
     ChannelProviderSerializer, PlanSerializer, SubscriptionSerializer,
+    AgentConfigSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,7 +100,7 @@ class MeView(APIView):
 
 # ─── Leads ────────────────────────────────────────────────────────────────────
 
-class LeadViewSet(viewsets.ReadOnlyModelViewSet):
+class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     filterset_fields = ['tier', 'status', 'source', 'is_ai_active']
     search_fields = ['phone', 'full_name', 'instagram_handle']
@@ -118,12 +120,11 @@ class LeadViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['get'])
     def messages(self, request, pk=None):
         lead = self.get_object()
-        try:
-            conv = lead.conversation
-            msgs = conv.messages.all()
-            return Response(MessageSerializer(msgs, many=True).data)
-        except Conversation.DoesNotExist:
-            return Response([])
+        channel = request.query_params.get('channel')
+        qs = Message.objects.filter(conversation__lead=lead).order_by('created_at')
+        if channel:
+            qs = qs.filter(conversation__channel=channel)
+        return Response(MessageSerializer(qs, many=True).data)
 
     @action(detail=True, methods=['post'])
     def assume(self, request, pk=None):
@@ -133,13 +134,15 @@ class LeadViewSet(viewsets.ReadOnlyModelViewSet):
         lead.assigned_to = request.user
         lead.status = 'HANDOFF'
         lead.save(update_fields=['is_ai_active', 'assigned_to', 'status'])
-        conv, _ = Conversation.objects.get_or_create(
-            lead=lead,
-            defaults={'organization': org, 'channel': 'whatsapp', 'state': 'active'},
-        )
+        active_conv = lead.conversations.order_by('-last_message_at').first()
+        if not active_conv:
+            active_conv, _ = Conversation.objects.get_or_create(
+                lead=lead, channel='whatsapp',
+                defaults={'organization': org, 'state': 'active'},
+            )
         agent_name = request.user.first_name or request.user.email
         Message.objects.create(
-            conversation=conv,
+            conversation=active_conv,
             organization=org,
             direction='OUT',
             text=f"👋 Atendimento assumido por {agent_name}.",
@@ -162,29 +165,129 @@ class LeadViewSet(viewsets.ReadOnlyModelViewSet):
         text = request.data.get('text', '').strip()
         if not text:
             return Response({'detail': 'Texto obrigatório.'}, status=400)
-        conv, _ = Conversation.objects.get_or_create(
-            lead=lead,
-            defaults={'organization': org, 'channel': 'whatsapp', 'state': 'active'},
+
+        # Usa a conversa mais recente do lead; default para whatsapp se ainda não existe
+        active_conv = lead.conversations.order_by('-last_message_at').first()
+        if not active_conv:
+            active_conv, _ = Conversation.objects.get_or_create(
+                lead=lead, channel='whatsapp',
+                defaults={'organization': org, 'state': 'active'},
+            )
+        channel = active_conv.channel
+
+        # Captura última mensagem IN para armazenar o par de treinamento
+        last_in = (
+            Message.objects.filter(conversation=active_conv, direction='IN')
+            .order_by('-created_at').first()
         )
+
         msg = Message.objects.create(
-            conversation=conv,
+            conversation=active_conv,
             organization=org,
             direction='OUT',
             text=text,
+            msg_status='sent',
         )
-        # Send via WhatsApp if channel is active
+
         from apps.channels.models import ChannelProvider
         channel_provider = ChannelProvider.objects.filter(
-            organization=org, provider='whatsapp', is_active=True,
+            organization=org, provider=channel, is_active=True,
         ).first()
-        if channel_provider and channel_provider.access_token and channel_provider.phone_number_id:
-            _send_whatsapp_message(
-                phone_number_id=channel_provider.phone_number_id,
-                access_token=channel_provider.access_token,
-                to=lead.phone,
-                text=text,
-            )
+
+        if channel_provider and channel_provider.access_token:
+            if channel in ('messenger', 'facebook'):
+                _send_facebook_message(
+                    page_id=channel_provider.page_id,
+                    access_token=channel_provider.access_token,
+                    recipient_id=lead.facebook_psid or '',
+                    text=text,
+                )
+            elif channel == 'instagram':
+                _send_instagram_message(
+                    instagram_account_id=channel_provider.instagram_account_id,
+                    access_token=channel_provider.access_token,
+                    recipient_id=lead.instagram_user_id or '',
+                    text=text,
+                )
+            elif channel_provider.phone_number_id:
+                wamid = _send_whatsapp_message(
+                    phone_number_id=channel_provider.phone_number_id,
+                    access_token=channel_provider.access_token,
+                    to=lead.phone,
+                    text=text,
+                )
+                if wamid:
+                    Message.objects.filter(pk=msg.pk).update(provider_message_id=wamid)
+                    msg.provider_message_id = wamid
+
+        # Coleta de dados de treinamento em background (não bloqueia a resposta)
+        if last_in:
+            try:
+                agent_config = org.agent_config
+                if agent_config and agent_config.is_ready():
+                    from apps.rag.services.training_service import store_conversation_pair
+                    store_conversation_pair(agent_config, last_in.text, text, lead)
+            except AgentConfig.DoesNotExist:
+                pass
+            except Exception:
+                pass
+
         return Response(MessageSerializer(msg).data, status=201)
+
+    @action(detail=True, methods=['post'])
+    def enhance_message(self, request, pk=None):
+        """
+        Pré-visualização de cordialidade.
+        Transforma o texto via IA mas NÃO salva nem envia nada.
+        Retorna: { original, enhanced, changed }
+        """
+        lead = self.get_object()
+        text = request.data.get('text', '').strip()
+        if not text:
+            return Response({'detail': 'Texto obrigatório.'}, status=400)
+
+        enhanced = text
+        try:
+            agent_config = lead.organization.agent_config
+            if agent_config and getattr(agent_config, 'cordiality_enabled', False):
+                from apps.rag.services.cordiality_service import CordialityEnhancementService
+                enhanced = CordialityEnhancementService(agent_config, lead).enhance(text)
+        except AgentConfig.DoesNotExist:
+            pass
+        except Exception as e:
+            logger.warning(f'enhance_message error: {e}')
+
+        return Response({
+            'original': text,
+            'enhanced': enhanced,
+            'changed': enhanced != text,
+        })
+
+    @action(detail=True, methods=['post'])
+    def suggest_response(self, request, pk=None):
+        """Gera sugestão de resposta RAG para o atendente. Não envia nada."""
+        lead = self.get_object()
+        org = lead.organization
+        message_text = request.data.get('message', '').strip()
+        if not message_text:
+            return Response({'suggestion': None})
+
+        try:
+            agent_config = org.agent_config
+        except AgentConfig.DoesNotExist:
+            return Response({'suggestion': None})
+
+        if not agent_config.is_ready():
+            return Response({'suggestion': None})
+
+        try:
+            from apps.rag.services.rag_service import RAGService
+            suggestion = RAGService(agent_config).suggest(lead, message_text)
+        except Exception as e:
+            logger.warning(f'suggest_response error: {e}')
+            suggestion = None
+
+        return Response({'suggestion': suggestion})
 
     @action(detail=True, methods=['post'])
     def send_file(self, request, pk=None):
@@ -268,18 +371,20 @@ class LeadViewSet(viewsets.ReadOnlyModelViewSet):
 
         # 3. Salva no banco como mensagem OUT
         conv, _ = Conversation.objects.get_or_create(
-            lead=lead,
-            defaults={'organization': org, 'channel': 'whatsapp', 'state': 'active'},
+            lead=lead, channel='whatsapp',
+            defaults={'organization': org, 'state': 'active'},
         )
-        label = caption or uploaded.name
         msg_text = f'📎 {uploaded.name}' + (f' — {caption}' if caption else '')
+        wamid_file = send_resp.json().get('messages', [{}])[0].get('id')
         msg = Message.objects.create(
             conversation=conv,
             organization=org,
             direction='OUT',
             text=msg_text,
+            provider_message_id=wamid_file,
+            msg_status='sent',
         )
-        logger.info(f'File sent to {lead.phone}: {uploaded.name}')
+        logger.info(f'File sent to {lead.phone}: {uploaded.name} | wamid={wamid_file}')
         return Response(MessageSerializer(msg).data, status=201)
 
     @action(detail=True, methods=['post'])
@@ -290,6 +395,21 @@ class LeadViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({'detail': 'Texto obrigatório.'}, status=400)
         note = Note.objects.create(lead=lead, author=request.user, text=text)
         return Response(NoteSerializer(note).data, status=201)
+
+    @action(detail=True, methods=['post'])
+    def close(self, request, pk=None):
+        lead = self.get_object()
+        lead.status = 'CLOSED'
+        lead.is_ai_active = False
+        lead.save(update_fields=['status', 'is_ai_active'])
+        return Response(LeadDetailSerializer(lead).data)
+
+    @action(detail=True, methods=['post'])
+    def reopen(self, request, pk=None):
+        lead = self.get_object()
+        lead.status = 'QUALIFIED'
+        lead.save(update_fields=['status'])
+        return Response(LeadDetailSerializer(lead).data)
 
     @action(detail=True, methods=['delete'])
     def delete(self, request, pk=None):
@@ -361,7 +481,12 @@ class WhatsAppWebhookView(APIView):
             changes = entry['changes'][0]
             value = changes['value']
 
-            # Ignora notificações que não são mensagens (ex: status de entrega)
+            # ── Status de entrega/leitura (sent → delivered → read) ───────────
+            statuses = value.get('statuses')
+            if statuses:
+                return self._handle_status_update(statuses)
+
+            # Ignora notificações que não são mensagens
             messages = value.get('messages')
             if not messages:
                 return Response({'received': True}, status=200)
@@ -374,18 +499,18 @@ class WhatsAppWebhookView(APIView):
             contacts = value.get('contacts', [])
             contact_name = contacts[0].get('profile', {}).get('name', '') if contacts else ''
 
-            channel = ChannelProvider.objects.filter(phone_number_id=phone_number_id).first()
-            if not channel or not channel.organization:
+            channel_provider = ChannelProvider.objects.filter(phone_number_id=phone_number_id).first()
+            if not channel_provider or not channel_provider.organization:
                 return Response({'detail': 'Channel not found.'}, status=404)
 
-            org = channel.organization
+            org = channel_provider.organization
 
             # ── Mídia recebida (imagem, documento, áudio, vídeo) ──────────────
             MEDIA_TYPES = {'image', 'document', 'audio', 'video', 'sticker'}
             if msg_type in MEDIA_TYPES:
                 return self._handle_incoming_media(
                     org=org, from_phone=from_phone, msg=msg,
-                    msg_type=msg_type, channel=channel, contact_name=contact_name,
+                    msg_type=msg_type, channel_provider=channel_provider, contact_name=contact_name,
                 )
 
             # ── Texto ─────────────────────────────────────────────────────────
@@ -399,9 +524,38 @@ class WhatsAppWebhookView(APIView):
             logging.getLogger('apps').error(f'Webhook Meta payload error: {e} | data: {data}')
             return Response({'received': True}, status=200)
 
-        return self._process_message(org=org, from_phone=from_phone, text=text, provider='WHATSAPP', contact_name=contact_name)
+        return self._process_message(
+            org=org, sender_id=from_phone, text=text,
+            channel='whatsapp', channel_provider=channel_provider, contact_name=contact_name,
+        )
 
-    def _handle_incoming_media(self, org, from_phone, msg, msg_type, channel, contact_name=''):
+    def _handle_status_update(self, statuses):
+        """Atualiza msg_status das mensagens OUT conforme notificações do Meta."""
+        import logging
+        logger = logging.getLogger('apps')
+
+        STATUS_MAP = {
+            'sent': 'sent',
+            'delivered': 'delivered',
+            'read': 'read',
+            'failed': 'failed',
+        }
+
+        for status_obj in statuses:
+            wamid = status_obj.get('id')
+            new_status = STATUS_MAP.get(status_obj.get('status'))
+            if not wamid or not new_status:
+                continue
+            updated = Message.objects.filter(
+                provider_message_id=wamid,
+                direction='OUT',
+            ).update(msg_status=new_status)
+            if updated:
+                logger.info(f'Status atualizado: wamid={wamid} → {new_status}')
+
+        return Response({'received': True}, status=200)
+
+    def _handle_incoming_media(self, org, from_phone, msg, msg_type, channel_provider, contact_name=''):
         """Baixa mídia recebida do cliente, salva localmente e registra como mensagem IN."""
         import requests as http_requests
         import logging
@@ -441,12 +595,12 @@ class WhatsAppWebhookView(APIView):
         icon  = icons.get(effective_type, '📎')
 
         local_url = ''
-        if media_id and channel.access_token:
+        if media_id and channel_provider.access_token:
             try:
                 # 1. Obtém a URL de download temporária do Meta
                 meta_resp = http_requests.get(
                     f'https://graph.facebook.com/v22.0/{media_id}',
-                    headers={'Authorization': f'Bearer {channel.access_token}'},
+                    headers={'Authorization': f'Bearer {channel_provider.access_token}'},
                     timeout=10,
                 )
                 if meta_resp.status_code == 200:
@@ -455,7 +609,7 @@ class WhatsAppWebhookView(APIView):
                         # 2. Baixa o arquivo com o token
                         dl_resp = http_requests.get(
                             download_url,
-                            headers={'Authorization': f'Bearer {channel.access_token}'},
+                            headers={'Authorization': f'Bearer {channel_provider.access_token}'},
                             timeout=30,
                         )
                         if dl_resp.status_code == 200:
@@ -499,8 +653,8 @@ class WhatsAppWebhookView(APIView):
             lead.save(update_fields=['full_name'])
 
         conv, _ = Conversation.objects.get_or_create(
-            lead=lead,
-            defaults={'organization': org, 'channel': 'whatsapp', 'state': 'active'},
+            lead=lead, channel='whatsapp',
+            defaults={'organization': org, 'state': 'active'},
         )
         Conversation.objects.filter(pk=conv.pk).update(last_message_at=timezone.now())
 
@@ -517,56 +671,64 @@ class WhatsAppWebhookView(APIView):
     def _handle_simulator_payload(self, data):
         """Processa o payload do simulador interno (testes sem Meta)."""
         org_key = data.get('organization_key') or ''
-        from_phone = data.get('from_phone', '')
+        sender_id = data.get('from_phone', '') or data.get('sender_id', '')
         text = data.get('text', '').strip()
-        provider = data.get('provider', 'WHATSAPP')
+        channel = (data.get('provider', 'WHATSAPP') or 'WHATSAPP').lower()
 
         try:
             org = Organization.objects.get(api_key=org_key)
         except Organization.DoesNotExist:
             return Response({'detail': 'Organization not found.'}, status=404)
 
-        return self._process_message(org=org, from_phone=from_phone, text=text, provider=provider)
+        return self._process_message(org=org, sender_id=sender_id, text=text, channel=channel)
 
-    def _process_message(self, org, from_phone, text, provider='WHATSAPP', contact_name=''):
+    def _process_message(self, org, sender_id, text, channel='whatsapp', channel_provider=None, contact_name=''):
         """Lógica comum: cria/atualiza lead, roda QualifierEngine, salva e envia mensagens."""
         from django.utils import timezone
 
-        channel = provider.lower() if provider else 'whatsapp'
+        # ── Resolve o lead pelo identificador do canal ─────────────────────────
+        if channel in ('messenger', 'facebook'):
+            lead, created = Lead.objects.get_or_create(
+                organization=org,
+                facebook_psid=sender_id,
+                defaults={
+                    'status': 'NEW', 'source': 'OTHER', 'channels_used': channel,
+                    'conversation_state': 'initial', 'full_name': contact_name or '',
+                    'phone': '',
+                }
+            )
+        elif channel == 'instagram':
+            lead, created = Lead.objects.get_or_create(
+                organization=org,
+                instagram_user_id=sender_id,
+                defaults={
+                    'status': 'NEW', 'source': 'OTHER', 'channels_used': channel,
+                    'conversation_state': 'initial', 'full_name': contact_name or '',
+                    'phone': '',
+                }
+            )
+        else:  # whatsapp
+            lead, created = Lead.objects.get_or_create(
+                organization=org,
+                phone=sender_id,
+                defaults={
+                    'status': 'NEW', 'source': 'OTHER', 'channels_used': channel,
+                    'conversation_state': 'initial', 'full_name': contact_name or '',
+                }
+            )
 
-        lead, created = Lead.objects.get_or_create(
-            organization=org,
-            phone=from_phone,
-            defaults={
-                'status': 'NEW',
-                'source': 'OTHER',
-                'channels_used': channel,
-                'conversation_state': 'initial',
-                'full_name': contact_name or '',
-            }
-        )
-
-        # Atualiza o nome se ainda não tinha e o Meta enviou agora
         if not created and contact_name and not lead.full_name:
             lead.full_name = contact_name
             lead.save(update_fields=['full_name'])
 
         conv, _ = Conversation.objects.get_or_create(
-            lead=lead,
-            defaults={
-                'organization': org,
-                'channel': channel,
-                'state': 'active',
-                'last_message_at': timezone.now(),
-            }
+            lead=lead, channel=channel,
+            defaults={'organization': org, 'state': 'active', 'last_message_at': timezone.now()},
         )
         Conversation.objects.filter(pk=conv.pk).update(last_message_at=timezone.now())
 
         Message.objects.create(
-            conversation=conv,
-            organization=org,
-            direction='IN',
-            text=text,
+            conversation=conv, organization=org, direction='IN', text=text,
         )
 
         if not lead.is_ai_active:
@@ -575,49 +737,415 @@ class WhatsAppWebhookView(APIView):
         engine = QualifierEngine(lead)
         replies = engine.process_message(text)
 
-        # Busca o canal WhatsApp da organização para enviar as respostas
-        channel_provider = ChannelProvider.objects.filter(
-            organization=org,
-            provider='whatsapp',
-            is_active=True,
-        ).first()
+        # Usa o channel_provider já resolvido ou busca no banco como fallback
+        if channel_provider is None:
+            channel_provider = ChannelProvider.objects.filter(
+                organization=org, provider=channel, is_active=True,
+            ).first()
 
         reply_texts = []
         for reply in replies:
             is_media = isinstance(reply, dict)
-            text = reply.get('caption', '') if is_media else reply
+            caption = reply.get('caption', '') if is_media else ''
+            db_text = caption if caption else (f"[{reply.get('type', 'mídia')}]" if is_media else reply)
 
             Message.objects.create(
-                conversation=conv,
-                organization=org,
-                direction='OUT',
-                text=text,
+                conversation=conv, organization=org, direction='OUT', text=db_text,
             )
-            reply_texts.append(text)
+            reply_texts.append(db_text)
 
-            if channel_provider and channel_provider.access_token and channel_provider.phone_number_id:
-                if is_media:
-                    _send_whatsapp_media(
-                        phone_number_id=channel_provider.phone_number_id,
+            if not channel_provider or not channel_provider.access_token:
+                continue
+
+            if channel in ('messenger', 'facebook'):
+                if not is_media:
+                    _send_facebook_message(
+                        page_id=channel_provider.page_id,
                         access_token=channel_provider.access_token,
-                        to=from_phone,
-                        media_type=reply.get('type', 'video'),
-                        url=reply['url'],
-                        caption=text,
-                    )
-                else:
-                    _send_whatsapp_message(
-                        phone_number_id=channel_provider.phone_number_id,
-                        access_token=channel_provider.access_token,
-                        to=from_phone,
+                        recipient_id=sender_id,
                         text=reply,
                     )
+            elif channel == 'instagram':
+                if not is_media:
+                    _send_instagram_message(
+                        instagram_account_id=channel_provider.instagram_account_id,
+                        access_token=channel_provider.access_token,
+                        recipient_id=sender_id,
+                        text=reply,
+                    )
+            else:  # whatsapp
+                if channel_provider.phone_number_id:
+                    if is_media:
+                        _send_whatsapp_media(
+                            phone_number_id=channel_provider.phone_number_id,
+                            access_token=channel_provider.access_token,
+                            to=sender_id,
+                            media_type=reply.get('type', 'video'),
+                            url=reply['url'],
+                            caption=caption,
+                        )
+                        import time
+                        delay = 7 if reply.get('type') == 'video' else 4
+                        time.sleep(delay)
+                    else:
+                        _send_whatsapp_message(
+                            phone_number_id=channel_provider.phone_number_id,
+                            access_token=channel_provider.access_token,
+                            to=sender_id,
+                            text=reply,
+                        )
 
         return Response({'received': True, 'replies': reply_texts, 'lead': _lead_summary(lead)})
 
 
+class MetaWebhookView(APIView):
+    """Webhook unificado para Facebook Page/Messenger e Instagram (DMs e Comments)."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        verify_token = request.query_params.get('hub.verify_token')
+        challenge = request.query_params.get('hub.challenge', '')
+        if ChannelProvider.objects.filter(webhook_verify_token=verify_token).exists():
+            from django.http import HttpResponse
+            return HttpResponse(challenge, content_type='text/plain', status=200)
+        return Response({'detail': 'Invalid verify token.'}, status=403)
+
+    def post(self, request):
+        data = request.data
+        obj = data.get('object', '')
+
+        if obj == 'page':
+            return self._handle_page_payload(data)
+        elif obj == 'instagram':
+            return self._handle_instagram_payload(data)
+        else:
+            logger.warning(f'MetaWebhook: object desconhecido = {obj!r}')
+            return Response({'received': True}, status=200)
+
+    # ── Facebook Page / Messenger ──────────────────────────────────────────────
+
+    def _handle_page_payload(self, data):
+        """Processa mensagens de Facebook Page e Messenger (object == 'page')."""
+        try:
+            for entry in data.get('entry', []):
+                for messaging in entry.get('messaging', []):
+                    sender_id = messaging.get('sender', {}).get('id', '')
+                    recipient_id = messaging.get('recipient', {}).get('id', '')
+                    message = messaging.get('message', {})
+
+                    # Ignora echo (mensagens enviadas pela própria página)
+                    if message.get('is_echo'):
+                        continue
+
+                    text = message.get('text', '').strip()
+                    if not text:
+                        continue
+
+                    channel_provider = ChannelProvider.objects.filter(
+                        page_id=recipient_id, is_active=True,
+                    ).first()
+                    if not channel_provider or not channel_provider.organization:
+                        logger.warning(f'MetaWebhook Page: page_id={recipient_id!r} não encontrado.')
+                        continue
+
+                    org = channel_provider.organization
+                    contact_name = (
+                        messaging.get('sender', {}).get('name', '')
+                        or _fetch_messenger_name(sender_id, recipient_id, channel_provider.access_token)
+                    )
+
+                    self._process_message(
+                        org=org, sender_id=sender_id, text=text,
+                        channel='messenger', channel_provider=channel_provider,
+                        contact_name=contact_name,
+                    )
+
+        except Exception as e:
+            logger.error(f'MetaWebhook Page error: {e}')
+
+        return Response({'received': True}, status=200)
+
+    # ── Instagram DMs e Comments ───────────────────────────────────────────────
+
+    def _handle_instagram_payload(self, data):
+        """Processa DMs e Comments do Instagram (object == 'instagram')."""
+        try:
+            for entry in data.get('entry', []):
+                # DMs: entry.messaging[]
+                for messaging in entry.get('messaging', []):
+                    sender_id = messaging.get('sender', {}).get('id', '')
+                    recipient_id = messaging.get('recipient', {}).get('id', '')
+                    message = messaging.get('message', {})
+
+                    if message.get('is_echo'):
+                        continue
+
+                    text = message.get('text', '').strip()
+                    if not text:
+                        continue
+
+                    channel_provider = ChannelProvider.objects.filter(
+                        instagram_account_id=recipient_id, is_active=True,
+                    ).first()
+                    if not channel_provider or not channel_provider.organization:
+                        logger.warning(f'MetaWebhook IG: instagram_account_id={recipient_id!r} não encontrado.')
+                        continue
+
+                    org = channel_provider.organization
+                    contact_name = _fetch_instagram_name(sender_id, channel_provider.access_token)
+                    self._process_message(
+                        org=org, sender_id=sender_id, text=text,
+                        channel='instagram', channel_provider=channel_provider,
+                        contact_name=contact_name,
+                    )
+
+                # Comments: entry.changes[].field == 'comments'
+                for change in entry.get('changes', []):
+                    if change.get('field') != 'comments':
+                        continue
+                    self._handle_instagram_comment(data=change.get('value', {}), entry=entry)
+
+        except Exception as e:
+            logger.error(f'MetaWebhook Instagram error: {e}')
+
+        return Response({'received': True}, status=200)
+
+    def _handle_instagram_comment(self, data, entry):
+        """Captura comentário do Instagram, salva como IN e gera sugestão de resposta."""
+        from django.utils import timezone
+
+        comment_id = data.get('id', '')
+        text = data.get('text', '').strip()
+        sender = data.get('from', {})
+        sender_id = sender.get('id', '')
+        sender_name = sender.get('name', '')
+        media_id = data.get('media', {}).get('id', '')
+
+        if not text or not sender_id:
+            return
+
+        # Identifica a conta Instagram pelo recipient_id do entry (se disponível)
+        recipient_id = entry.get('id', '')
+        channel_provider = ChannelProvider.objects.filter(
+            instagram_account_id=recipient_id, is_active=True,
+        ).first()
+        if not channel_provider or not channel_provider.organization:
+            logger.warning(f'MetaWebhook IG comment: instagram_account_id={recipient_id!r} não encontrado.')
+            return
+
+        org = channel_provider.organization
+
+        lead, _ = Lead.objects.get_or_create(
+            organization=org,
+            instagram_user_id=sender_id,
+            defaults={
+                'status': 'NEW', 'source': 'INSTAGRAM_AD', 'channels_used': 'instagram',
+                'conversation_state': 'initial', 'full_name': sender_name or '',
+                'phone': '',
+            }
+        )
+
+        conv, _ = Conversation.objects.get_or_create(
+            lead=lead, channel='instagram',
+            defaults={'organization': org, 'state': 'active', 'last_message_at': timezone.now()},
+        )
+        Conversation.objects.filter(pk=conv.pk).update(last_message_at=timezone.now())
+
+        # Salva o comentário como mensagem IN com prefixo para diferenciar no painel
+        msg_text = f'[Comentário] {text}'
+        Message.objects.create(
+            conversation=conv, organization=org, direction='IN',
+            text=msg_text, provider_message_id=comment_id,
+        )
+        logger.info(f'IG comment captured from {sender_id}: {text[:60]}')
+
+        # Gera sugestão de resposta via IA (nunca funil de vendas — usa RAG ou GPT direto)
+        if lead.is_ai_active:
+            suggestion = _generate_comment_suggestion(org=org, lead=lead, comment_text=text)
+            if suggestion:
+                Message.objects.create(
+                    conversation=conv, organization=org, direction='OUT',
+                    text=f'[Sugestão] {suggestion}', msg_status='sent',
+                )
+
+    # ── Herda _process_message do WhatsAppWebhookView via mixin-like delegation ─
+
+    def _process_message(self, org, sender_id, text, channel='whatsapp', channel_provider=None, contact_name=''):
+        return WhatsAppWebhookView._process_message(
+            self, org=org, sender_id=sender_id, text=text,
+            channel=channel, channel_provider=channel_provider, contact_name=contact_name,
+        )
+
+
+def _send_facebook_message(page_id, access_token, recipient_id, text):
+    """Envia mensagem de texto via Messenger/Facebook Page API."""
+    import requests as http_requests
+    logger = logging.getLogger('apps')
+
+    url = f'https://graph.facebook.com/v22.0/me/messages'
+    payload = {
+        'recipient': {'id': recipient_id},
+        'message': {'text': text},
+        'messaging_type': 'RESPONSE',
+    }
+    try:
+        resp = http_requests.post(
+            url,
+            json=payload,
+            headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/json'},
+            params={'access_token': access_token},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            logger.error(f'Facebook send error: {resp.status_code} {resp.text}')
+            return None
+        mid = resp.json().get('message_id')
+        logger.info(f'Facebook message sent to {recipient_id}: {text[:50]} | mid={mid}')
+        return mid
+    except Exception as e:
+        logger.error(f'Facebook send exception: {e}')
+        return None
+
+
+COMMENT_SYSTEM_PROMPT = """\
+Você é o community manager do perfil @bordercolliesul no Instagram.
+Sua função é sugerir respostas humanizadas, calorosas e breves para comentários de seguidores.
+
+REGRAS ABSOLUTAS:
+1. NUNCA use roteiros de vendas, funil de qualificação ou pergunte sobre orçamento em comentários.
+2. Se o comentário for um elogio → responda com carinho, gratidão e um emoji pertinente.
+3. Se for uma dúvida sobre a raça → responda de forma informativa e amigável (1-2 frases).
+4. Se demonstrar interesse em adquirir um filhote → convide gentilmente para o direct ou WhatsApp.
+   Exemplo: "Que bom! 🐾 Nos chama no direct ou no WhatsApp que a gente te conta tudo com carinho!"
+5. Respostas curtas: máximo 2-3 frases. Adequado para um comentário público do Instagram.
+6. Tom informal, caloroso — como um amigo especialista respondendo fãs da raça.
+
+Responda APENAS com o texto da sugestão, sem aspas nem prefixos."""
+
+
+def _generate_comment_suggestion(org, lead, comment_text: str) -> str | None:
+    """Gera sugestão de resposta para comentário do Instagram usando RAG ou GPT direto."""
+    logger = logging.getLogger('apps')
+    try:
+        from apps.core.models import AgentConfig
+        from apps.rag.services.rag_service import RAGService
+
+        cfg = AgentConfig.objects.filter(organization=org).first()
+        if cfg and cfg.is_ready():
+            # Tenta via RAG com prompt específico para comentários
+            rag = RAGService(cfg)
+            kb_results = []
+            conv_results = []
+            try:
+                from apps.rag.services.embedding_service import EmbeddingService
+                emb = EmbeddingService(cfg).embed(comment_text)
+                if emb:
+                    kb_results = rag._search_knowledge_base(emb, org.id)
+            except Exception:
+                pass
+
+            msgs = rag._build_messages(
+                system_prompt=COMMENT_SYSTEM_PROMPT,
+                kb_results=kb_results,
+                conv_results=conv_results,
+                history=[],
+                current_message=comment_text,
+            )
+            suggestion = rag._generate(msgs)
+            if suggestion:
+                return suggestion
+
+        # Fallback: GPT direto sem RAG
+        from django.conf import settings
+        from openai import OpenAI
+        api_key = getattr(settings, 'OPENAI_API_KEY', None)
+        if cfg and cfg.openai_api_key:
+            api_key = cfg.openai_api_key
+        if not api_key:
+            return None
+
+        client = OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model='gpt-4o-mini',
+            messages=[
+                {'role': 'system', 'content': COMMENT_SYSTEM_PROMPT},
+                {'role': 'user', 'content': comment_text},
+            ],
+            temperature=0.7,
+            max_tokens=200,
+        )
+        return resp.choices[0].message.content.strip()
+
+    except Exception as e:
+        logger.warning(f'_generate_comment_suggestion error: {e}')
+        return None
+
+
+def _fetch_instagram_name(sender_id, access_token):
+    """Busca o nome/username do usuário do Instagram via Graph API."""
+    import requests as http_requests
+    try:
+        resp = http_requests.get(
+            f'https://graph.instagram.com/v22.0/{sender_id}',
+            params={'fields': 'name,username', 'access_token': access_token},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get('name') or data.get('username') or ''
+    except Exception:
+        pass
+    return ''
+
+
+def _fetch_messenger_name(sender_id, page_id, access_token):
+    """Busca o nome do usuário do Messenger via Graph API."""
+    import requests as http_requests
+    try:
+        resp = http_requests.get(
+            f'https://graph.facebook.com/v22.0/{sender_id}',
+            params={'fields': 'name,first_name,last_name', 'access_token': access_token},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get('name') or f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or ''
+    except Exception:
+        pass
+    return ''
+
+
+def _send_instagram_message(instagram_account_id, access_token, recipient_id, text):
+    """Envia DM de texto via Instagram Graph API."""
+    import requests as http_requests
+    logger = logging.getLogger('apps')
+
+    url = f'https://graph.instagram.com/v22.0/{instagram_account_id}/messages'
+    payload = {
+        'recipient': {'id': recipient_id},
+        'message': {'text': text},
+        'messaging_type': 'RESPONSE',
+    }
+    try:
+        resp = http_requests.post(
+            url,
+            json=payload,
+            headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/json'},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            logger.error(f'Instagram DM send error: {resp.status_code} {resp.text}')
+            return None
+        mid = resp.json().get('message_id')
+        logger.info(f'Instagram DM sent to {recipient_id}: {text[:50]} | mid={mid}')
+        return mid
+    except Exception as e:
+        logger.error(f'Instagram DM send exception: {e}')
+        return None
+
+
 def _send_whatsapp_message(phone_number_id, access_token, to, text):
-    """Envia mensagem de texto via WhatsApp Cloud API."""
+    """Envia mensagem de texto via WhatsApp Cloud API. Retorna wamid ou None."""
     import requests as http_requests
     import logging
     logger = logging.getLogger('apps')
@@ -638,10 +1166,14 @@ def _send_whatsapp_message(phone_number_id, access_token, to, text):
         )
         if resp.status_code != 200:
             logger.error(f'WhatsApp send error: {resp.status_code} {resp.text}')
-        else:
-            logger.info(f'WhatsApp message sent to {to}: {text[:50]}')
+            return None
+        data = resp.json()
+        wamid = data.get('messages', [{}])[0].get('id')
+        logger.info(f'WhatsApp message sent to {to}: {text[:50]} | wamid={wamid}')
+        return wamid
     except Exception as e:
         logger.error(f'WhatsApp send exception: {e}')
+        return None
 
 
 def _send_whatsapp_media(phone_number_id, access_token, to, media_type, url, caption=''):
@@ -652,11 +1184,14 @@ def _send_whatsapp_media(phone_number_id, access_token, to, media_type, url, cap
 
     send_url = f'https://graph.facebook.com/v22.0/{phone_number_id}/messages'
     media_key = 'video' if media_type == 'video' else 'image'
+    media_body = {'link': url}
+    if caption:
+        media_body['caption'] = caption
     payload = {
         'messaging_product': 'whatsapp',
         'to': to,
         'type': media_key,
-        media_key: {'link': url, 'caption': caption},
+        media_key: media_body,
     }
     try:
         resp = http_requests.post(
@@ -703,15 +1238,38 @@ class ChannelProviderViewSet(viewsets.ModelViewSet):
 
 # ─── Quick Replies ─────────────────────────────────────────────────────────────
 
+class QuickReplyCategoryViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = QuickReplyCategorySerializer
+
+    def get_queryset(self):
+        org = _get_org(self.request.user)
+        if not org:
+            return QuickReplyCategory.objects.none()
+        return QuickReplyCategory.objects.filter(organization=org)
+
+    def perform_create(self, serializer):
+        org = _get_org(self.request.user)
+        serializer.save(organization=org)
+
+
 class QuickReplyViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = QuickReplySerializer
 
     def get_queryset(self):
+        from django.db.models import Q
         org = _get_org(self.request.user)
         if not org:
             return QuickReply.objects.none()
-        return QuickReply.objects.filter(organization=org, is_active=True)
+        # Tenant-level replies (user IS NULL) + personal replies (user = requester)
+        return (
+            QuickReply.objects
+            .filter(organization=org, is_active=True)
+            .filter(Q(user__isnull=True) | Q(user=self.request.user))
+            .select_related('category_ref')
+            .order_by('sort_order', 'title', 'shortcut')
+        )
 
     def perform_create(self, serializer):
         org = _get_org(self.request.user)
@@ -755,3 +1313,94 @@ class SubscriptionView(APIView):
         sub.status = 'active'
         sub.save()
         return Response(SubscriptionSerializer(sub).data)
+
+
+# ─── Agent Config ──────────────────────────────────────────────────────────────
+
+class AgentConfigView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'No organization.'}, status=404)
+        cfg, _ = AgentConfig.objects.get_or_create(organization=org)
+        return Response(AgentConfigSerializer(cfg).data)
+
+    def put(self, request):
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'No organization.'}, status=404)
+        cfg, _ = AgentConfig.objects.get_or_create(organization=org)
+        serializer = AgentConfigSerializer(cfg, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(AgentConfigSerializer(cfg).data)
+        return Response(serializer.errors, status=400)
+
+
+# ─── Knowledge Base ────────────────────────────────────────────────────────────
+
+class KnowledgeBaseView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'No organization.'}, status=404)
+        from apps.rag.services.training_service import list_knowledge_base
+        entries = list_knowledge_base(org.id)
+        return Response(entries)
+
+    def post(self, request):
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'No organization.'}, status=404)
+        title = request.data.get('title', '').strip()
+        content = request.data.get('content', '').strip()
+        if not title or not content:
+            return Response({'detail': 'title e content são obrigatórios.'}, status=400)
+        try:
+            cfg = org.agent_config
+        except AgentConfig.DoesNotExist:
+            return Response({'detail': 'Configure a chave OpenAI antes de adicionar entradas.'}, status=400)
+        if not cfg.openai_api_key:
+            return Response({'detail': 'Chave OpenAI não configurada.'}, status=400)
+        try:
+            from apps.rag.services.training_service import add_knowledge_base_entry
+            entry = add_knowledge_base_entry(cfg, title, content)
+            return Response(entry, status=201)
+        except ValueError as e:
+            return Response({'detail': str(e)}, status=400)
+        except Exception as e:
+            logger.error(f'KnowledgeBaseView.post error: {e}')
+            return Response({'detail': 'Erro ao adicionar entrada.'}, status=500)
+
+
+class KnowledgeBaseDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, entry_id):
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'No organization.'}, status=404)
+        from apps.rag.services.training_service import delete_knowledge_base_entry
+        delete_knowledge_base_entry(org.id, entry_id)
+        return Response(status=204)
+
+
+# ─── Training Data Export ──────────────────────────────────────────────────────
+
+class TrainingDataExportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'No organization.'}, status=404)
+        from apps.rag.services.training_service import export_training_jsonl
+        from django.http import HttpResponse
+        jsonl_content = export_training_jsonl(org.id)
+        response = HttpResponse(jsonl_content, content_type='application/jsonl')
+        response['Content-Disposition'] = f'attachment; filename="training_data_org{org.id}.jsonl"'
+        return response

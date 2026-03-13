@@ -29,8 +29,9 @@ export const leadsService = {
     return data;
   },
 
-  async getMessages(id: number): Promise<Message[]> {
-    const { data } = await api.get<Message[]>(`/leads/${id}/messages/`);
+  async getMessages(id: number, channel?: string): Promise<Message[]> {
+    const params = channel ? { channel } : {};
+    const { data } = await api.get<Message[]>(`/leads/${id}/messages/`, { params });
     return data;
   },
 
@@ -49,6 +50,18 @@ export const leadsService = {
     return data;
   },
 
+  async enhanceMessage(id: number, text: string): Promise<{ original: string; enhanced: string; changed: boolean }> {
+    try {
+      const { data } = await api.post<{ original: string; enhanced: string; changed: boolean }>(
+        `/leads/${id}/enhance_message/`,
+        { text },
+      );
+      return data;
+    } catch {
+      return { original: text, enhanced: text, changed: false };
+    }
+  },
+
   async sendFile(id: number, file: File, caption?: string): Promise<Message> {
     const form = new FormData();
     form.append('file', file);
@@ -64,6 +77,16 @@ export const leadsService = {
     return data;
   },
 
+  async closeLead(id: number): Promise<Lead> {
+    const { data } = await api.post<Lead>(`/leads/${id}/close/`);
+    return data;
+  },
+
+  async reopenLead(id: number): Promise<Lead> {
+    const { data } = await api.post<Lead>(`/leads/${id}/reopen/`);
+    return data;
+  },
+
   async deleteLead(id: number): Promise<void> {
     await api.delete(`/leads/${id}/delete/`);
   },
@@ -71,5 +94,17 @@ export const leadsService = {
   async getStats(): Promise<LeadStats> {
     const { data } = await api.get<LeadStats>('/leads/stats/');
     return data;
+  },
+
+  async suggestResponse(id: number, message: string): Promise<string | null> {
+    try {
+      const { data } = await api.post<{ suggestion: string | null }>(
+        `/leads/${id}/suggest_response/`,
+        { message },
+      );
+      return data.suggestion;
+    } catch {
+      return null;
+    }
   },
 };
