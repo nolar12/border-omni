@@ -878,13 +878,23 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                   onChange={handleFileSelect}
                 />
 
-                <input
-                  type="text"
+                <textarea
+                  rows={1}
                   placeholder="Digite sua mensagem..."
-                  className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-blue-400 transition-colors"
+                  className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-blue-400 transition-colors resize-none overflow-hidden"
                   value={msgText}
-                  onChange={e => { setMsgText(e.target.value); if (ragSuggestion) setRagSuggestion(null); }}
-                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                  onChange={e => {
+                    setMsgText(e.target.value);
+                    if (ragSuggestion) setRagSuggestion(null);
+                    e.target.style.height = 'auto';
+                    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
                 />
                 <button
                   onClick={handleSend}

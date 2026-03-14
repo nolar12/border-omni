@@ -68,12 +68,12 @@ class Command(BaseCommand):
 
         # Legacy quick replies (tenant-level, no user, no category_ref)
         legacy_qrs = [
-            {'category': 'GREETING',    'shortcut': '/ola',    'text': 'Olá {lead_name}! Tudo bem? Sou {user_name} da Border Collie Brasil. 🐕'},
-            {'category': 'INFO',        'shortcut': '/info',   'text': 'O Border Collie é uma raça inteligente e ativa. Ideal para famílias que têm espaço e tempo. 🐾'},
+            {'category': 'GREETING',    'shortcut': '/ola',    'text': 'Olá {lead_name}! Tudo bem? Sou {user_name} da Border Collie Brasil.'},
+            {'category': 'INFO',        'shortcut': '/info',   'text': 'O Border Collie é uma raça inteligente e ativa. Ideal para famílias que têm espaço e tempo.'},
             {'category': 'PRICING',     'shortcut': '/preco',  'text': 'Nossos filhotes ficam entre R$ 2.500 - R$ 4.500, com procedimentos e garantia de saúde.'},
             {'category': 'AVAILABILITY','shortcut': '/disp',   'text': 'Temos filhotes disponíveis! Posso te enviar fotos e mais informações.'},
             {'category': 'SCHEDULING',  'shortcut': '/visita', 'text': 'Que tal agendar uma visita? Temos horários disponíveis de segunda a sábado, das 9h às 18h.'},
-            {'category': 'CLOSING',     'shortcut': '/fechar', 'text': 'Ótimo! Vou preparar tudo para você. Qualquer dúvida estou à disposição! 😊'},
+            {'category': 'CLOSING',     'shortcut': '/fechar', 'text': 'Ótimo! Vou preparar tudo para você. Qualquer dúvida estou à disposição!'},
         ]
         for qr in legacy_qrs:
             QuickReply.objects.get_or_create(
@@ -118,7 +118,7 @@ class Command(BaseCommand):
                 'category_name': 'Apresentação',
                 'title': 'Apresentação inicial',
                 'body': (
-                    'Olá! 🐕 Aqui é a Border Collie Sul.\n\n'
+                    'Olá! Aqui é a Border Collie Sul.\n\n'
                     'Obrigado pelo seu contato!\n\n'
                     'Nossos filhotes são filhos do Sky e da Leia e são criados em ambiente '
                     'familiar com muito cuidado.'
@@ -140,7 +140,7 @@ class Command(BaseCommand):
                 'title': 'Filhotes disponíveis',
                 'body': (
                     'Já temos alguns filhotes reservados, mas ainda há alguns disponíveis.\n\n'
-                    'Se quiser, posso te mostrar quais ainda estão disponíveis da ninhada atual. 🐾'
+                    'Se quiser, posso te mostrar quais ainda estão disponíveis da ninhada atual.'
                 ),
                 'sort_order': 1,
             },
@@ -157,9 +157,9 @@ class Command(BaseCommand):
                 'category_name': 'Linhagem e procedência',
                 'title': 'Pais da ninhada',
                 'body': (
-                    'Você pode ver os pais da ninhada no nosso Instagram 📸 @bordercolliesul\n\n'
+                    'Você pode ver os pais da ninhada no nosso Instagram @bordercolliesul\n\n'
                     'E conhecer mais sobre o nosso trabalho no site da Border Collie Sul:\n'
-                    '🌐 https://bordercolliesul.com.br'
+                    'https://bordercolliesul.com.br'
                 ),
                 'sort_order': 1,
             },
@@ -188,7 +188,7 @@ class Command(BaseCommand):
                 'body': (
                     'Oi! Passando para saber se você ainda tem interesse em conhecer os '
                     'filhotes disponíveis desta ninhada.\n\n'
-                    'Se quiser, posso te enviar fotos e mais informações. 🐾'
+                    'Se quiser, posso te enviar fotos e mais informações.'
                 ),
                 'sort_order': 1,
             },
