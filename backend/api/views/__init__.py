@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.core.models import Organization, UserProfile, Plan, Subscription, AgentConfig
+from apps.core.models import Organization, UserProfile, Plan, Subscription, AgentConfig, InitialMessageMedia
 from apps.leads.models import Lead, Note
 from apps.conversations.models import Conversation, Message
 from apps.quick_replies.models import QuickReply, QuickReplyCategory
@@ -21,7 +21,7 @@ from api.serializers import (
     MessageSerializer, NoteSerializer,
     QuickReplySerializer, QuickReplyCategorySerializer,
     ChannelProviderSerializer, PlanSerializer, SubscriptionSerializer,
-    AgentConfigSerializer,
+    AgentConfigSerializer, InitialMessageMediaSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -1386,6 +1386,69 @@ class KnowledgeBaseDetailView(APIView):
             return Response({'detail': 'No organization.'}, status=404)
         from apps.rag.services.training_service import delete_knowledge_base_entry
         delete_knowledge_base_entry(org.id, entry_id)
+        return Response(status=204)
+
+
+# ─── Initial Message Media ────────────────────────────────────────────────────
+
+class InitialMessageMediaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'No organization.'}, status=404)
+        cfg, _ = AgentConfig.objects.get_or_create(organization=org)
+        media = cfg.initial_media.all()
+        return Response(InitialMessageMediaSerializer(media, many=True, context={'request': request}).data)
+
+    def post(self, request):
+        import mimetypes
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'No organization.'}, status=404)
+        cfg, _ = AgentConfig.objects.get_or_create(organization=org)
+
+        uploaded = request.FILES.get('file')
+        if not uploaded:
+            return Response({'detail': 'Arquivo obrigatório.'}, status=400)
+
+        mime = uploaded.content_type or mimetypes.guess_type(uploaded.name)[0] or ''
+        if mime.startswith('video/'):
+            media_type = 'video'
+        elif mime.startswith('image/'):
+            media_type = 'image'
+        else:
+            return Response({'detail': 'Apenas imagens e vídeos são permitidos.'}, status=400)
+
+        order = cfg.initial_media.count()
+        obj = InitialMessageMedia.objects.create(
+            agent_config=cfg,
+            file=uploaded,
+            media_type=media_type,
+            original_name=uploaded.name,
+            order=order,
+        )
+        return Response(
+            InitialMessageMediaSerializer(obj, context={'request': request}).data,
+            status=201,
+        )
+
+
+class InitialMessageMediaDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, media_id):
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'No organization.'}, status=404)
+        try:
+            cfg = org.agent_config
+            obj = cfg.initial_media.get(pk=media_id)
+        except (AgentConfig.DoesNotExist, InitialMessageMedia.DoesNotExist):
+            return Response({'detail': 'Não encontrado.'}, status=404)
+        obj.file.delete(save=False)
+        obj.delete()
         return Response(status=204)
 
 

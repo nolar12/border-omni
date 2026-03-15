@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from apps.core.models import Organization, UserProfile, Plan, Subscription, AgentConfig
+from apps.core.models import Organization, UserProfile, Plan, Subscription, AgentConfig, InitialMessageMedia
 from apps.leads.models import Lead, LeadTag, Note
 from apps.conversations.models import Message, Conversation
 from apps.quick_replies.models import QuickReply, QuickReplyCategory
@@ -194,6 +194,7 @@ class AgentConfigSerializer(serializers.ModelSerializer):
             'rag_enabled', 'match_threshold', 'match_count',
             'max_history_messages', 'openai_api_key', 'openai_api_key_masked',
             'cordiality_enabled', 'cordiality_use_ai',
+            'bot_enabled', 'initial_message', 'sequence_message',
             'updated_at',
         ]
         extra_kwargs = {
@@ -207,6 +208,23 @@ class AgentConfigSerializer(serializers.ModelSerializer):
         if len(k) <= 12:
             return '••••••••'
         return k[:8] + '••••••••' + k[-4:]
+
+
+# ─── Initial Message Media ───────────────────────────────────────────────────
+
+class InitialMessageMediaSerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InitialMessageMedia
+        fields = ['id', 'url', 'media_type', 'original_name', 'order', 'created_at']
+        read_only_fields = ['id', 'url', 'media_type', 'original_name', 'created_at']
+
+    def get_url(self, obj):
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.file.url)
+        return obj.file.url
 
 
 # ─── Plans / Subscriptions ────────────────────────────────────────────────────

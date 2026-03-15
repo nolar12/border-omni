@@ -181,6 +181,22 @@ export interface LeadStats {
   qualified: number;
 }
 
+export interface InitialMessageMedia {
+  id: number;
+  url: string;
+  media_type: 'image' | 'video';
+  original_name: string;
+  order: number;
+  created_at: string;
+}
+
+export interface OrgSettings {
+  bot_enabled: boolean;
+  initial_message: string;
+  sequence_message: string;
+  [key: string]: unknown;
+}
+
 export interface AuthTokens {
   access: string;
   refresh: string;

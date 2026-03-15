@@ -10,6 +10,7 @@ from api.views import (
     PlanViewSet, SubscriptionView,
     AgentConfigView, KnowledgeBaseView, KnowledgeBaseDetailView,
     TrainingDataExportView,
+    InitialMessageMediaView, InitialMessageMediaDetailView,
 )
 
 router = DefaultRouter()
@@ -44,4 +45,8 @@ urlpatterns = [
 
     # RAG — Training Data Export
     path('training-data/export/', TrainingDataExportView.as_view(), name='training_data_export'),
+
+    # Initial Message Media
+    path('initial-media/', InitialMessageMediaView.as_view(), name='initial_media'),
+    path('initial-media/<int:media_id>/', InitialMessageMediaDetailView.as_view(), name='initial_media_detail'),
 ]

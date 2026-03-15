@@ -8,6 +8,7 @@ import Simulator from './pages/Simulator';
 import Channels from './pages/Channels';
 import Plans from './pages/Plans';
 import ABTestPage from './pages/ABTestPage';
+import SettingsPage from './pages/SettingsPage';
 
 export default function App() {
   return (
@@ -36,7 +37,7 @@ export default function App() {
           <Route path="automacoes" element={<ComingSoon title="Automações" />} />
           <Route path="relatorios" element={<ComingSoon title="Relatórios" />} />
           <Route path="equipe" element={<ComingSoon title="Equipe" />} />
-          <Route path="configuracoes" element={<ComingSoon title="Configurações" />} />
+          <Route path="configuracoes" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

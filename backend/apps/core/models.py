@@ -23,6 +23,9 @@ class AgentConfig(models.Model):
     max_history_messages = models.IntegerField(default=10)
     cordiality_enabled = models.BooleanField(default=False)
     cordiality_use_ai = models.BooleanField(default=False)
+    bot_enabled = models.BooleanField(default=True)
+    initial_message = models.TextField(blank=True, default='')
+    sequence_message = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -61,6 +64,30 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.email} @ {self.organization.name}"
+
+
+def _media_upload_path(instance, filename):
+    return f'initial_media/org_{instance.agent_config.organization_id}/{filename}'
+
+
+class InitialMessageMedia(models.Model):
+    MEDIA_TYPE_CHOICES = [('image', 'Imagem'), ('video', 'Vídeo')]
+
+    agent_config = models.ForeignKey(
+        AgentConfig, on_delete=models.CASCADE, related_name='initial_media'
+    )
+    file = models.FileField(upload_to=_media_upload_path)
+    media_type = models.CharField(max_length=10, choices=MEDIA_TYPE_CHOICES, default='image')
+    original_name = models.CharField(max_length=255, blank=True)
+    order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'initial_message_media'
+        ordering = ['order', 'created_at']
+
+    def __str__(self):
+        return f'{self.media_type} — {self.original_name}'
 
 
 PLAN_CHOICES = [
