@@ -27,6 +27,7 @@
 html, body {
   height: 100%;
   overflow: hidden;
+  font-size: 112.5%; /* 18px base — escala todos os valores rem proporcionalmente */
 }
 
 /* ─── Sidebar nav links ────────────────────────────────────────────────── */
@@ -35,10 +36,10 @@ html, body {
   align-items: center;
   gap: 0.625rem;
   width: 100%;
-  padding: 0.5rem 0.625rem;
+  padding: 0.55rem 0.75rem;
   border-radius: 0.5rem;
   color: rgb(203 213 225); /* slate-300 */
-  font-size: 0.875rem;
+  font-size: 0.95rem;
   font-weight: 500;
   transition: background-color 0.15s, color 0.15s;
   text-decoration: none;
@@ -53,8 +54,8 @@ html, body {
   color: white;
 }
 .sidebar-link svg {
-  width: 1rem;
-  height: 1rem;
+  width: 1.15rem;
+  height: 1.15rem;
   flex-shrink: 0;
 }
 

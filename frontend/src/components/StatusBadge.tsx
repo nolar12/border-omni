@@ -13,7 +13,7 @@ const MAP: Record<LeadStatus, { label: string; cls: string }> = {
 export default function StatusBadge({ status }: Props) {
   const { label, cls } = MAP[status] ?? MAP.NEW;
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md text-xs font-medium ${cls}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${cls}`}>
       {label}
     </span>
   );

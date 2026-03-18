@@ -2,7 +2,7 @@ from django.contrib.auth.models import User
 from rest_framework import serializers
 from apps.core.models import Organization, UserProfile, Plan, Subscription, AgentConfig, InitialMessageMedia
 from apps.leads.models import Lead, LeadTag, Note
-from apps.conversations.models import Message, Conversation
+from apps.conversations.models import Message, Conversation, MessageTemplate
 from apps.quick_replies.models import QuickReply, QuickReplyCategory
 from apps.channels.models import ChannelProvider
 
@@ -225,6 +225,42 @@ class InitialMessageMediaSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(obj.file.url)
         return obj.file.url
+
+
+# ─── Message Templates ───────────────────────────────────────────────────────
+
+class MessageTemplateSerializer(serializers.ModelSerializer):
+    channel_name = serializers.SerializerMethodField()
+    status_display = serializers.SerializerMethodField()
+    variable_count = serializers.SerializerMethodField()
+    header_type_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MessageTemplate
+        fields = [
+            'id', 'name', 'language', 'category', 'status', 'status_display',
+            'header_type', 'header_type_display', 'header_text', 'header_media_url',
+            'body_text', 'footer_text',
+            'meta_template_id', 'rejection_reason',
+            'channel', 'channel_name',
+            'variable_count',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'meta_template_id', 'status', 'rejection_reason', 'created_at', 'updated_at']
+
+    def get_channel_name(self, obj):
+        return obj.channel.name if obj.channel else ''
+
+    def get_status_display(self, obj):
+        return obj.get_status_display()
+
+    def get_header_type_display(self, obj):
+        return obj.get_header_type_display()
+
+    def get_variable_count(self, obj):
+        import re
+        matches = re.findall(r'\{\{\d+\}\}', obj.body_text)
+        return len(set(matches))
 
 
 # ─── Plans / Subscriptions ────────────────────────────────────────────────────

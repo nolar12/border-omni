@@ -37,12 +37,15 @@ start_backend() {
 }
 
 NGROK_DOMAIN="borderomni.ngrok.app"
+# Ngrok expõe o backend (9022) diretamente — necessário para webhook do WhatsApp.
+# O frontend buildado é servido pelo próprio Django em /app/.
+NGROK_PORT=9022
 
 start_ngrok() {
-  log "🌐 Iniciando ngrok com domínio fixo $NGROK_DOMAIN..."
+  log "🌐 Iniciando ngrok com domínio fixo $NGROK_DOMAIN (→ porta $NGROK_PORT)..."
   pkill -f "ngrok http" 2>/dev/null
   sleep 1
-  nohup ngrok http "$BACKEND_PORT" --url="$NGROK_DOMAIN" >> /tmp/ngrok.log 2>&1 &
+  nohup ngrok http "$NGROK_PORT" --url="$NGROK_DOMAIN" >> /tmp/ngrok.log 2>&1 &
   sleep 6
 
   NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null \
@@ -50,8 +53,9 @@ start_ngrok() {
 
   if [ -n "$NGROK_URL" ]; then
     log "✅ Ngrok ativo: $NGROK_URL"
-    log "   WhatsApp webhook : $NGROK_URL/api/webhooks/whatsapp/"
-    log "   Meta webhook     : $NGROK_URL/api/webhooks/meta/"
+    log "   App (celular/externo) : $NGROK_URL/app/"
+    log "   WhatsApp webhook      : $NGROK_URL/api/webhooks/whatsapp/"
+    log "   Meta webhook          : $NGROK_URL/api/webhooks/meta/"
   else
     log "⚠️  Ngrok iniciado mas URL não detectada ainda."
   fi

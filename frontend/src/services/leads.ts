@@ -107,4 +107,13 @@ export const leadsService = {
       return null;
     }
   },
+
+  async sendTemplate(id: number, templateId: number, variables: string[], headerMediaUrl?: string): Promise<Message> {
+    const { data } = await api.post<Message>(`/leads/${id}/send_template/`, {
+      template_id: templateId,
+      variables,
+      ...(headerMediaUrl ? { header_media_url: headerMediaUrl } : {}),
+    });
+    return data;
+  },
 };

@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { leadsService } from '../services/leads';
 import { authService } from '../services/auth';
-import type { LeadListItem, Lead, Message, ChannelType } from '../types';
+import { messageTemplatesService } from '../services/messageTemplates';
+import { quickRepliesService } from '../services/quickReplies';
+import type { LeadListItem, Lead, Message, ChannelType, MessageTemplate } from '../types';
 import TierBadge from '../components/TierBadge';
 import StatusBadge from '../components/StatusBadge';
 import AIStatusBadge from '../components/AIStatusBadge';
@@ -12,7 +14,6 @@ import QuickReplyDrawer from '../components/QuickReplyDrawer';
 
 function LeadRow({ lead, isActive, onClick }: { lead: LeadListItem; isActive: boolean; onClick: () => void }) {
   const name = lead.full_name || lead.phone;
-  const initials = name.slice(0, 2).toUpperCase();
   const timeAgo = new Date(lead.updated_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   const needsReply = lead.last_message_direction === 'IN' && lead.status !== 'CLOSED';
   const isClosed = lead.status === 'CLOSED';
@@ -47,7 +48,7 @@ function LeadRow({ lead, isActive, onClick }: { lead: LeadListItem; isActive: bo
       {/* Info */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between gap-1 mb-0.5">
-          <p className={`text-sm truncate ${
+          <p className={`text-base truncate ${
             isClosed
               ? 'font-normal text-gray-400'
               : needsReply
@@ -60,7 +61,7 @@ function LeadRow({ lead, isActive, onClick }: { lead: LeadListItem; isActive: bo
             {needsReply && (
               <span className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" title="Aguardando resposta" />
             )}
-            <span className="text-xs text-gray-400">{timeAgo}</span>
+            <span className="text-sm text-gray-400">{timeAgo}</span>
           </div>
         </div>
         <div className="flex items-center gap-1.5">
@@ -201,7 +202,7 @@ function MessageContent({ text }: { text: string }) {
     );
   }
 
-  return <p className="text-sm whitespace-pre-wrap break-words">{text}</p>;
+  return <p className="text-base whitespace-pre-wrap break-words">{text}</p>;
 }
 
 // ─── Channel helpers ──────────────────────────────────────────────────────────
@@ -253,7 +254,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [showQR, setShowQR] = useState(false);
   const [sendingFile, setSendingFile] = useState(false);
   const [fileCaption, setFileCaption] = useState('');
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<'chat' | 'info' | 'notes'>('chat');
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -267,7 +268,29 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [cordialityPreview, setCordialityPreview] = useState<{ original: string; enhanced: string } | null>(null);
   const [enhancing, setEnhancing] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState<ChannelType | null>(null);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [approvedTemplates, setApprovedTemplates] = useState<MessageTemplate[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<MessageTemplate | null>(null);
+  const [templateVars, setTemplateVars] = useState<string[]>([]);
+  const [templateMediaUrl, setTemplateMediaUrl] = useState('');
+  const [sendingTemplate, setSendingTemplate] = useState(false);
+  const [saveAsQR, setSaveAsQR] = useState(false);
+  const [showSaveQRModal, setShowSaveQRModal] = useState(false);
+  const [pendingQRBody, setPendingQRBody] = useState('');
+  const [qrTitle, setQrTitle] = useState('');
+  const [qrShortcut, setQrShortcut] = useState('');
+  const [savingQR, setSavingQR] = useState(false);
+  const [qrSavedToast, setQrSavedToast] = useState(false);
   const user = authService.getCurrentUser();
+
+  // Calcula se a janela de 24h do WhatsApp está aberta
+  const isWhatsappWindowOpen = (() => {
+    if (!lead) return true;
+    const whatsappConv = lead.conversations?.find(c => c.channel === 'whatsapp');
+    if (!whatsappConv?.last_message_at) return true;
+    const delta = Date.now() - new Date(whatsappConv.last_message_at).getTime();
+    return delta < 24 * 60 * 60 * 1000;
+  })();
 
   useEffect(() => {
     setLoading(true);
@@ -343,6 +366,47 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     setLead(updated);
   }
 
+  async function openTemplateModal() {
+    try {
+      const all = await messageTemplatesService.list();
+      setApprovedTemplates(all.filter(t => t.status === 'APPROVED'));
+    } catch {
+      setApprovedTemplates([]);
+    }
+    setSelectedTemplate(null);
+    setTemplateVars([]);
+    setTemplateMediaUrl('');
+    setShowTemplateModal(true);
+  }
+
+  async function handleSendTemplate() {
+    if (!lead || !selectedTemplate) return;
+    setSendingTemplate(true);
+    try {
+      const msg = await leadsService.sendTemplate(
+        lead.id,
+        selectedTemplate.id,
+        templateVars,
+        templateMediaUrl || undefined,
+      );
+      setMessages(prev => [...prev, msg]);
+      setShowTemplateModal(false);
+      setSelectedTemplate(null);
+      setTemplateVars([]);
+      setTemplateMediaUrl('');
+    } finally {
+      setSendingTemplate(false);
+    }
+  }
+
+  function triggerSaveQRModal(text: string) {
+    if (!saveAsQR) return;
+    setPendingQRBody(text);
+    setQrTitle('');
+    setQrShortcut('');
+    setShowSaveQRModal(true);
+  }
+
   async function handleSend() {
     if (!lead || !msgText.trim()) return;
     const rawText = msgText.trim();
@@ -358,6 +422,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
       const msg = await leadsService.sendMessage(lead.id, rawText);
       setMessages(prev => [...prev, msg]);
       setMsgText('');
+      triggerSaveQRModal(rawText);
     } finally {
       setEnhancing(false);
       setSending(false);
@@ -366,14 +431,39 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
 
   async function handleSendEnhanced() {
     if (!lead || !cordialityPreview) return;
+    const sentText = cordialityPreview.enhanced;
     setSending(true);
     try {
-      const msg = await leadsService.sendMessage(lead.id, cordialityPreview.enhanced);
+      const msg = await leadsService.sendMessage(lead.id, sentText);
       setMessages(prev => [...prev, msg]);
       setMsgText('');
       setCordialityPreview(null);
+      triggerSaveQRModal(sentText);
     } finally {
       setSending(false);
+    }
+  }
+
+  async function handleSaveQR() {
+    if (!qrTitle.trim() || !pendingQRBody) return;
+    setSavingQR(true);
+    try {
+      await quickRepliesService.create({
+        title: qrTitle.trim(),
+        body: pendingQRBody,
+        shortcut: qrShortcut.trim() || undefined,
+      });
+      setShowSaveQRModal(false);
+      setSaveAsQR(false);
+      setPendingQRBody('');
+      setQrTitle('');
+      setQrShortcut('');
+      setQrSavedToast(true);
+      setTimeout(() => setQrSavedToast(false), 3000);
+    } catch {
+      // silently ignore
+    } finally {
+      setSavingQR(false);
     }
   }
 
@@ -387,33 +477,43 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   };
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
     e.target.value = '';
     setFileError('');
 
-    const kind = file.type.startsWith('image/') ? 'image'
-               : file.type.startsWith('video/') ? 'video'
-               : file.type.startsWith('audio/') ? 'audio'
-               : 'default';
-    const limit = FILE_LIMITS[kind];
+    const errors: string[] = [];
+    const valid: File[] = [];
 
-    if (file.size > limit) {
-      const limitMB = limit / (1024 * 1024);
-      setFileError(`❌ Arquivo muito grande. Limite do WhatsApp: ${limitMB}MB para ${kind === 'default' ? 'documentos' : kind}.`);
-      return;
+    for (const file of files) {
+      const kind = file.type.startsWith('image/') ? 'image'
+                 : file.type.startsWith('video/') ? 'video'
+                 : file.type.startsWith('audio/') ? 'audio'
+                 : 'default';
+      const limit = FILE_LIMITS[kind];
+      if (file.size > limit) {
+        const limitMB = limit / (1024 * 1024);
+        errors.push(`"${file.name}" (limite ${limitMB}MB)`);
+      } else {
+        valid.push(file);
+      }
     }
-    setPendingFile(file);
+
+    if (errors.length) setFileError(`❌ Muito grande: ${errors.join(', ')}`);
+    if (valid.length) setPendingFiles(prev => [...prev, ...valid]);
   }
 
   async function handleSendFile() {
-    if (!lead || !pendingFile) return;
+    if (!lead || !pendingFiles.length) return;
     setSendingFile(true);
     setFileError('');
     try {
-      const msg = await leadsService.sendFile(lead.id, pendingFile, fileCaption);
-      setMessages(prev => [...prev, msg]);
-      setPendingFile(null);
+      for (const file of pendingFiles) {
+        const caption = pendingFiles.length === 1 ? fileCaption : '';
+        const msg = await leadsService.sendFile(lead.id, file, caption);
+        setMessages(prev => [...prev, msg]);
+      }
+      setPendingFiles([]);
       setFileCaption('');
     } catch (err: any) {
       const detail = err?.response?.data?.detail || 'Erro ao enviar arquivo.';
@@ -480,8 +580,8 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
       {/* Chat Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-white flex-shrink-0">
         {/* Back button (mobile) */}
-        <button onClick={onBack} className="md:hidden flex items-center justify-center w-8 h-8 rounded-lg hover:bg-gray-100">
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+        <button onClick={onBack} className="md:hidden flex items-center justify-center w-10 h-10 rounded-xl hover:bg-gray-100">
+          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
             <polyline points="15 18 9 12 15 6"/>
           </svg>
         </button>
@@ -609,9 +709,9 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
             <button
               onClick={handleReopen}
               title="Reabrir lead"
-              className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-300 hover:bg-green-50 hover:text-green-600 transition-colors"
+              className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-300 hover:bg-green-50 hover:text-green-600 transition-colors"
             >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <polyline points="1 4 1 10 7 10"/>
                 <path d="M3.51 15a9 9 0 1 0 .49-3.5"/>
               </svg>
@@ -621,12 +721,12 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
               onClick={handleClose}
               disabled={closing}
               title="Fechar conversa"
-              className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-300 hover:bg-gray-100 hover:text-gray-500 transition-colors"
+              className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-300 hover:bg-gray-100 hover:text-gray-500 transition-colors"
             >
               {closing
                 ? <span className="loading loading-spinner loading-xs" />
                 : (
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                     <polyline points="20 6 9 17 4 12"/>
                   </svg>
                 )
@@ -655,9 +755,9 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
             <button
               onClick={() => setConfirmDelete(true)}
               title="Excluir lead"
-              className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+              className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-300 hover:bg-red-50 hover:text-red-500 transition-colors"
             >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <polyline points="3 6 5 6 21 6"/>
                 <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
                 <path d="M10 11v6"/><path d="M14 11v6"/>
@@ -674,7 +774,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 py-2 text-xs font-semibold uppercase tracking-wide transition-colors ${
+            className={`flex-1 py-2.5 text-sm font-semibold uppercase tracking-wide transition-colors ${
               tab === t
                 ? 'text-blue-600 border-b-2 border-blue-600'
                 : 'text-gray-400 hover:text-gray-600'
@@ -707,10 +807,10 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                     <div className="max-w-[75%] bg-pink-50 border border-pink-200 rounded-2xl rounded-tl-sm px-3 py-2">
                       <div className="flex items-center gap-1 mb-1">
                         <ChannelIcon channel="instagram" size="xs" />
-                        <span className="text-[10px] font-semibold text-pink-600 uppercase tracking-wide">Comentário</span>
+                        <span className="text-xs font-semibold text-pink-600 uppercase tracking-wide">Comentário</span>
                       </div>
                       <MessageContent text={displayText} />
-                      <p className="text-[10px] mt-1 opacity-50">
+                      <p className="text-xs mt-1 opacity-50">
                         {new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                       </p>
                     </div>
@@ -723,9 +823,9 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                   <div key={msg.id} className="flex justify-end">
                     <div className="max-w-[75%] bg-amber-50 border border-amber-200 rounded-2xl rounded-tr-sm px-3 py-2">
                       <div className="flex items-center gap-1 mb-1">
-                        <span className="text-[10px] font-semibold text-amber-600 uppercase tracking-wide">💡 Sugestão IA</span>
+                        <span className="text-xs font-semibold text-amber-600 uppercase tracking-wide">💡 Sugestão IA</span>
                       </div>
-                      <p className="text-sm text-gray-700 whitespace-pre-wrap break-words">{displayText}</p>
+                      <p className="text-base text-gray-700 whitespace-pre-wrap break-words">{displayText}</p>
                       {!lead.is_ai_active && (
                         <button
                           onClick={() => setMsgText(displayText)}
@@ -734,7 +834,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                           Usar como resposta
                         </button>
                       )}
-                      <p className="text-[10px] mt-1 opacity-50 text-right">
+                      <p className="text-xs mt-1 opacity-50 text-right">
                         {new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                       </p>
                     </div>
@@ -746,7 +846,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                 <div key={msg.id} className={`flex ${msg.direction === 'OUT' ? 'justify-end' : 'justify-start'}`}>
                   <div className={msg.direction === 'OUT' ? 'chat-bubble-out' : 'chat-bubble-in'}>
                     <MessageContent text={msg.text} />
-                    <p className={`text-[10px] mt-1 opacity-60 ${msg.direction === 'OUT' ? 'text-right' : ''} flex items-center gap-0.5 ${msg.direction === 'OUT' ? 'justify-end' : ''}`}>
+                    <p className={`text-xs mt-1 opacity-60 ${msg.direction === 'OUT' ? 'text-right' : ''} flex items-center gap-0.5 ${msg.direction === 'OUT' ? 'justify-end' : ''}`}>
                       <span>{new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
                       {msg.direction === 'OUT' && <MessageStatusIcon status={msg.msg_status} />}
                     </p>
@@ -760,6 +860,26 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
           {/* Input area */}
           {!lead.is_ai_active ? (
             <div className="border-t border-gray-100 bg-white flex-shrink-0">
+
+              {/* Banner janela 24h expirada */}
+              {!isWhatsappWindowOpen && selectedChannel === 'whatsapp' && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-orange-50 border-b border-orange-200">
+                  <svg className="w-4 h-4 text-orange-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                  <p className="text-xs text-orange-700 flex-1">
+                    <strong>Janela de 24h expirada.</strong> Apenas templates aprovados podem ser enviados.
+                  </p>
+                  <button
+                    onClick={openTemplateModal}
+                    className="text-xs px-3 py-1.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 font-medium flex-shrink-0"
+                  >
+                    Enviar Template
+                  </button>
+                </div>
+              )}
 
               {/* Banner de sugestão RAG */}
               {(loadingSuggestion || ragSuggestion) && (
@@ -795,67 +915,102 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
               {fileError && (
                 <div className="flex items-center gap-2 px-3 pt-2">
                   <p className="text-xs text-red-500 flex-1">{fileError}</p>
-                  <button onClick={() => setFileError('')} className="text-red-400 hover:text-red-600">
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <button onClick={() => setFileError('')} className="text-red-400 hover:text-red-600 p-1">
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                       <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
                   </button>
                 </div>
               )}
 
-              {/* Preview de arquivo pendente */}
-              {pendingFile && (
-                <div className="flex items-center gap-2 px-3 pt-2 pb-1">
-                  <div className="flex-1 flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
-                    <svg className="w-4 h-4 text-blue-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-                    </svg>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-gray-800 truncate">{pendingFile.name}</p>
-                      <p className="text-xs text-gray-400">{(pendingFile.size / 1024).toFixed(0)} KB</p>
+              {/* Preview de arquivos pendentes */}
+              {pendingFiles.length > 0 && (
+                <div className="px-3 pt-2 pb-1 space-y-1.5">
+                  {pendingFiles.map((file, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <div className="flex-1 flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 min-w-0">
+                        {file.type.startsWith('image/') ? (
+                          <svg className="w-4 h-4 text-blue-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                          </svg>
+                        ) : file.type.startsWith('video/') ? (
+                          <svg className="w-4 h-4 text-blue-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4 text-blue-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                          </svg>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{file.name}</p>
+                          <p className="text-xs text-gray-400">{(file.size / 1024).toFixed(0)} KB</p>
+                        </div>
+                        <button
+                          onClick={() => setPendingFiles(prev => prev.filter((_, i) => i !== idx))}
+                          className="text-gray-400 hover:text-red-500 flex-shrink-0 p-1"
+                        >
+                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                          </svg>
+                        </button>
+                      </div>
+                      {/* Botão de envio só no último item */}
+                      {idx === pendingFiles.length - 1 && (
+                        <button
+                          onClick={handleSendFile}
+                          disabled={sendingFile}
+                          className="flex items-center justify-center w-11 h-11 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0"
+                          title={pendingFiles.length > 1 ? `Enviar ${pendingFiles.length} arquivos` : 'Enviar arquivo'}
+                        >
+                          {sendingFile
+                            ? <span className="loading loading-spinner loading-sm" />
+                            : <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                          }
+                        </button>
+                      )}
                     </div>
-                    <button onClick={() => setPendingFile(null)} className="text-gray-400 hover:text-red-500 flex-shrink-0">
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
-                    </button>
-                  </div>
-                  <button
-                    onClick={handleSendFile}
-                    disabled={sendingFile}
-                    className="flex items-center justify-center w-9 h-9 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0"
-                  >
-                    {sendingFile
-                      ? <span className="loading loading-spinner loading-xs" />
-                      : <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                    }
-                  </button>
+                  ))}
+
+                  {/* Legenda só quando há 1 arquivo */}
+                  {pendingFiles.length === 1 && (
+                    <input
+                      type="text"
+                      placeholder="Legenda (opcional)..."
+                      className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-blue-400 transition-colors"
+                      value={fileCaption}
+                      onChange={e => setFileCaption(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSendFile()}
+                    />
+                  )}
                 </div>
               )}
 
-              {/* Legenda opcional para o arquivo */}
-              {pendingFile && (
-                <div className="px-3 pb-1">
+              {/* Checkbox — salvar como resposta rápida */}
+              {msgText.trim() && (
+                <div className="px-4 pb-1 flex items-center gap-1.5">
                   <input
-                    type="text"
-                    placeholder="Legenda (opcional)..."
-                    className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-blue-400 transition-colors"
-                    value={fileCaption}
-                    onChange={e => setFileCaption(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleSendFile()}
+                    id="saveAsQR"
+                    type="checkbox"
+                    checked={saveAsQR}
+                    onChange={e => setSaveAsQR(e.target.checked)}
+                    className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
                   />
+                  <label htmlFor="saveAsQR" className="text-[11px] text-gray-500 cursor-pointer select-none">
+                    Salvar como resposta rápida
+                  </label>
                 </div>
               )}
 
               {/* Barra principal de input */}
-              <div className="px-3 py-2 flex gap-2">
+              <div className="px-3 py-2.5 flex gap-2 items-end">
                 {/* Respostas rápidas */}
                 <button
                   onClick={() => setShowQR(true)}
                   title="Respostas rápidas"
-                  className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
+                  className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
                 >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                     <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                   </svg>
                 </button>
@@ -864,30 +1019,34 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   title="Enviar arquivo / documento"
-                  className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
+                  className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
                 >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
                   </svg>
                 </button>
                 <input
                   ref={fileInputRef}
                   type="file"
+                  multiple
                   className="hidden"
                   accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.gif,.webp,.mp4,.mp3"
                   onChange={handleFileSelect}
                 />
 
                 <textarea
-                  rows={1}
-                  placeholder="Digite sua mensagem..."
-                  className="flex-1 text-sm border border-gray-200 rounded-xl px-3 py-2 outline-none focus:border-blue-400 transition-colors resize-none overflow-hidden"
+                  rows={2}
+                  placeholder={!isWhatsappWindowOpen && selectedChannel === 'whatsapp'
+                    ? 'Janela de 24h expirada — use um template'
+                    : 'Digite sua mensagem...'}
+                  disabled={!isWhatsappWindowOpen && selectedChannel === 'whatsapp'}
+                  className="flex-1 text-base border border-gray-200 rounded-xl px-3 py-2.5 outline-none focus:border-blue-400 transition-colors resize-none overflow-hidden disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
                   value={msgText}
                   onChange={e => {
                     setMsgText(e.target.value);
                     if (ragSuggestion) setRagSuggestion(null);
                     e.target.style.height = 'auto';
-                    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+                    e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
                   }}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) {
@@ -898,14 +1057,14 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                 />
                 <button
                   onClick={handleSend}
-                  disabled={sending || enhancing || !msgText.trim()}
-                  className="flex items-center justify-center w-9 h-9 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0"
+                  disabled={sending || enhancing || !msgText.trim() || (!isWhatsappWindowOpen && selectedChannel === 'whatsapp')}
+                  className="flex items-center justify-center w-11 h-11 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0"
                   title={enhancing ? 'Aprimorando mensagem...' : 'Enviar'}
                 >
                   {(sending || enhancing)
-                    ? <span className="loading loading-spinner loading-xs" />
+                    ? <span className="loading loading-spinner loading-sm" />
                     : (
-                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                         <line x1="22" y1="2" x2="11" y2="13"/>
                         <polygon points="22 2 15 22 11 13 2 9 22 2"/>
                       </svg>
@@ -1027,6 +1186,85 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
         leadName={lead.full_name ?? ''}
       />
 
+      {/* ── Modal: salvar mensagem como resposta rápida ── */}
+      {showSaveQRModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900 text-sm">Salvar como Resposta Rápida</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Disponível para toda a equipe</p>
+              </div>
+            </div>
+
+            <div className="px-5 py-4 flex flex-col gap-3">
+              {/* Preview do corpo */}
+              <div className="bg-gray-50 rounded-xl px-3 py-2.5 border border-gray-100">
+                <p className="text-xs text-gray-500 line-clamp-3 whitespace-pre-line">{pendingQRBody}</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Título <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Ex: Disponibilidade de filhotes"
+                  value={qrTitle}
+                  onChange={e => setQrTitle(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSaveQR()}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-blue-400 transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Atalho <span className="text-gray-400 font-normal">(opcional)</span></label>
+                <input
+                  type="text"
+                  placeholder="Ex: disponibilidade"
+                  value={qrShortcut}
+                  onChange={e => setQrShortcut(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSaveQR()}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-blue-400 transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2 px-5 pb-5">
+              <button
+                onClick={() => { setShowSaveQRModal(false); setSaveAsQR(false); }}
+                className="flex-1 py-2.5 rounded-xl text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveQR}
+                disabled={savingQR || !qrTitle.trim()}
+                className="flex-1 py-2.5 rounded-xl text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 transition-colors flex items-center justify-center gap-1.5"
+              >
+                {savingQR
+                  ? <span className="loading loading-spinner loading-xs" />
+                  : 'Salvar resposta'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Toast: resposta rápida salva ── */}
+      {qrSavedToast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-xs px-4 py-2.5 rounded-full shadow-lg flex items-center gap-2 animate-bounce-in">
+          <svg className="w-3.5 h-3.5 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+          Resposta rápida salva com sucesso
+        </div>
+      )}
+
       {/* ── Modal de aprovação de cordialidade ── */}
       {cordialityPreview && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
@@ -1074,6 +1312,150 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                 className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors"
               >
                 {sending ? <span className="loading loading-spinner loading-xs" /> : 'Enviar versão aprimorada'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal de envio de template WhatsApp ── */}
+      {showTemplateModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+              <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-orange-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+              </div>
+              <div className="flex-1">
+                <p className="font-semibold text-gray-800 text-sm">Enviar Template WhatsApp</p>
+                <p className="text-xs text-gray-500">Selecione um template aprovado para reabrir a conversa</p>
+              </div>
+              <button onClick={() => setShowTemplateModal(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+              {approvedTemplates.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-500 text-sm">Nenhum template aprovado encontrado.</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Crie e aguarde a aprovação de um template em <strong>Templates WhatsApp</strong>.
+                  </p>
+                </div>
+              ) : (
+                approvedTemplates.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      setSelectedTemplate(t);
+                      setTemplateVars(Array(t.variable_count).fill(''));
+                      setTemplateMediaUrl('');
+                    }}
+                    className={`w-full text-left p-4 rounded-xl border-2 transition-colors ${
+                      selectedTemplate?.id === t.id
+                        ? 'border-orange-400 bg-orange-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="font-mono text-sm font-semibold text-gray-900">{t.name}</span>
+                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Aprovado</span>
+                      {t.header_type && t.header_type !== 'NONE' && (
+                        <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full">
+                          {t.header_type === 'IMAGE' ? '🖼 Imagem'
+                           : t.header_type === 'VIDEO' ? '▶ Vídeo'
+                           : t.header_type === 'DOCUMENT' ? '📄 Documento'
+                           : `T ${t.header_text}`}
+                        </span>
+                      )}
+                      {t.variable_count > 0 && (
+                        <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">
+                          {t.variable_count} variável{t.variable_count !== 1 ? 'is' : ''}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-600 line-clamp-2">{t.body_text}</p>
+                    {t.footer_text && (
+                      <p className="text-xs text-gray-400 italic mt-1">{t.footer_text}</p>
+                    )}
+                  </button>
+                ))
+              )}
+
+              {/* Campo de mídia para templates com cabeçalho de imagem/vídeo/documento */}
+              {selectedTemplate && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(selectedTemplate.header_type) && (
+                <div className="bg-purple-50 border border-purple-100 rounded-xl p-4">
+                  <p className="text-sm font-medium text-purple-800 mb-2">
+                    {selectedTemplate.header_type === 'IMAGE' ? '🖼 URL da imagem'
+                     : selectedTemplate.header_type === 'VIDEO' ? '▶ URL do vídeo'
+                     : '📄 URL do documento'}
+                    <span className="text-red-500 ml-1">*</span>
+                  </p>
+                  <input
+                    type="url"
+                    value={templateMediaUrl}
+                    onChange={e => setTemplateMediaUrl(e.target.value)}
+                    placeholder={
+                      selectedTemplate.header_type === 'IMAGE'
+                        ? 'https://exemplo.com/foto.jpg'
+                        : selectedTemplate.header_type === 'VIDEO'
+                        ? 'https://exemplo.com/video.mp4'
+                        : 'https://exemplo.com/arquivo.pdf'
+                    }
+                    className="w-full border border-purple-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+                  />
+                  <p className="text-xs text-purple-600 mt-1">
+                    A URL deve ser pública e acessível pela Meta. Use sua CDN ou hospedagem de imagens.
+                  </p>
+                </div>
+              )}
+
+              {/* Campos de variáveis */}
+              {selectedTemplate && selectedTemplate.variable_count > 0 && (
+                <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">
+                  <p className="text-sm font-medium text-blue-800">Preencha as variáveis do template:</p>
+                  {Array.from({ length: selectedTemplate.variable_count }).map((_, i) => (
+                    <div key={i}>
+                      <label className="block text-xs text-blue-700 mb-1">
+                        Variável {`{{${i + 1}}}`}
+                      </label>
+                      <input
+                        type="text"
+                        value={templateVars[i] ?? ''}
+                        onChange={e => {
+                          const v = [...templateVars];
+                          v[i] = e.target.value;
+                          setTemplateVars(v);
+                        }}
+                        placeholder={i === 0 ? lead?.full_name ?? '' : ''}
+                        className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 px-5 py-4 border-t border-gray-100">
+              <button
+                onClick={() => setShowTemplateModal(false)}
+                className="flex-1 py-2 rounded-xl text-sm font-medium text-gray-600 bg-white border border-gray-200 hover:bg-gray-100"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSendTemplate}
+                disabled={!selectedTemplate || sendingTemplate}
+                className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50 transition-colors"
+              >
+                {sendingTemplate
+                  ? <span className="loading loading-spinner loading-xs" />
+                  : 'Enviar Template'}
               </button>
             </div>
           </div>
@@ -1172,19 +1554,19 @@ export default function LeadsPage() {
       `}>
 
         {/* List Header */}
-        <div className="flex items-center justify-between px-3 py-2.5 border-b border-gray-100 bg-white flex-shrink-0">
+        <div className="flex items-center justify-between px-3 py-3 border-b border-gray-100 bg-white flex-shrink-0">
           <div>
-            <p className="font-semibold text-sm text-gray-800">Leads</p>
-            <p className="text-xs text-gray-400">{total} total</p>
+            <p className="font-semibold text-base text-gray-800">Leads</p>
+            <p className="text-sm text-gray-400">{total} total</p>
           </div>
           <button
             onClick={() => setShowFilters(v => !v)}
-            className={`flex items-center justify-center w-8 h-8 rounded-lg transition-colors ${
+            className={`flex items-center justify-center w-10 h-10 rounded-xl transition-colors ${
               hasActiveFilters ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:bg-gray-100'
             }`}
             title="Filtros"
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
             </svg>
           </button>
@@ -1199,7 +1581,7 @@ export default function LeadsPage() {
             <input
               type="search"
               placeholder="Buscar..."
-              className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:border-blue-400 bg-gray-50"
+              className="w-full pl-8 pr-3 py-2 text-base border border-gray-200 rounded-lg outline-none focus:border-blue-400 bg-gray-50"
               value={filters.search}
               onChange={e => applyFilter('search', e.target.value)}
             />
@@ -1210,7 +1592,7 @@ export default function LeadsPage() {
         {showFilters && (
           <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 flex flex-wrap gap-2 flex-shrink-0">
             <select
-              className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white outline-none flex-1 min-w-[80px]"
+              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none flex-1 min-w-[80px]"
               value={filters.tier}
               onChange={e => applyFilter('tier', e.target.value)}
             >
@@ -1220,7 +1602,7 @@ export default function LeadsPage() {
               <option value="C">C</option>
             </select>
             <select
-              className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white outline-none flex-1 min-w-[90px]"
+              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none flex-1 min-w-[90px]"
               value={filters.status}
               onChange={e => applyFilter('status', e.target.value)}
             >
@@ -1232,7 +1614,7 @@ export default function LeadsPage() {
               <option value="CLOSED">Fechado</option>
             </select>
             <select
-              className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white outline-none flex-1 min-w-[80px]"
+              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white outline-none flex-1 min-w-[80px]"
               value={filters.is_ai_active}
               onChange={e => applyFilter('is_ai_active', e.target.value)}
             >
@@ -1241,7 +1623,7 @@ export default function LeadsPage() {
               <option value="false">Humano</option>
             </select>
             {hasActiveFilters && (
-              <button onClick={clearFilters} className="text-xs text-red-500 hover:underline">Limpar</button>
+              <button onClick={clearFilters} className="text-sm text-red-500 hover:underline">Limpar</button>
             )}
           </div>
         )}
@@ -1277,7 +1659,7 @@ export default function LeadsPage() {
               {hasMore && (
                 <button
                   onClick={() => load(filters, page + 1)}
-                  className="w-full py-3 text-xs text-blue-600 hover:bg-gray-50 border-t"
+                  className="w-full py-3 text-sm text-blue-600 hover:bg-gray-50 border-t"
                   disabled={loading}
                 >
                   {loading ? <span className="loading loading-spinner loading-xs" /> : 'Carregar mais'}
@@ -1305,8 +1687,8 @@ export default function LeadsPage() {
             <svg className="w-16 h-16 mb-4 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1}>
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
-            <p className="text-sm font-medium">Selecione um lead</p>
-            <p className="text-xs mt-1">Escolha uma conversa na lista ao lado</p>
+            <p className="text-base font-medium">Selecione um lead</p>
+            <p className="text-sm mt-1">Escolha uma conversa na lista ao lado</p>
           </div>
         )}
       </div>

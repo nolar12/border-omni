@@ -11,6 +11,9 @@ from api.views import (
     AgentConfigView, KnowledgeBaseView, KnowledgeBaseDetailView,
     TrainingDataExportView,
     InitialMessageMediaView, InitialMessageMediaDetailView,
+    MessageTemplateViewSet,
+    UploadMediaView,
+    ServerConfigView,
 )
 
 router = DefaultRouter()
@@ -19,6 +22,7 @@ router.register(r'channels', ChannelProviderViewSet, basename='channel')
 router.register(r'quick-reply-categories', QuickReplyCategoryViewSet, basename='quickreplycategory')
 router.register(r'quick-replies', QuickReplyViewSet, basename='quickreply')
 router.register(r'plans', PlanViewSet, basename='plan')
+router.register(r'message-templates', MessageTemplateViewSet, basename='messagetemplate')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -49,4 +53,10 @@ urlpatterns = [
     # Initial Message Media
     path('initial-media/', InitialMessageMediaView.as_view(), name='initial_media'),
     path('initial-media/<int:media_id>/', InitialMessageMediaDetailView.as_view(), name='initial_media_detail'),
+
+    # Generic media upload (templates)
+    path('upload-media/', UploadMediaView.as_view(), name='upload_media'),
+
+    # Server configuration (read-only, for frontend info)
+    path('server-config/', ServerConfigView.as_view(), name='server_config'),
 ]

@@ -11,7 +11,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.core.models import Organization, UserProfile, Plan, Subscription, AgentConfig, InitialMessageMedia
 from apps.leads.models import Lead, Note
-from apps.conversations.models import Conversation, Message
+from apps.conversations.models import Conversation, Message, MessageTemplate
 from apps.quick_replies.models import QuickReply, QuickReplyCategory
 from apps.channels.models import ChannelProvider
 from apps.qualifier.engine import QualifierEngine
@@ -22,6 +22,7 @@ from api.serializers import (
     QuickReplySerializer, QuickReplyCategorySerializer,
     ChannelProviderSerializer, PlanSerializer, SubscriptionSerializer,
     AgentConfigSerializer, InitialMessageMediaSerializer,
+    MessageTemplateSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -388,6 +389,179 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         return Response(MessageSerializer(msg).data, status=201)
 
     @action(detail=True, methods=['post'])
+    def send_template(self, request, pk=None):
+        """Envia template ao lead.
+
+        WhatsApp: envia como HSM aprovado via WhatsApp Cloud API.
+        Instagram/Facebook: renderiza o body_text com as variáveis e envia como DM de texto simples,
+        pois essas plataformas não suportam templates HSM formais.
+        """
+        lead = self.get_object()
+        org = lead.organization
+        template_id = request.data.get('template_id')
+        variables = request.data.get('variables', [])
+        header_media_url = request.data.get('header_media_url', '')
+
+        if not template_id:
+            return Response({'detail': 'template_id obrigatório.'}, status=400)
+
+        try:
+            template = MessageTemplate.objects.get(pk=template_id, organization=org)
+        except MessageTemplate.DoesNotExist:
+            return Response({'detail': 'Template não encontrado.'}, status=404)
+
+        if template.status != 'APPROVED':
+            return Response({'detail': f'Template não aprovado (status: {template.status}).'}, status=400)
+
+        # Detecta o canal ativo do lead (conversa mais recente ou fallback por channels_used)
+        active_conv = lead.conversations.order_by('-last_message_at').first()
+        if active_conv:
+            active_channel = active_conv.channel
+        else:
+            active_channel = (lead.channels_used or 'whatsapp').split(',')[0].strip()
+
+        # ── Instagram ────────────────────────────────────────────────────────────
+        if active_channel == 'instagram':
+            if not lead.instagram_user_id:
+                return Response({'detail': 'Lead Instagram sem ID de usuário.'}, status=400)
+
+            channel_provider = ChannelProvider.objects.filter(
+                organization=org, provider='instagram', is_active=True,
+            ).first()
+            if not channel_provider or not channel_provider.access_token:
+                return Response({'detail': 'Canal Instagram não configurado.'}, status=400)
+
+            msg_text = template.body_text
+            for i, val in enumerate(variables, start=1):
+                msg_text = msg_text.replace(f'{{{{{i}}}}}', str(val))
+            if template.header_text:
+                msg_text = f'{template.header_text}\n\n{msg_text}'
+            if template.footer_text:
+                msg_text = f'{msg_text}\n\n{template.footer_text}'
+
+            mid = _send_instagram_message(
+                instagram_account_id=channel_provider.instagram_account_id,
+                access_token=channel_provider.access_token,
+                recipient_id=lead.instagram_user_id,
+                text=msg_text,
+            )
+            provider_msg_id = mid or ''
+
+            conv, _ = Conversation.objects.get_or_create(
+                lead=lead, channel='instagram',
+                defaults={'organization': org, 'state': 'active'},
+            )
+            msg = Message.objects.create(
+                conversation=conv,
+                organization=org,
+                direction='OUT',
+                text=f'[Template: {template.name}]\n{msg_text}',
+                provider_message_id=provider_msg_id,
+                msg_status='sent' if mid else 'failed',
+            )
+            if not mid:
+                return Response({'detail': 'Falha ao enviar mensagem Instagram. Verifique logs.'}, status=502)
+            return Response(MessageSerializer(msg).data, status=201)
+
+        # ── Facebook / Messenger ─────────────────────────────────────────────────
+        if active_channel in ('facebook', 'messenger'):
+            if not lead.facebook_psid:
+                return Response({'detail': 'Lead Facebook sem PSID.'}, status=400)
+
+            channel_provider = ChannelProvider.objects.filter(
+                organization=org, provider__in=['facebook', 'messenger'], is_active=True,
+            ).first()
+            if not channel_provider or not channel_provider.access_token:
+                return Response({'detail': 'Canal Facebook não configurado.'}, status=400)
+
+            msg_text = template.body_text
+            for i, val in enumerate(variables, start=1):
+                msg_text = msg_text.replace(f'{{{{{i}}}}}', str(val))
+            if template.header_text:
+                msg_text = f'{template.header_text}\n\n{msg_text}'
+            if template.footer_text:
+                msg_text = f'{msg_text}\n\n{template.footer_text}'
+
+            mid = _send_facebook_message(
+                page_id=channel_provider.page_id,
+                access_token=channel_provider.access_token,
+                recipient_id=lead.facebook_psid,
+                text=msg_text,
+            )
+            provider_msg_id = mid or ''
+
+            conv, _ = Conversation.objects.get_or_create(
+                lead=lead, channel=active_channel,
+                defaults={'organization': org, 'state': 'active'},
+            )
+            msg = Message.objects.create(
+                conversation=conv,
+                organization=org,
+                direction='OUT',
+                text=f'[Template: {template.name}]\n{msg_text}',
+                provider_message_id=provider_msg_id,
+                msg_status='sent' if mid else 'failed',
+            )
+            if not mid:
+                return Response({'detail': 'Falha ao enviar mensagem Facebook. Verifique logs.'}, status=502)
+            return Response(MessageSerializer(msg).data, status=201)
+
+        # ── WhatsApp (padrão) ────────────────────────────────────────────────────
+        header_type = (template.header_type or 'NONE').upper()
+        if header_type in ('IMAGE', 'VIDEO', 'DOCUMENT') and not header_media_url:
+            return Response({'detail': f'Este template exige uma URL de {header_type.lower()} (header_media_url).'}, status=400)
+
+        channel_provider = ChannelProvider.objects.filter(
+            organization=org, provider='whatsapp', is_active=True,
+        ).first()
+        if not channel_provider or not channel_provider.access_token or not channel_provider.phone_number_id:
+            return Response({'detail': 'Canal WhatsApp não configurado.'}, status=400)
+
+        components = []
+        if header_type == 'IMAGE' and header_media_url:
+            components.append({'type': 'header', 'parameters': [{'type': 'image', 'image': {'link': header_media_url}}]})
+        elif header_type == 'VIDEO' and header_media_url:
+            components.append({'type': 'header', 'parameters': [{'type': 'video', 'video': {'link': header_media_url}}]})
+        elif header_type == 'DOCUMENT' and header_media_url:
+            components.append({'type': 'header', 'parameters': [{'type': 'document', 'document': {'link': header_media_url}}]})
+
+        if variables:
+            body_params = [{'type': 'text', 'text': str(v)} for v in variables]
+            components.append({'type': 'body', 'parameters': body_params})
+
+        wamid = _send_whatsapp_template(
+            phone_number_id=channel_provider.phone_number_id,
+            access_token=channel_provider.access_token,
+            to=lead.phone,
+            template_name=template.name,
+            language_code=template.language,
+            components=components if components else None,
+        )
+
+        if not wamid:
+            return Response({'detail': 'Falha ao enviar template. Verifique logs.'}, status=502)
+
+        msg_text = template.body_text
+        for i, val in enumerate(variables, start=1):
+            msg_text = msg_text.replace(f'{{{{{i}}}}}', str(val))
+        media_prefix = f'[{header_type}: {header_media_url}]\n' if header_media_url else ''
+        msg_text = f'[Template: {template.name}]\n{media_prefix}{msg_text}'
+
+        conv, _ = Conversation.objects.get_or_create(
+            lead=lead, channel='whatsapp',
+            defaults={'organization': org, 'state': 'active'},
+        )
+        msg = Message.objects.create(
+            conversation=conv,
+            organization=org,
+            direction='OUT',
+            text=msg_text,
+            provider_message_id=wamid,
+            msg_status='sent',
+        )
+        return Response(MessageSerializer(msg).data, status=201)
+
+    @action(detail=True, methods=['post'])
     def add_note(self, request, pk=None):
         lead = self.get_object()
         text = request.data.get('text', '').strip()
@@ -479,7 +653,12 @@ class WhatsAppWebhookView(APIView):
         try:
             entry = data['entry'][0]
             changes = entry['changes'][0]
+            field = changes.get('field', '')
             value = changes['value']
+
+            # ── Aprovação / rejeição de template ─────────────────────────────
+            if field == 'message_template_status_update':
+                return self._handle_template_status_update(value)
 
             # ── Status de entrega/leitura (sent → delivered → read) ───────────
             statuses = value.get('statuses')
@@ -552,6 +731,46 @@ class WhatsAppWebhookView(APIView):
             ).update(msg_status=new_status)
             if updated:
                 logger.info(f'Status atualizado: wamid={wamid} → {new_status}')
+
+        return Response({'received': True}, status=200)
+
+    def _handle_template_status_update(self, value):
+        """Atualiza automaticamente o status de um template quando a Meta aprova ou rejeita."""
+        STATUS_MAP = {
+            'APPROVED': 'APPROVED',
+            'REJECTED': 'REJECTED',
+            'PENDING':  'PENDING',
+            'PAUSED':   'PAUSED',
+            'DISABLED': 'DISABLED',
+        }
+
+        meta_id = str(value.get('message_template_id', ''))
+        meta_name = value.get('message_template_name', '')
+        new_status_raw = str(value.get('event', '')).upper()
+        rejection_reason = value.get('reason', '')
+
+        new_status = STATUS_MAP.get(new_status_raw)
+        if not new_status:
+            logger.info(f'Template webhook: evento desconhecido {new_status_raw!r}, ignorando.')
+            return Response({'received': True}, status=200)
+
+        # Tenta localizar pelo meta_template_id primeiro, depois pelo nome
+        template = None
+        if meta_id:
+            template = MessageTemplate.objects.filter(meta_template_id=meta_id).first()
+        if not template and meta_name:
+            template = MessageTemplate.objects.filter(name=meta_name).first()
+
+        if template:
+            template.status = new_status
+            template.rejection_reason = rejection_reason or ''
+            template.save(update_fields=['status', 'rejection_reason'])
+            logger.info(
+                f'Template "{template.name}" atualizado via webhook: {new_status}'
+                + (f' — motivo: {rejection_reason}' if rejection_reason else '')
+            )
+        else:
+            logger.warning(f'Template webhook: template id={meta_id!r} name={meta_name!r} não encontrado no banco.')
 
         return Response({'received': True}, status=200)
 
@@ -686,6 +905,12 @@ class WhatsAppWebhookView(APIView):
         """Lógica comum: cria/atualiza lead, roda QualifierEngine, salva e envia mensagens."""
         from django.utils import timezone
 
+        # Verifica se o bot está habilitado globalmente para a organização
+        try:
+            bot_active = org.agent_config.bot_enabled
+        except AgentConfig.DoesNotExist:
+            bot_active = True
+
         # ── Resolve o lead pelo identificador do canal ─────────────────────────
         if channel in ('messenger', 'facebook'):
             lead, created = Lead.objects.get_or_create(
@@ -694,7 +919,7 @@ class WhatsAppWebhookView(APIView):
                 defaults={
                     'status': 'NEW', 'source': 'OTHER', 'channels_used': channel,
                     'conversation_state': 'initial', 'full_name': contact_name or '',
-                    'phone': '',
+                    'phone': '', 'is_ai_active': bot_active,
                 }
             )
         elif channel == 'instagram':
@@ -704,7 +929,7 @@ class WhatsAppWebhookView(APIView):
                 defaults={
                     'status': 'NEW', 'source': 'OTHER', 'channels_used': channel,
                     'conversation_state': 'initial', 'full_name': contact_name or '',
-                    'phone': '',
+                    'phone': '', 'is_ai_active': bot_active,
                 }
             )
         else:  # whatsapp
@@ -714,8 +939,13 @@ class WhatsAppWebhookView(APIView):
                 defaults={
                     'status': 'NEW', 'source': 'OTHER', 'channels_used': channel,
                     'conversation_state': 'initial', 'full_name': contact_name or '',
+                    'is_ai_active': bot_active,
                 }
             )
+
+        # Se o bot foi desativado globalmente depois que o lead já existia,
+        # respeita o is_ai_active individual do lead (não força para False).
+        # Mas se o bot foi desativado e o lead acabou de ser criado, já está False acima.
 
         if not created and contact_name and not lead.full_name:
             lead.full_name = contact_name
@@ -731,7 +961,14 @@ class WhatsAppWebhookView(APIView):
             conversation=conv, organization=org, direction='IN', text=text,
         )
 
-        if not lead.is_ai_active:
+        # ── Mensagem inicial + mídia + sequência (somente no primeiro contato) ──
+        if created:
+            _send_welcome_sequence(
+                org=org, lead=lead, conv=conv,
+                channel=channel, channel_provider=channel_provider,
+            )
+
+        if not lead.is_ai_active or not bot_active:
             return Response({'received': True, 'replies': [], 'lead': _lead_summary(lead)})
 
         engine = QualifierEngine(lead)
@@ -977,6 +1214,98 @@ class MetaWebhookView(APIView):
         )
 
 
+def _send_welcome_sequence(org, lead, conv, channel, channel_provider):
+    """Envia a mensagem inicial, mídias anexadas e mensagem de sequência configuradas na org."""
+    import time
+    import logging
+    logger = logging.getLogger('apps')
+
+    try:
+        cfg = org.agent_config
+    except AgentConfig.DoesNotExist:
+        return
+
+    # Resolve channel_provider se ainda não foi passado
+    if channel_provider is None:
+        channel_provider = ChannelProvider.objects.filter(
+            organization=org, provider=channel, is_active=True,
+        ).first()
+
+    def _save_and_send(text_or_media):
+        """Salva no banco e envia pelo canal."""
+        is_media = isinstance(text_or_media, dict)
+        db_text = (
+            text_or_media.get('caption') or f"[{text_or_media.get('type', 'mídia')}]"
+            if is_media else text_or_media
+        )
+        Message.objects.create(
+            conversation=conv, organization=org, direction='OUT', text=db_text,
+        )
+        if not channel_provider or not channel_provider.access_token:
+            return
+        if is_media:
+            if channel == 'whatsapp' and channel_provider.phone_number_id:
+                _send_whatsapp_media(
+                    phone_number_id=channel_provider.phone_number_id,
+                    access_token=channel_provider.access_token,
+                    to=lead.phone,
+                    media_type=text_or_media.get('type', 'image'),
+                    url=text_or_media['url'],
+                    caption=text_or_media.get('caption', ''),
+                )
+        else:
+            if channel in ('messenger', 'facebook'):
+                _send_facebook_message(
+                    page_id=channel_provider.page_id,
+                    access_token=channel_provider.access_token,
+                    recipient_id=lead.facebook_psid or '',
+                    text=text_or_media,
+                )
+            elif channel == 'instagram':
+                _send_instagram_message(
+                    instagram_account_id=channel_provider.instagram_account_id,
+                    access_token=channel_provider.access_token,
+                    recipient_id=lead.instagram_user_id or '',
+                    text=text_or_media,
+                )
+            elif channel_provider.phone_number_id:
+                _send_whatsapp_message(
+                    phone_number_id=channel_provider.phone_number_id,
+                    access_token=channel_provider.access_token,
+                    to=lead.phone,
+                    text=text_or_media,
+                )
+
+    try:
+        # 1. Mensagem inicial (texto)
+        if cfg.initial_message and cfg.initial_message.strip():
+            _save_and_send(cfg.initial_message.strip())
+            time.sleep(1)
+
+        # 2. Mídias anexadas (fotos/vídeos)
+        media_items = cfg.initial_media.all()
+        for item in media_items:
+            request_obj = None
+            # Monta URL absoluta para o arquivo
+            from django.conf import settings as django_settings
+            base_url = getattr(django_settings, 'MEDIA_BASE_URL', '').rstrip('/')
+            if not base_url:
+                # fallback: tenta construir pela variável NGROK se existir
+                base_url = getattr(django_settings, '_NGROK', '').rstrip('/')
+            file_url = f'{base_url}{item.file.url}' if base_url else item.file.url
+            _save_and_send({'type': item.media_type, 'url': file_url, 'caption': ''})
+            delay = 7 if item.media_type == 'video' else 3
+            time.sleep(delay)
+
+        # 3. Mensagem de sequência (texto)
+        if cfg.sequence_message and cfg.sequence_message.strip():
+            time.sleep(1)
+            _save_and_send(cfg.sequence_message.strip())
+
+    except Exception as e:
+        logger.warning(f'_send_welcome_sequence error: {e}')
+
+
 def _send_facebook_message(page_id, access_token, recipient_id, text):
     """Envia mensagem de texto via Messenger/Facebook Page API."""
     import requests as http_requests
@@ -1208,6 +1537,51 @@ def _send_whatsapp_media(phone_number_id, access_token, to, media_type, url, cap
         logger.error(f'WhatsApp media send exception: {e}')
 
 
+def _is_whatsapp_window_open(conversation):
+    """Retorna True se a janela de sessão de 24h do WhatsApp ainda está aberta."""
+    from django.utils import timezone
+    if not conversation or not conversation.last_message_at:
+        return False
+    delta = timezone.now() - conversation.last_message_at
+    return delta.total_seconds() < 86400  # 24 horas
+
+
+def _send_whatsapp_template(phone_number_id, access_token, to, template_name, language_code, components=None):
+    """Envia template HSM aprovado via WhatsApp Cloud API. Retorna wamid ou None."""
+    import requests as http_requests
+
+    url = f'https://graph.facebook.com/v22.0/{phone_number_id}/messages'
+    template_payload = {
+        'name': template_name,
+        'language': {'code': language_code},
+    }
+    if components:
+        template_payload['components'] = components
+    payload = {
+        'messaging_product': 'whatsapp',
+        'to': to,
+        'type': 'template',
+        'template': template_payload,
+    }
+    try:
+        resp = http_requests.post(
+            url,
+            json=payload,
+            headers={'Authorization': f'Bearer {access_token}', 'Content-Type': 'application/json'},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            logger.error(f'WhatsApp template send error: {resp.status_code} {resp.text}')
+            return None
+        data = resp.json()
+        wamid = data.get('messages', [{}])[0].get('id')
+        logger.info(f'WhatsApp template "{template_name}" sent to {to} | wamid={wamid}')
+        return wamid
+    except Exception as e:
+        logger.error(f'WhatsApp template send exception: {e}')
+        return None
+
+
 def _lead_summary(lead):
     return {
         'id': lead.id,
@@ -1234,6 +1608,322 @@ class ChannelProviderViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         org = _get_org(self.request.user)
         serializer.save(organization=org)
+
+
+# ─── Message Templates ─────────────────────────────────────────────────────────
+
+class MessageTemplateViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = MessageTemplateSerializer
+
+    def get_queryset(self):
+        org = _get_org(self.request.user)
+        if not org:
+            return MessageTemplate.objects.none()
+        return MessageTemplate.objects.filter(organization=org).select_related('channel')
+
+    def perform_create(self, serializer):
+        org = _get_org(self.request.user)
+        is_draft = str(self.request.data.get('draft', '')).lower() in ('true', '1', 'yes')
+        if is_draft:
+            serializer.save(organization=org, status='DRAFT')
+        else:
+            instance = serializer.save(organization=org)
+            self._submit_to_meta(instance)
+
+    def perform_update(self, serializer):
+        is_draft = str(self.request.data.get('draft', '')).lower() in ('true', '1', 'yes')
+        if is_draft:
+            serializer.save(status='DRAFT')
+        else:
+            instance = serializer.save()
+            if instance.status in ('PENDING', 'REJECTED', 'DRAFT'):
+                self._submit_to_meta(instance)
+
+    @action(detail=True, methods=['post'], url_path='submit')
+    def submit_for_approval(self, request, pk=None):
+        """Envia um rascunho ou template rejeitado para aprovação na Meta."""
+        template = self.get_object()
+        if template.status not in ('DRAFT', 'REJECTED'):
+            return Response(
+                {'detail': 'Apenas rascunhos e templates rejeitados podem ser submetidos para aprovação.'},
+                status=400,
+            )
+        try:
+            self._submit_to_meta(template)
+        except RuntimeError as e:
+            template.refresh_from_db()
+            return Response(
+                {'detail': str(e), 'template': MessageTemplateSerializer(template).data},
+                status=502,
+            )
+        template.refresh_from_db()
+        return Response(MessageTemplateSerializer(template).data)
+
+    def _upload_media_to_meta(self, channel, media_url, header_type):
+        """
+        Faz upload de uma mídia para o WhatsApp API da Meta e retorna o media_id
+        para uso como header_handle na criação do template.
+        Retorna None em caso de falha.
+        """
+        import requests as http_requests
+        import os
+
+        mime_map = {
+            'IMAGE': 'image/jpeg',
+            'VIDEO': 'video/mp4',
+            'DOCUMENT': 'application/pdf',
+        }
+        file_type = mime_map.get(header_type.upper(), 'application/octet-stream')
+
+        try:
+            logger.info(f'Baixando mídia de {media_url} para upload na Meta...')
+            media_resp = http_requests.get(media_url, timeout=30)
+            if media_resp.status_code != 200:
+                logger.error(f'Falha ao baixar mídia: HTTP {media_resp.status_code}')
+                return None
+            file_data = media_resp.content
+            file_name = os.path.basename(media_url.split('?')[0]) or 'media'
+
+            # Upload via endpoint de mídia do WhatsApp
+            upload_resp = http_requests.post(
+                f'https://graph.facebook.com/v22.0/{channel.phone_number_id}/media',
+                headers={'Authorization': f'Bearer {channel.access_token}'},
+                data={'messaging_product': 'whatsapp', 'type': file_type},
+                files={'file': (file_name, file_data, file_type)},
+                timeout=60,
+            )
+            upload_data = upload_resp.json()
+            media_id = upload_data.get('id')
+            if not media_id:
+                logger.error(f'Upload da mídia não retornou id: {upload_data}')
+                return None
+
+            logger.info(f'Mídia enviada para Meta: media_id={media_id}')
+            return media_id
+
+        except Exception as e:
+            logger.error(f'Exceção ao fazer upload de mídia para a Meta: {e}')
+            return None
+
+    def _submit_to_meta(self, template):
+        """Envia o template para aprovação na Meta."""
+        channel = template.channel
+        if not channel or not channel.business_account_id or not channel.access_token:
+            logger.warning(f'MessageTemplate {template.id}: canal sem credenciais Meta, pulando submissão.')
+            return
+
+        import requests as http_requests
+        url = f'https://graph.facebook.com/v22.0/{channel.business_account_id}/message_templates'
+        components = []
+        header_type = (template.header_type or 'NONE').upper()
+        if header_type == 'TEXT' and template.header_text:
+            components.append({'type': 'HEADER', 'format': 'TEXT', 'text': template.header_text})
+        elif header_type in ('IMAGE', 'VIDEO', 'DOCUMENT'):
+            # Para templates com mídia, a Meta requer um media_handle (obtido via
+            # Resumable Upload API) no campo example.header_handle.
+            # Se o template tiver um meta_media_handle salvo, usa ele.
+            # Caso contrário, tenta subir o arquivo e obter o handle.
+            header_component = {'type': 'HEADER', 'format': header_type}
+            media_handle = getattr(template, 'meta_media_handle', None)
+            if not media_handle and template.header_media_url:
+                media_handle = self._upload_media_to_meta(
+                    channel, template.header_media_url, header_type
+                )
+                if media_handle:
+                    try:
+                        template.meta_media_handle = media_handle
+                        template.save(update_fields=['meta_media_handle'])
+                    except Exception:
+                        pass
+            if media_handle:
+                header_component['example'] = {'header_handle': [media_handle]}
+            components.append(header_component)
+        components.append({'type': 'BODY', 'text': template.body_text})
+        if template.footer_text:
+            components.append({'type': 'FOOTER', 'text': template.footer_text})
+
+        payload = {
+            'name': template.name,
+            'language': template.language,
+            'category': template.category,
+            'components': components,
+        }
+        try:
+            resp = http_requests.post(
+                url,
+                json=payload,
+                headers={'Authorization': f'Bearer {channel.access_token}', 'Content-Type': 'application/json'},
+                timeout=45,
+            )
+            data = resp.json()
+            if resp.status_code in (200, 201):
+                template.meta_template_id = data.get('id', '')
+                template.status = 'PENDING'
+                template.rejection_reason = ''
+                template.save(update_fields=['meta_template_id', 'status', 'rejection_reason'])
+                logger.info(f'Template "{template.name}" submetido à Meta: id={template.meta_template_id}')
+            else:
+                raw_error = data.get('error', {})
+                error_msg = raw_error.get('error_user_msg') or raw_error.get('message', str(data))
+                # Se é erro 500 da Meta com cabeçalho de mídia, orientar o usuário
+                if resp.status_code == 500 and (template.header_type or '').upper() in ('IMAGE', 'VIDEO', 'DOCUMENT'):
+                    error_msg = (
+                        'A API da Meta não conseguiu processar o cabeçalho de mídia via API. '
+                        'Crie este template diretamente em '
+                        'business.facebook.com → WhatsApp Manager → Templates de mensagem, '
+                        'faça o upload do vídeo/imagem lá e clique em Enviar para aprovação. '
+                        'O webhook atualizará o status aqui automaticamente quando for aprovado.'
+                    )
+                template.status = 'DRAFT'
+                template.rejection_reason = error_msg
+                template.save(update_fields=['status', 'rejection_reason'])
+                logger.error(f'Erro ao submeter template "{template.name}" à Meta: {error_msg}')
+                raise RuntimeError(error_msg)
+        except http_requests.exceptions.Timeout:
+            msg = 'A API da Meta demorou mais de 45s para responder. Tente novamente em alguns minutos.'
+            template.rejection_reason = msg
+            template.save(update_fields=['rejection_reason'])
+            logger.error(f'Timeout ao submeter template "{template.name}" à Meta.')
+            raise RuntimeError(msg)
+        except RuntimeError:
+            raise
+        except Exception as e:
+            msg = str(e)
+            template.rejection_reason = msg
+            template.save(update_fields=['rejection_reason'])
+            logger.error(f'Exceção ao submeter template à Meta: {e}')
+            raise RuntimeError(msg)
+
+    @action(detail=True, methods=['post'], url_path='sync')
+    def sync(self, request, pk=None):
+        """Sincroniza o status de um template específico com a Meta."""
+        template = self.get_object()
+        channel = template.channel
+        if not channel or not channel.business_account_id or not channel.access_token:
+            return Response({'detail': 'Canal sem credenciais Meta.'}, status=400)
+        if not template.meta_template_id:
+            return Response({'detail': 'Template ainda não foi submetido à Meta.'}, status=400)
+
+        import requests as http_requests
+        url = f'https://graph.facebook.com/v22.0/{template.meta_template_id}'
+        try:
+            resp = http_requests.get(
+                url,
+                params={'fields': 'id,name,status,quality_score,rejected_reason'},
+                headers={'Authorization': f'Bearer {channel.access_token}'},
+                timeout=10,
+            )
+            data = resp.json()
+            if resp.status_code == 200:
+                meta_status = data.get('status', '').upper()
+                STATUS_MAP = {
+                    'APPROVED': 'APPROVED', 'REJECTED': 'REJECTED',
+                    'PENDING': 'PENDING', 'PAUSED': 'PAUSED', 'DISABLED': 'DISABLED',
+                }
+                template.status = STATUS_MAP.get(meta_status, 'PENDING')
+                template.rejection_reason = data.get('rejected_reason', '')
+                template.save(update_fields=['status', 'rejection_reason'])
+                return Response(MessageTemplateSerializer(template).data)
+            else:
+                return Response({'detail': data.get('error', {}).get('message', 'Erro Meta')}, status=400)
+        except Exception as e:
+            return Response({'detail': str(e)}, status=500)
+
+    @action(detail=True, methods=['post'], url_path='link')
+    def link_meta_id(self, request, pk=None):
+        """
+        Vincula um template criado manualmente no Meta Business Manager.
+        Recebe { "meta_template_id": "123456789" }, verifica na API da Meta
+        e atualiza status e meta_template_id localmente.
+        """
+        template = self.get_object()
+        meta_id = str(request.data.get('meta_template_id', '')).strip()
+        if not meta_id:
+            return Response({'detail': 'Informe o meta_template_id.'}, status=400)
+
+        channel = template.channel
+        if not channel or not channel.business_account_id or not channel.access_token:
+            return Response({'detail': 'Canal sem credenciais Meta.'}, status=400)
+
+        import requests as http_requests
+        try:
+            resp = http_requests.get(
+                f'https://graph.facebook.com/v22.0/{meta_id}',
+                params={'fields': 'id,name,status,rejected_reason,category,language'},
+                headers={'Authorization': f'Bearer {channel.access_token}'},
+                timeout=10,
+            )
+            data = resp.json()
+            if resp.status_code != 200:
+                err = data.get('error', {}).get('message', str(data))
+                return Response({'detail': f'ID não encontrado na Meta: {err}'}, status=400)
+
+            STATUS_MAP = {
+                'APPROVED': 'APPROVED', 'REJECTED': 'REJECTED',
+                'PENDING': 'PENDING', 'PAUSED': 'PAUSED', 'DISABLED': 'DISABLED',
+            }
+            meta_status = data.get('status', '').upper()
+            template.meta_template_id = meta_id
+            template.status = STATUS_MAP.get(meta_status, 'PENDING')
+            template.rejection_reason = data.get('rejected_reason', '') or ''
+            if template.rejection_reason == 'NONE':
+                template.rejection_reason = ''
+            template.save(update_fields=['meta_template_id', 'status', 'rejection_reason'])
+            logger.info(f'Template "{template.name}" vinculado ao meta_id={meta_id}, status={template.status}')
+            return Response(MessageTemplateSerializer(template).data)
+        except Exception as e:
+            return Response({'detail': str(e)}, status=500)
+
+    @action(detail=False, methods=['post'], url_path='sync-all')
+    def sync_all(self, request):
+        """Sincroniza todos os templates da organização com a Meta."""
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'Sem organização.'}, status=400)
+
+        import requests as http_requests
+        updated = []
+        errors = []
+        STATUS_MAP = {
+            'APPROVED': 'APPROVED', 'REJECTED': 'REJECTED',
+            'PENDING': 'PENDING', 'PAUSED': 'PAUSED', 'DISABLED': 'DISABLED',
+        }
+
+        channels = ChannelProvider.objects.filter(organization=org, is_active=True)
+        for channel in channels:
+            if not channel.business_account_id or not channel.access_token:
+                continue
+            url = f'https://graph.facebook.com/v22.0/{channel.business_account_id}/message_templates'
+            try:
+                resp = http_requests.get(
+                    url,
+                    params={'fields': 'id,name,status,rejected_reason', 'limit': 100},
+                    headers={'Authorization': f'Bearer {channel.access_token}'},
+                    timeout=15,
+                )
+                if resp.status_code != 200:
+                    errors.append(f'Canal {channel.name}: {resp.text}')
+                    continue
+                data = resp.json().get('data', [])
+                for item in data:
+                    tmpl = MessageTemplate.objects.filter(
+                        organization=org, meta_template_id=item['id']
+                    ).first()
+                    if not tmpl:
+                        tmpl = MessageTemplate.objects.filter(
+                            organization=org, name=item['name']
+                        ).first()
+                    if tmpl:
+                        tmpl.meta_template_id = item['id']
+                        tmpl.status = STATUS_MAP.get(item.get('status', '').upper(), 'PENDING')
+                        tmpl.rejection_reason = item.get('rejected_reason', '')
+                        tmpl.save(update_fields=['meta_template_id', 'status', 'rejection_reason'])
+                        updated.append(tmpl.name)
+            except Exception as e:
+                errors.append(f'Canal {channel.name}: {e}')
+
+        return Response({'updated': updated, 'errors': errors})
 
 
 # ─── Quick Replies ─────────────────────────────────────────────────────────────
@@ -1450,6 +2140,70 @@ class InitialMessageMediaDetailView(APIView):
         obj.file.delete(save=False)
         obj.delete()
         return Response(status=204)
+
+
+# ─── Server Config ────────────────────────────────────────────────────────────
+
+class ServerConfigView(APIView):
+    """Expõe configurações públicas do servidor para o frontend (somente leitura)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.conf import settings as django_settings
+        return Response({
+            'media_base_url': django_settings.MEDIA_BASE_URL or '',
+        })
+
+
+# ─── Generic Media Upload ─────────────────────────────────────────────────────
+
+class UploadMediaView(APIView):
+    """Upload de imagem, vídeo ou documento para uso em templates de mensagem.
+
+    Salva o arquivo em media/template_media/ e retorna a URL pública absoluta.
+    """
+    permission_classes = [IsAuthenticated]
+
+    ALLOWED_MIME_PREFIXES = ('image/', 'video/')
+    ALLOWED_MIMES = ('application/pdf',)
+    MAX_SIZE_BYTES = 16 * 1024 * 1024  # 16 MB
+
+    def post(self, request):
+        import mimetypes, os, uuid
+        from django.core.files.storage import default_storage
+        from django.core.files.base import ContentFile
+
+        uploaded = request.FILES.get('file')
+        if not uploaded:
+            return Response({'detail': 'Arquivo obrigatório.'}, status=400)
+
+        mime = uploaded.content_type or mimetypes.guess_type(uploaded.name)[0] or ''
+        is_allowed = (
+            any(mime.startswith(p) for p in self.ALLOWED_MIME_PREFIXES)
+            or mime in self.ALLOWED_MIMES
+        )
+        if not is_allowed:
+            return Response(
+                {'detail': f'Tipo de arquivo não suportado ({mime}). Aceitos: imagens, vídeos e PDFs.'},
+                status=400,
+            )
+
+        if uploaded.size > self.MAX_SIZE_BYTES:
+            mb = self.MAX_SIZE_BYTES // (1024 * 1024)
+            return Response({'detail': f'Arquivo muito grande. Máximo: {mb} MB.'}, status=400)
+
+        ext = os.path.splitext(uploaded.name)[1].lower() or ''
+        filename = f'template_media/{uuid.uuid4().hex}{ext}'
+        saved_path = default_storage.save(filename, ContentFile(uploaded.read()))
+
+        from django.conf import settings as django_settings
+        base = (django_settings.MEDIA_BASE_URL or '').rstrip('/')
+        if base:
+            url = f'{base}/media/{saved_path}'
+        else:
+            url = request.build_absolute_uri(f'/media/{saved_path}')
+
+        return Response({'url': url, 'name': uploaded.name, 'mime': mime}, status=201)
 
 
 # ─── Training Data Export ──────────────────────────────────────────────────────

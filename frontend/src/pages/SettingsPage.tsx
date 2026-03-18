@@ -161,8 +161,8 @@ export default function SettingsPage() {
 
       {/* Header */}
       <div>
-        <h1 className="text-xl font-bold text-gray-900">Configurações</h1>
-        <p className="text-sm text-gray-400 mt-0.5">Gerencie as preferências globais da sua organização.</p>
+        <h1 className="text-2xl font-bold text-gray-900">Configurações</h1>
+        <p className="text-base text-gray-400 mt-0.5">Gerencie as preferências globais da sua organização.</p>
       </div>
 
       {/* ── Bot automático ── */}
@@ -175,15 +175,15 @@ export default function SettingsPage() {
             </svg>
           </div>
           <div>
-            <p className="text-sm font-semibold text-gray-800">Bot automático</p>
-            <p className="text-xs text-gray-400">Controle global do bot de IA para novos leads.</p>
+            <p className="text-base font-semibold text-gray-800">Bot automático</p>
+            <p className="text-sm text-gray-400">Controle global do bot de IA para novos leads.</p>
           </div>
         </div>
 
         <div className="px-5 py-5 flex items-center justify-between gap-6">
           <div className="flex-1">
-            <p className="text-sm font-medium text-gray-800">Ativar bot automático</p>
-            <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+            <p className="text-base font-medium text-gray-800">Ativar bot automático</p>
+            <p className="text-sm text-gray-400 mt-1 leading-relaxed">
               Quando ativado, o bot de IA responde automaticamente a todos os novos leads assim que entram em contato.
               Você ainda pode assumir conversas individualmente a qualquer momento.
             </p>
@@ -191,13 +191,13 @@ export default function SettingsPage() {
           <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
             <ToggleSwitch checked={botEnabled} onChange={handleToggleBot} disabled={savingBot} />
             {savingBot && <span className="loading loading-spinner loading-xs text-blue-500" />}
-            {savedBot && !savingBot && <span className="text-[10px] font-medium text-green-600">Salvo ✓</span>}
+            {savedBot && !savingBot && <span className="text-xs font-medium text-green-600">Salvo ✓</span>}
           </div>
         </div>
 
         <div className={`px-5 py-2.5 border-t border-gray-100 flex items-center gap-2 ${botEnabled ? 'bg-blue-50' : 'bg-amber-50'}`}>
-          <span className="text-sm">{botEnabled ? '🤖' : '👤'}</span>
-          <p className={`text-xs font-medium ${botEnabled ? 'text-blue-700' : 'text-amber-700'}`}>
+          <span className="text-base">{botEnabled ? '🤖' : '👤'}</span>
+          <p className={`text-sm font-medium ${botEnabled ? 'text-blue-700' : 'text-amber-700'}`}>
             {botEnabled
               ? 'Bot ativo — IA responde automaticamente aos novos leads'
               : 'Bot desativado — atendimento manual para novos leads'}
@@ -214,13 +214,13 @@ export default function SettingsPage() {
             </svg>
           </div>
           <div>
-            <p className="text-sm font-semibold text-gray-800">Mensagem inicial</p>
-            <p className="text-xs text-gray-400">Texto enviado automaticamente no primeiro contato do lead.</p>
+            <p className="text-base font-semibold text-gray-800">Mensagem inicial</p>
+            <p className="text-sm text-gray-400">Texto enviado automaticamente no primeiro contato do lead.</p>
           </div>
         </div>
 
         <div className="px-5 py-5 space-y-4">
-          <p className="text-xs text-gray-400 leading-relaxed">
+          <p className="text-sm text-gray-400 leading-relaxed">
             Esta mensagem é enviada automaticamente quando um lead entra em contato pela primeira vez.
             Deixe em branco para usar o comportamento padrão do sistema.
           </p>
@@ -228,7 +228,7 @@ export default function SettingsPage() {
           <textarea
             rows={4}
             placeholder={"Ex: Opa! Tudo bem? Aqui é o Marcelo 🐾\nPosso te ajudar? Você tem interesse em filhote macho ou fêmea?\n— Temos uma ninhada disponível!"}
-            className="w-full text-sm border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-green-400 transition-colors resize-none bg-white leading-relaxed"
+            className="w-full text-base border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-green-400 transition-colors resize-none bg-white leading-relaxed"
             value={initialMessage}
             onChange={e => setInitialMessage(e.target.value)}
           />
@@ -253,7 +253,7 @@ export default function SettingsPage() {
                           <polygon points="23 7 16 12 23 17 23 7"/>
                           <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
                         </svg>
-                        <p className="text-[10px] text-gray-400 truncate px-1 w-full text-center">{item.original_name}</p>
+                        <p className="text-xs text-gray-400 truncate px-1 w-full text-center">{item.original_name}</p>
                       </div>
                     )}
 
@@ -313,7 +313,7 @@ export default function SettingsPage() {
               onChange={handleMediaUpload}
             />
             {media.length > 0 && (
-              <p className="text-[11px] text-gray-400 text-center">
+              <p className="text-xs text-gray-400 text-center">
                 {media.length} arquivo{media.length !== 1 ? 's' : ''} anexado{media.length !== 1 ? 's' : ''} · passe o mouse para remover
               </p>
             )}
@@ -361,13 +361,13 @@ export default function SettingsPage() {
             </svg>
           </div>
           <div>
-            <p className="text-sm font-semibold text-gray-800">Mensagem de sequência</p>
-            <p className="text-xs text-gray-400">Segunda mensagem enviada logo após a inicial.</p>
+            <p className="text-base font-semibold text-gray-800">Mensagem de sequência</p>
+            <p className="text-sm text-gray-400">Segunda mensagem enviada logo após a inicial.</p>
           </div>
         </div>
 
         <div className="px-5 py-5 space-y-4">
-          <p className="text-xs text-gray-400 leading-relaxed">
+          <p className="text-sm text-gray-400 leading-relaxed">
             Enviada automaticamente em seguida à mensagem inicial, para complementar ou aprofundar
             o contato com o lead. Deixe em branco para não enviar uma segunda mensagem.
           </p>
@@ -375,7 +375,7 @@ export default function SettingsPage() {
           <textarea
             rows={5}
             placeholder={"Ex: Aqui estão algumas fotos da ninhada 🐶\nSão filhotes de alto padrão, vacinados e com pedigree.\nQuer saber mais detalhes?"}
-            className="w-full text-sm border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-purple-400 transition-colors resize-none bg-white leading-relaxed"
+            className="w-full text-base border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-purple-400 transition-colors resize-none bg-white leading-relaxed"
             value={sequenceMessage}
             onChange={e => setSequenceMessage(e.target.value)}
           />

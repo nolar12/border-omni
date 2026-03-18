@@ -97,8 +97,11 @@ start_frontend() {
 NGROK_DOMAIN="borderomni.ngrok.app"
 
 # ─── Start ngrok ─────────────────────────────────────────────────────────────
+# Expõe o backend (9022) diretamente — necessário para webhook do WhatsApp.
+# O frontend buildado é servido pelo próprio Django, então um único túnel
+# serve webhooks + API + app React pelo celular.
 start_ngrok() {
-  info "Iniciando ngrok com domínio fixo $NGROK_DOMAIN..."
+  info "Iniciando ngrok com domínio fixo $NGROK_DOMAIN (→ porta 9022)..."
   pkill -f "ngrok http" 2>/dev/null
   sleep 1
   ngrok http 9022 --url="$NGROK_DOMAIN" > "$LOG_DIR/ngrok.log" 2>&1 &
@@ -148,7 +151,8 @@ case "${1:-start}" in
     echo -e "   Admin:     ${CYAN}http://localhost:9022/admin${NC}"
     echo -e "   Login:     marcello12souza@gmail.com / admin123"
     echo ""
-    echo -e "   Webhooks públicos (ngrok fixo):"
+    echo -e "   Acesso externo (celular/fora do Wi-Fi):"
+    echo -e "   App:       ${CYAN}https://$NGROK_DOMAIN${NC}  ← rode ./start.sh build primeiro"
     echo -e "   WhatsApp:  ${CYAN}https://$NGROK_DOMAIN/api/webhooks/whatsapp/${NC}"
     echo -e "   Meta:      ${CYAN}https://$NGROK_DOMAIN/api/webhooks/meta/${NC}"
     echo ""
@@ -182,8 +186,22 @@ case "${1:-start}" in
     echo -e "${CYAN}=== Frontend ===${NC}"
     tail -20 "$LOG_DIR/frontend.log" 2>/dev/null || echo "(sem log)"
     ;;
+  build)
+    echo ""
+    echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║     Border Omni — Build Frontend     ║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
+    echo ""
+    info "Compilando frontend React..."
+    cd "$FRONTEND" && npm run build
+    success "Build concluído!"
+    echo ""
+    echo -e "   Acesse pelo celular/fora do Wi-Fi:"
+    echo -e "   ${CYAN}https://$NGROK_DOMAIN${NC}"
+    echo ""
+    ;;
   *)
-    echo "Uso: $0 {start|stop|restart|status|logs}"
+    echo "Uso: $0 {start|stop|restart|status|logs|build}"
     exit 1
     ;;
 esac

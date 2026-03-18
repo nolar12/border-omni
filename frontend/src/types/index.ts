@@ -202,3 +202,29 @@ export interface AuthTokens {
   refresh: string;
   user: User;
 }
+
+export type TemplateCategory = 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
+export type TemplateStatus = 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'PAUSED' | 'DISABLED';
+export type TemplateHeaderType = 'NONE' | 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+
+export interface MessageTemplate {
+  id: number;
+  name: string;
+  language: string;
+  category: TemplateCategory;
+  status: TemplateStatus;
+  status_display: string;
+  header_type: TemplateHeaderType;
+  header_type_display: string;
+  header_text: string;
+  header_media_url: string;
+  body_text: string;
+  footer_text: string;
+  meta_template_id: string;
+  rejection_reason: string;
+  channel: number | null;
+  channel_name: string;
+  variable_count: number;
+  created_at: string;
+  updated_at: string;
+}

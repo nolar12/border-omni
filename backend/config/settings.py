@@ -49,10 +49,13 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'config.urls'
 
+# Diretório do build do frontend React (gerado por ./start.sh build)
+_FRONTEND_DIST = BASE_DIR.parent / 'frontend' / 'dist'
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [str(_FRONTEND_DIST)] if _FRONTEND_DIST.exists() else [],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -96,6 +99,13 @@ USE_TZ = True
 STATIC_URL = 'static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# URL pública base — usada para construir links de mídia acessíveis externamente pelo WhatsApp e Meta.
+# Em desenvolvimento, aponte para seu domínio Ngrok. Em produção, aponte para seu domínio HTTPS.
+# Exemplo: MEDIA_BASE_URL=https://seu-dominio.ngrok-free.app
+_NGROK = 'https://borderomni.ngrok.app'
+MEDIA_BASE_URL = os.getenv('MEDIA_BASE_URL', _NGROK).rstrip('/')
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # URL pública de um vídeo/foto de ninhada anterior (configuração legada — substituta pelo A/B abaixo).
@@ -103,16 +113,14 @@ QUALIFICATION_MEDIA_URL = os.getenv('QUALIFICATION_MEDIA_URL', '')
 QUALIFICATION_MEDIA_TYPE = os.getenv('QUALIFICATION_MEDIA_TYPE', 'video')
 
 # A/B test de mídia: 4 variantes sorteadas aleatoriamente para cada novo lead.
-# Configure as URLs públicas das mídias (HTTPS obrigatório para o WhatsApp).
-# Exemplo local via ngrok: https://xxxx.ngrok.io/media/ab_test/variant_a.mp4
+# Por padrão usa MEDIA_BASE_URL; sobrescreva individualmente via env se necessário.
 _AB_CAPTION_VIDEO = ''
 _AB_CAPTION_IMAGE = ''
-_NGROK = 'https://nonredeemable-superseriously-keyla.ngrok-free.dev'
 AB_MEDIA_VARIANTS = {
-    'A': {'type': 'video', 'url': os.getenv('AB_MEDIA_URL_A', f'{_NGROK}/media/ab_test/variant_a.mp4'), 'caption': _AB_CAPTION_VIDEO},
-    'B': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_B', f'{_NGROK}/media/ab_test/variant_b.png'), 'caption': _AB_CAPTION_IMAGE},
-    'C': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_C', f'{_NGROK}/media/ab_test/variant_c.png'), 'caption': _AB_CAPTION_IMAGE},
-    'D': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_D', f'{_NGROK}/media/ab_test/variant_d.png'), 'caption': _AB_CAPTION_IMAGE},
+    'A': {'type': 'video', 'url': os.getenv('AB_MEDIA_URL_A', f'{MEDIA_BASE_URL}/media/ab_test/variant_a.mp4'), 'caption': _AB_CAPTION_VIDEO},
+    'B': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_B', f'{MEDIA_BASE_URL}/media/ab_test/variant_b.png'), 'caption': _AB_CAPTION_IMAGE},
+    'C': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_C', f'{MEDIA_BASE_URL}/media/ab_test/variant_c.png'), 'caption': _AB_CAPTION_IMAGE},
+    'D': {'type': 'image', 'url': os.getenv('AB_MEDIA_URL_D', f'{MEDIA_BASE_URL}/media/ab_test/variant_d.png'), 'caption': _AB_CAPTION_IMAGE},
 }
 
 # CORS

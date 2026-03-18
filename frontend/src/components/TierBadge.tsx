@@ -9,8 +9,8 @@ const MAP: Record<Tier, string> = {
 };
 
 export default function TierBadge({ tier, size = 'sm' }: Props) {
-  if (!tier) return <span className="text-gray-300 text-xs">—</span>;
-  const sz = size === 'sm' ? 'text-xs px-1.5 py-0.5' : 'text-sm px-2.5 py-1';
+  if (!tier) return <span className="text-gray-300 text-sm">—</span>;
+  const sz = size === 'sm' ? 'text-xs px-2 py-0.5' : 'text-sm px-2.5 py-1';
   return (
     <span className={`inline-flex items-center font-bold rounded-md ${MAP[tier]} ${sz}`}>
       {tier}
