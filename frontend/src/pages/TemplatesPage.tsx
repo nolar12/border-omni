@@ -350,7 +350,10 @@ export default function TemplatesPage() {
     setSyncingAll(true);
     try {
       const result = await messageTemplatesService.syncAll();
-      showToast(`Sincronizados: ${result.updated.length} template(s).`);
+      const parts: string[] = [];
+      if (result.updated.length) parts.push(`${result.updated.length} atualizado(s)`);
+      if (result.imported.length) parts.push(`${result.imported.length} importado(s) da Meta`);
+      showToast(parts.length ? parts.join(' • ') : 'Nenhuma alteração.');
       if (result.errors.length) showToast(result.errors[0], 'error');
       loadAll();
     } catch {

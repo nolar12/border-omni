@@ -13,6 +13,10 @@ interface LeadResult {
 
 type Phase = 'setup' | 'sending' | 'done';
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 const STATUS_LABELS: Record<string, string> = {
   NEW: 'Novo',
   QUALIFYING: 'Qualificando',
@@ -389,6 +393,10 @@ export default function CampaignsPage() {
         setErrorCount(errors);
         setResults(prev => new Map(prev).set(leadId, { status: 'error', errorMsg: msg }));
       }
+
+      if (!abortRef.current && leadIds.indexOf(leadId) < leadIds.length - 1) {
+        await sleep(400);
+      }
     }
 
     setPhase('done');
@@ -417,6 +425,17 @@ export default function CampaignsPage() {
               Envie templates aprovados para um grupo de leads via WhatsApp
             </p>
           </div>
+          {phase === 'sending' && (
+            <button
+              onClick={() => { abortRef.current = true; }}
+              className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-700 border border-red-200 rounded-lg text-sm font-medium hover:bg-red-200 transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+              </svg>
+              Cancelar
+            </button>
+          )}
           {phase === 'done' && (
             <button
               onClick={reset}
@@ -855,13 +874,18 @@ export default function CampaignsPage() {
                             <ChannelBadge channels_used={lead.channels_used} />
                           </td>
                           {phase !== 'setup' && (
-                            <td className="px-3 py-2.5">
+                            <td className="px-3 py-2.5 max-w-[200px]">
                               {result?.status === 'success' && (
-                                <span className="text-green-600">Enviado</span>
+                                <span className="text-green-600 font-medium">Enviado</span>
                               )}
                               {result?.status === 'error' && (
-                                <span className="text-red-500" title={result.errorMsg}>
-                                  Falhou
+                                <span className="flex flex-col gap-0.5">
+                                  <span className="text-red-500 font-medium">Falhou</span>
+                                  {result.errorMsg && (
+                                    <span className="text-red-400 text-[10px] leading-tight break-words">
+                                      {result.errorMsg}
+                                    </span>
+                                  )}
                                 </span>
                               )}
                               {result?.status === 'sending' && (

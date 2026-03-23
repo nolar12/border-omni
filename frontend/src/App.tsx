@@ -11,12 +11,20 @@ import ABTestPage from './pages/ABTestPage';
 import SettingsPage from './pages/SettingsPage';
 import TemplatesPage from './pages/TemplatesPage';
 import CampaignsPage from './pages/CampaignsPage';
+import GalleryPage from './pages/GalleryPage';
+import ContractsPage from './pages/ContractsPage';
+import ContractPublicPage from './pages/ContractPublicPage';
+import NotesPage from './pages/NotesPage';
+import DogsPage from './pages/DogsPage';
+import LittersPage from './pages/LittersPage';
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        {/* Página pública do contrato — sem autenticação */}
+        <Route path="/contrato/:token" element={<ContractPublicPage />} />
         <Route
           path="/"
           element={
@@ -41,6 +49,11 @@ export default function App() {
           <Route path="equipe" element={<ComingSoon title="Equipe" />} />
           <Route path="configuracoes" element={<SettingsPage />} />
           <Route path="templates" element={<TemplatesPage />} />
+          <Route path="galeria" element={<GalleryPage />} />
+          <Route path="contratos" element={<ContractsPage />} />
+          <Route path="notas" element={<NotesPage />} />
+          <Route path="canil/caes" element={<DogsPage />} />
+          <Route path="canil/ninhadas" element={<LittersPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

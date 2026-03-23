@@ -33,7 +33,7 @@ export const messageTemplatesService = {
     api.post<MessageTemplate>(`/message-templates/${id}/sync/`).then(r => r.data),
 
   syncAll: () =>
-    api.post<{ updated: string[]; errors: string[] }>('/message-templates/sync-all/').then(r => r.data),
+    api.post<{ updated: string[]; imported: string[]; errors: string[] }>('/message-templates/sync-all/').then(r => r.data),
 
   submitForApproval: (id: number) =>
     api.post<import('../types').MessageTemplate>(`/message-templates/${id}/submit/`).then(r => r.data),

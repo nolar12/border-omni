@@ -102,12 +102,29 @@ NGROK_DOMAIN="borderomni.ngrok.app"
 # serve webhooks + API + app React pelo celular.
 start_ngrok() {
   info "Iniciando ngrok com domínio fixo $NGROK_DOMAIN (→ porta 9022)..."
-  pkill -f "ngrok http" 2>/dev/null
+  # Para instância anterior (systemd-run ou processo direto)
+  systemctl --user stop ngrok-borderomni.service 2>/dev/null || true
+  pkill -f "ngrok http" 2>/dev/null || true
   sleep 1
-  ngrok http 9022 --url="$NGROK_DOMAIN" > "$LOG_DIR/ngrok.log" 2>&1 &
-  NGROK_PID=$!
-  echo $NGROK_PID > "$LOG_DIR/ngrok.pid"
-  sleep 6
+
+  # systemd-run garante que o processo sobrevive mesmo quando a shell pai termina
+  if systemd-run --user --unit=ngrok-borderomni \
+      ngrok http 9022 --url="$NGROK_DOMAIN" --log=stdout \
+      > "$LOG_DIR/ngrok.log" 2>&1; then
+    # Salva o PID real para compatibilidade com stop_all
+    sleep 2
+    NGROK_PID=$(systemctl --user show ngrok-borderomni.service --property=MainPID --value 2>/dev/null || echo "")
+    [ -n "$NGROK_PID" ] && echo "$NGROK_PID" > "$LOG_DIR/ngrok.pid"
+  else
+    warn "systemd-run não disponível, usando nohup..."
+    nohup ngrok http 9022 --url="$NGROK_DOMAIN" --log=stdout \
+      >> "$LOG_DIR/ngrok.log" 2>&1 &
+    NGROK_PID=$!
+    disown "$NGROK_PID"
+    echo "$NGROK_PID" > "$LOG_DIR/ngrok.pid"
+  fi
+
+  sleep 5
   NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tunnels'][0]['public_url'])" 2>/dev/null)
   if [ -n "$NGROK_URL" ]; then
@@ -117,9 +134,24 @@ start_ngrok() {
   fi
 }
 
+# ─── Start watchdog ──────────────────────────────────────────────────────────
+start_watchdog() {
+  if systemctl --user is-active --quiet border-omni-watchdog.service 2>/dev/null; then
+    info "Watchdog já rodando — reiniciando para garantir estado limpo..."
+    systemctl --user restart border-omni-watchdog.service
+  else
+    info "Iniciando watchdog (systemd user service)..."
+    systemctl --user start border-omni-watchdog.service 2>/dev/null || \
+      warn "Watchdog não pôde ser iniciado via systemd. Rode: systemctl --user enable border-omni-watchdog.service"
+  fi
+  success "Watchdog ativo → log: /tmp/border_omni_watchdog.log"
+}
+
 # ─── Stop all ────────────────────────────────────────────────────────────────
 stop_all() {
   info "Encerrando serviços..."
+  systemctl --user stop border-omni-watchdog.service 2>/dev/null || true
+  systemctl --user stop ngrok-borderomni.service 2>/dev/null || true
   for pidfile in "$LOG_DIR/backend.pid" "$LOG_DIR/frontend.pid" "$LOG_DIR/ngrok.pid"; do
     if [ -f "$pidfile" ]; then
       pid=$(cat "$pidfile")
@@ -144,6 +176,7 @@ case "${1:-start}" in
     start_backend
     start_frontend
     start_ngrok
+    start_watchdog
     echo ""
     echo -e "${GREEN}✅ Sistema iniciado!${NC}"
     echo -e "   Frontend:  ${CYAN}http://localhost:9021${NC}"
@@ -156,6 +189,7 @@ case "${1:-start}" in
     echo -e "   WhatsApp:  ${CYAN}https://$NGROK_DOMAIN/api/webhooks/whatsapp/${NC}"
     echo -e "   Meta:      ${CYAN}https://$NGROK_DOMAIN/api/webhooks/meta/${NC}"
     echo ""
+    echo -e "   Watchdog:  ${CYAN}systemctl --user status border-omni-watchdog.service${NC}"
     echo -e "   Para encerrar: ${YELLOW}./start.sh stop${NC}"
     echo ""
     ;;
@@ -165,7 +199,7 @@ case "${1:-start}" in
   restart)
     stop_all
     sleep 1
-    exec "$0" start
+    exec "$ROOT/start.sh" start
     ;;
   status)
     echo ""

@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.core.models import Organization, UserProfile, Plan, Subscription, AgentConfig, InitialMessageMedia
+from apps.core.models import Organization, UserProfile, Plan, Subscription, AgentConfig, InitialMessageMedia, GalleryMedia
 from apps.leads.models import Lead, Note
 from apps.conversations.models import Conversation, Message, MessageTemplate
 from apps.quick_replies.models import QuickReply, QuickReplyCategory
@@ -22,7 +22,13 @@ from api.serializers import (
     QuickReplySerializer, QuickReplyCategorySerializer,
     ChannelProviderSerializer, PlanSerializer, SubscriptionSerializer,
     AgentConfigSerializer, InitialMessageMediaSerializer,
-    MessageTemplateSerializer,
+    MessageTemplateSerializer, GalleryMediaSerializer,
+    ContractSerializer, ContractPublicSerializer,
+    GenericNoteSerializer,
+    DogListSerializer, DogDetailSerializer,
+    LitterListSerializer, LitterDetailSerializer,
+    DogHealthRecordSerializer, LitterHealthRecordSerializer,
+    DogMediaSerializer, LitterMediaSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,6 +104,26 @@ class MeView(APIView):
     def get(self, request):
         return Response(UserSerializer(request.user).data)
 
+    def patch(self, request):
+        user = request.user
+        data = request.data
+
+        if 'first_name' in data:
+            user.first_name = data['first_name']
+        if 'last_name' in data:
+            user.last_name = data['last_name']
+        user.save(update_fields=['first_name', 'last_name'])
+
+        if 'phone' in data:
+            try:
+                profile = user.profile
+                profile.phone = data['phone']
+                profile.save(update_fields=['phone'])
+            except Exception:
+                pass
+
+        return Response(UserSerializer(user).data)
+
 
 # ─── Leads ────────────────────────────────────────────────────────────────────
 
@@ -111,7 +137,16 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         org = _get_org(self.request.user)
         if not org:
             return Lead.objects.none()
-        return Lead.objects.filter(organization=org).select_related('assigned_to').prefetch_related('tags')
+        qs = Lead.objects.filter(organization=org).select_related('assigned_to').prefetch_related('tags')
+        show_archived = self.request.query_params.get('is_archived', 'false').lower()
+        if show_archived == 'true':
+            qs = qs.filter(is_archived=True)
+        else:
+            qs = qs.filter(is_archived=False)
+        lead_classification = self.request.query_params.get('lead_classification')
+        if lead_classification:
+            qs = qs.filter(lead_classification=lead_classification)
+        return qs
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -388,6 +423,158 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         logger.info(f'File sent to {lead.phone}: {uploaded.name} | wamid={wamid_file}')
         return Response(MessageSerializer(msg).data, status=201)
 
+    @action(detail=True, methods=['post'], url_path='send_gallery_item')
+    def send_gallery_item(self, request, pk=None):
+        """Envia um item da galeria (imagem ou vídeo) via WhatsApp para o lead, usando link público."""
+        import requests as http_requests
+
+        lead = self.get_object()
+        org = lead.organization
+        gallery_media_id = request.data.get('gallery_media_id')
+        caption = request.data.get('caption', '').strip()
+
+        if not gallery_media_id:
+            return Response({'detail': 'gallery_media_id obrigatório.'}, status=400)
+
+        try:
+            item = GalleryMedia.objects.get(pk=gallery_media_id, organization=org)
+        except GalleryMedia.DoesNotExist:
+            return Response({'detail': 'Item de galeria não encontrado.'}, status=404)
+
+        channel_provider = ChannelProvider.objects.filter(
+            organization=org, provider='whatsapp', is_active=True,
+        ).first()
+        if not channel_provider or not channel_provider.access_token or not channel_provider.phone_number_id:
+            return Response({'detail': 'Canal WhatsApp não configurado.'}, status=400)
+
+        msg_url = f'https://graph.facebook.com/v22.0/{channel_provider.phone_number_id}/messages'
+        media_type_lower = item.media_type.lower()
+
+        import mimetypes as _mimetypes
+        from pathlib import Path
+        from django.conf import settings as django_settings
+
+        # Resolve the file on disk from the stored relative path (/media/...).
+        # file_url examples: "/media/gallery/3/abc123.jpg" or legacy absolute URL.
+        if item.file_url.startswith('/media/'):
+            rel_path = item.file_url[len('/media/'):]
+        elif '/media/' in item.file_url:
+            rel_path = item.file_url.split('/media/', 1)[1]
+        else:
+            rel_path = None
+
+        file_on_disk = Path(django_settings.MEDIA_ROOT) / rel_path if rel_path else None
+
+        wa_headers_json = {
+            'Authorization': f'Bearer {channel_provider.access_token}',
+            'Content-Type': 'application/json',
+        }
+
+        # Upload the file to WhatsApp Media API to get a media_id.
+        # This avoids any dependency on a public URL / ngrok being active.
+        media_id = None
+        if file_on_disk and file_on_disk.exists():
+            try:
+                mime = item.mime_type or _mimetypes.guess_type(str(file_on_disk))[0] or 'application/octet-stream'
+                upload_url = f'https://graph.facebook.com/v22.0/{channel_provider.phone_number_id}/media'
+                with open(file_on_disk, 'rb') as fh:
+                    upload_resp = http_requests.post(
+                        upload_url,
+                        headers={'Authorization': f'Bearer {channel_provider.access_token}'},
+                        data={'messaging_product': 'whatsapp'},
+                        files={'file': (file_on_disk.name, fh, mime)},
+                        timeout=60,
+                    )
+                if upload_resp.status_code == 200:
+                    media_id = upload_resp.json().get('id')
+                else:
+                    logger.warning(f'WA media upload failed: {upload_resp.status_code} {upload_resp.text}')
+            except Exception as e:
+                logger.warning(f'WA media upload error: {e}')
+
+        # Build the send-message payload: prefer media_id (no public URL needed),
+        # fall back to link (requires ngrok/public host) if upload failed.
+        if media_id:
+            media_ref = {'id': media_id}
+        else:
+            # Fallback: reconstruct public URL (requires ngrok to be active).
+            _media_base = (django_settings.MEDIA_BASE_URL or '').rstrip('/')
+            if item.file_url.startswith('http'):
+                public_file_url = item.file_url
+            elif _media_base:
+                public_file_url = f'{_media_base}{item.file_url}'
+            else:
+                public_file_url = request.build_absolute_uri(item.file_url)
+            media_ref = {'link': public_file_url}
+            logger.warning('Gallery: using link fallback (media upload failed). Requires public URL to be reachable.')
+
+        media_type_key = 'image' if item.media_type == 'IMAGE' else 'video'
+        # Send media WITHOUT caption — description follows as a separate text message.
+        media_payload = {
+            'messaging_product': 'whatsapp',
+            'to': lead.phone,
+            'type': media_type_key,
+            media_type_key: media_ref,
+        }
+
+        try:
+            resp = http_requests.post(msg_url, json=media_payload, headers=wa_headers_json, timeout=20)
+            if resp.status_code != 200:
+                logger.error(f'Gallery send error: {resp.status_code} {resp.text}')
+                return Response({'detail': f'Erro ao enviar mídia: {resp.text}'}, status=502)
+        except Exception as e:
+            return Response({'detail': f'Erro ao enviar item de galeria: {str(e)}'}, status=500)
+
+        conv, _ = Conversation.objects.get_or_create(
+            lead=lead, channel='whatsapp',
+            defaults={'organization': org, 'state': 'active'},
+        )
+
+        label = item.name or media_type_lower
+        media_label = f'🖼 {label}' if item.media_type == 'IMAGE' else f'▶ {label}'
+        wamid = resp.json().get('messages', [{}])[0].get('id', '')
+        media_msg = Message.objects.create(
+            conversation=conv,
+            organization=org,
+            direction='OUT',
+            text=media_label,
+            provider_message_id=wamid,
+            msg_status='sent',
+        )
+
+        saved_messages = [media_msg]
+
+        # If there is a caption, send it as a separate text message.
+        if caption:
+            try:
+                text_payload = {
+                    'messaging_product': 'whatsapp',
+                    'to': lead.phone,
+                    'type': 'text',
+                    'text': {'body': caption, 'preview_url': False},
+                }
+                text_resp = http_requests.post(msg_url, json=text_payload, headers=wa_headers_json, timeout=20)
+                text_wamid = ''
+                if text_resp.status_code == 200:
+                    text_wamid = text_resp.json().get('messages', [{}])[0].get('id', '')
+                else:
+                    logger.warning(f'Gallery caption text send failed: {text_resp.status_code} {text_resp.text}')
+            except Exception as e:
+                logger.warning(f'Gallery caption text send error: {e}')
+                text_wamid = ''
+
+            text_msg = Message.objects.create(
+                conversation=conv,
+                organization=org,
+                direction='OUT',
+                text=caption,
+                provider_message_id=text_wamid,
+                msg_status='sent',
+            )
+            saved_messages.append(text_msg)
+
+        return Response({'messages': MessageSerializer(saved_messages, many=True).data}, status=201)
+
     @action(detail=True, methods=['post'])
     def send_template(self, request, pk=None):
         """Envia template ao lead.
@@ -518,12 +705,14 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
             return Response({'detail': 'Canal WhatsApp não configurado.'}, status=400)
 
         components = []
-        if header_type == 'IMAGE' and header_media_url:
-            components.append({'type': 'header', 'parameters': [{'type': 'image', 'image': {'link': header_media_url}}]})
-        elif header_type == 'VIDEO' and header_media_url:
-            components.append({'type': 'header', 'parameters': [{'type': 'video', 'video': {'link': header_media_url}}]})
-        elif header_type == 'DOCUMENT' and header_media_url:
-            components.append({'type': 'header', 'parameters': [{'type': 'document', 'document': {'link': header_media_url}}]})
+        if header_type in ('IMAGE', 'VIDEO', 'DOCUMENT') and header_media_url:
+            # If the URL is a local relative path (/media/...), upload to WhatsApp Media
+            # API and use media_id — avoids dependency on ngrok/public URL being reachable.
+            media_ref = _resolve_whatsapp_media_ref(
+                header_media_url, channel_provider, request
+            )
+            header_key = header_type.lower()
+            components.append({'type': 'header', 'parameters': [{'type': header_key, header_key: media_ref}]})
 
         if variables:
             body_params = [{'type': 'text', 'text': str(v)} for v in variables]
@@ -583,6 +772,20 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         lead = self.get_object()
         lead.status = 'QUALIFIED'
         lead.save(update_fields=['status'])
+        return Response(LeadDetailSerializer(lead).data)
+
+    @action(detail=True, methods=['post'])
+    def archive(self, request, pk=None):
+        lead = self.get_object()
+        lead.is_archived = True
+        lead.save(update_fields=['is_archived'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'])
+    def unarchive(self, request, pk=None):
+        lead = self.get_object()
+        lead.is_archived = False
+        lead.save(update_fields=['is_archived'])
         return Response(LeadDetailSerializer(lead).data)
 
     @action(detail=True, methods=['delete'])
@@ -867,7 +1070,14 @@ class WhatsAppWebhookView(APIView):
                 'full_name': contact_name or '',
             }
         )
-        if not created and contact_name and not lead.full_name:
+        if not created and lead.is_archived:
+            fields_to_update = ['is_archived']
+            lead.is_archived = False
+            if contact_name and not lead.full_name:
+                lead.full_name = contact_name
+                fields_to_update.append('full_name')
+            lead.save(update_fields=fields_to_update)
+        elif not created and contact_name and not lead.full_name:
             lead.full_name = contact_name
             lead.save(update_fields=['full_name'])
 
@@ -885,6 +1095,9 @@ class WhatsAppWebhookView(APIView):
             provider_message_id=media_id,
         )
         logger.info(f'Incoming [{msg_type}] from {from_phone}: {label or media_id}')
+
+        _notify_users_via_whatsapp(org=org, lead=lead, text=text, channel_provider=channel_provider)
+
         return Response({'received': True, 'type': msg_type})
 
     def _handle_simulator_payload(self, data):
@@ -947,7 +1160,14 @@ class WhatsAppWebhookView(APIView):
         # respeita o is_ai_active individual do lead (não força para False).
         # Mas se o bot foi desativado e o lead acabou de ser criado, já está False acima.
 
-        if not created and contact_name and not lead.full_name:
+        if not created and lead.is_archived:
+            fields_to_update = ['is_archived']
+            lead.is_archived = False
+            if contact_name and not lead.full_name:
+                lead.full_name = contact_name
+                fields_to_update.append('full_name')
+            lead.save(update_fields=fields_to_update)
+        elif not created and contact_name and not lead.full_name:
             lead.full_name = contact_name
             lead.save(update_fields=['full_name'])
 
@@ -960,6 +1180,8 @@ class WhatsAppWebhookView(APIView):
         Message.objects.create(
             conversation=conv, organization=org, direction='IN', text=text,
         )
+
+        _notify_users_via_whatsapp(org=org, lead=lead, text=text, channel_provider=channel_provider)
 
         # ── Mensagem inicial + mídia + sequência (somente no primeiro contato) ──
         if created:
@@ -1172,7 +1394,7 @@ class MetaWebhookView(APIView):
 
         org = channel_provider.organization
 
-        lead, _ = Lead.objects.get_or_create(
+        lead, ig_created = Lead.objects.get_or_create(
             organization=org,
             instagram_user_id=sender_id,
             defaults={
@@ -1181,6 +1403,10 @@ class MetaWebhookView(APIView):
                 'phone': '',
             }
         )
+
+        if not ig_created and lead.is_archived:
+            lead.is_archived = False
+            lead.save(update_fields=['is_archived'])
 
         conv, _ = Conversation.objects.get_or_create(
             lead=lead, channel='instagram',
@@ -1546,6 +1772,63 @@ def _is_whatsapp_window_open(conversation):
     return delta.total_seconds() < 86400  # 24 horas
 
 
+def _resolve_whatsapp_media_ref(media_url: str, channel_provider, request=None) -> dict:
+    """
+    Given a media URL (relative /media/... or absolute http...), returns either
+    {'id': '<whatsapp_media_id>'} (preferred — no public URL needed) or
+    {'link': '<public_url>'} (fallback when upload fails or file not on disk).
+    """
+    import requests as http_requests
+    import mimetypes as _mimetypes
+    from pathlib import Path
+    from django.conf import settings as django_settings
+
+    # If already an absolute external URL, return as link directly.
+    if media_url.startswith('http'):
+        return {'link': media_url}
+
+    # Resolve file path on disk from relative /media/... path.
+    if media_url.startswith('/media/'):
+        rel = media_url[len('/media/'):]
+    elif '/media/' in media_url:
+        rel = media_url.split('/media/', 1)[1]
+    else:
+        rel = None
+
+    file_path = Path(django_settings.MEDIA_ROOT) / rel if rel else None
+
+    if file_path and file_path.exists():
+        try:
+            mime = _mimetypes.guess_type(str(file_path))[0] or 'application/octet-stream'
+            upload_url = f'https://graph.facebook.com/v22.0/{channel_provider.phone_number_id}/media'
+            with open(file_path, 'rb') as fh:
+                resp = http_requests.post(
+                    upload_url,
+                    headers={'Authorization': f'Bearer {channel_provider.access_token}'},
+                    data={'messaging_product': 'whatsapp'},
+                    files={'file': (file_path.name, fh, mime)},
+                    timeout=60,
+                )
+            if resp.status_code == 200:
+                media_id = resp.json().get('id')
+                if media_id:
+                    return {'id': media_id}
+            logger.warning(f'WA media upload failed ({resp.status_code}): {resp.text}')
+        except Exception as e:
+            logger.warning(f'WA media upload error: {e}')
+
+    # Fallback: reconstruct public URL (requires ngrok/public host to be reachable).
+    _base = (django_settings.MEDIA_BASE_URL or '').rstrip('/')
+    if _base:
+        public_url = f'{_base}{media_url}'
+    elif request:
+        public_url = request.build_absolute_uri(media_url)
+    else:
+        public_url = media_url
+    logger.warning(f'WA media: using link fallback {public_url}')
+    return {'link': public_url}
+
+
 def _send_whatsapp_template(phone_number_id, access_token, to, template_name, language_code, components=None):
     """Envia template HSM aprovado via WhatsApp Cloud API. Retorna wamid ou None."""
     import requests as http_requests
@@ -1580,6 +1863,50 @@ def _send_whatsapp_template(phone_number_id, access_token, to, template_name, la
     except Exception as e:
         logger.error(f'WhatsApp template send exception: {e}')
         return None
+
+
+def _notify_users_via_whatsapp(org, lead, text, channel_provider=None):
+    """Envia notificação via template WhatsApp para todos os usuários da org com phone cadastrado."""
+    try:
+        from apps.core.models import UserProfile
+        if channel_provider is None:
+            channel_provider = ChannelProvider.objects.filter(
+                organization=org, provider='whatsapp', is_active=True,
+            ).first()
+        if not channel_provider or not channel_provider.access_token or not channel_provider.phone_number_id:
+            return
+
+        recipients = UserProfile.objects.filter(
+            organization=org,
+        ).exclude(phone='').values_list('phone', flat=True)
+
+        if not recipients:
+            return
+
+        lead_name = lead.full_name or lead.phone or 'Desconhecido'
+        msg_preview = (text or '').strip()[:100]
+
+        components = [
+            {
+                'type': 'body',
+                'parameters': [
+                    {'type': 'text', 'text': lead_name},
+                    {'type': 'text', 'text': msg_preview or '(mídia)'},
+                ],
+            }
+        ]
+
+        for phone in recipients:
+            _send_whatsapp_template(
+                phone_number_id=channel_provider.phone_number_id,
+                access_token=channel_provider.access_token,
+                to=phone,
+                template_name='notificacao_pessoal',
+                language_code='pt_BR',
+                components=components,
+            )
+    except Exception as e:
+        logger.warning(f'_notify_users_via_whatsapp error: {e}')
 
 
 def _lead_summary(lead):
@@ -1877,18 +2204,45 @@ class MessageTemplateViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='sync-all')
     def sync_all(self, request):
-        """Sincroniza todos os templates da organização com a Meta."""
+        """
+        Sincroniza todos os templates da organização com a Meta.
+        Templates existentes têm status/rejection_reason atualizados.
+        Templates que existem na Meta mas não no banco são importados automaticamente.
+        """
         org = _get_org(request.user)
         if not org:
             return Response({'detail': 'Sem organização.'}, status=400)
 
         import requests as http_requests
         updated = []
+        imported = []
         errors = []
         STATUS_MAP = {
             'APPROVED': 'APPROVED', 'REJECTED': 'REJECTED',
             'PENDING': 'PENDING', 'PAUSED': 'PAUSED', 'DISABLED': 'DISABLED',
         }
+        HEADER_FORMAT_MAP = {
+            'IMAGE': 'IMAGE', 'VIDEO': 'VIDEO', 'DOCUMENT': 'DOCUMENT', 'TEXT': 'TEXT',
+        }
+
+        def _parse_components(components):
+            """Extrai header_type, header_text, body_text e footer_text de components[]."""
+            header_type = 'NONE'
+            header_text = ''
+            body_text = ''
+            footer_text = ''
+            for comp in (components or []):
+                ctype = comp.get('type', '').upper()
+                if ctype == 'HEADER':
+                    fmt = comp.get('format', '').upper()
+                    header_type = HEADER_FORMAT_MAP.get(fmt, 'NONE')
+                    if header_type == 'TEXT':
+                        header_text = comp.get('text', '')
+                elif ctype == 'BODY':
+                    body_text = comp.get('text', '')
+                elif ctype == 'FOOTER':
+                    footer_text = comp.get('text', '')
+            return header_type, header_text, body_text, footer_text
 
         channels = ChannelProvider.objects.filter(organization=org, is_active=True)
         for channel in channels:
@@ -1898,7 +2252,10 @@ class MessageTemplateViewSet(viewsets.ModelViewSet):
             try:
                 resp = http_requests.get(
                     url,
-                    params={'fields': 'id,name,status,rejected_reason', 'limit': 100},
+                    params={
+                        'fields': 'id,name,status,rejected_reason,category,language,components',
+                        'limit': 100,
+                    },
                     headers={'Authorization': f'Bearer {channel.access_token}'},
                     timeout=15,
                 )
@@ -1912,18 +2269,138 @@ class MessageTemplateViewSet(viewsets.ModelViewSet):
                     ).first()
                     if not tmpl:
                         tmpl = MessageTemplate.objects.filter(
-                            organization=org, name=item['name']
+                            organization=org,
+                            name=item['name'],
+                            language=item.get('language', 'pt_BR'),
                         ).first()
+
+                    meta_status = STATUS_MAP.get(item.get('status', '').upper(), 'PENDING')
+                    rejection = item.get('rejected_reason', '') or ''
+                    if rejection == 'NONE':
+                        rejection = ''
+
                     if tmpl:
                         tmpl.meta_template_id = item['id']
-                        tmpl.status = STATUS_MAP.get(item.get('status', '').upper(), 'PENDING')
-                        tmpl.rejection_reason = item.get('rejected_reason', '')
+                        tmpl.status = meta_status
+                        tmpl.rejection_reason = rejection
                         tmpl.save(update_fields=['meta_template_id', 'status', 'rejection_reason'])
                         updated.append(tmpl.name)
+                    else:
+                        # Importa template que só existe na Meta
+                        header_type, header_text, body_text, footer_text = _parse_components(
+                            item.get('components', [])
+                        )
+                        category = item.get('category', 'UTILITY').upper()
+                        if category not in ('MARKETING', 'UTILITY', 'AUTHENTICATION'):
+                            category = 'UTILITY'
+                        language = item.get('language', 'pt_BR')
+                        new_tmpl = MessageTemplate.objects.create(
+                            organization=org,
+                            channel=channel,
+                            name=item['name'],
+                            language=language,
+                            category=category,
+                            header_type=header_type,
+                            header_text=header_text,
+                            body_text=body_text,
+                            footer_text=footer_text,
+                            meta_template_id=item['id'],
+                            status=meta_status,
+                            rejection_reason=rejection,
+                        )
+                        logger.info(
+                            f'Template importado da Meta: "{new_tmpl.name}" '
+                            f'[{language}] status={meta_status}'
+                        )
+                        imported.append(new_tmpl.name)
             except Exception as e:
                 errors.append(f'Canal {channel.name}: {e}')
 
-        return Response({'updated': updated, 'errors': errors})
+        return Response({'updated': updated, 'imported': imported, 'errors': errors})
+
+
+# ─── Gallery ───────────────────────────────────────────────────────────────────
+
+class GalleryMediaViewSet(viewsets.ModelViewSet):
+    """CRUD de mídia da galeria (imagens e vídeos) por organização."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = GalleryMediaSerializer
+    pagination_class = None
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        org = _get_org(self.request.user)
+        if not org:
+            return GalleryMedia.objects.none()
+        qs = GalleryMedia.objects.filter(organization=org)
+        media_type = self.request.query_params.get('media_type')
+        if media_type in ('IMAGE', 'VIDEO'):
+            qs = qs.filter(media_type=media_type)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        import mimetypes, os, uuid as uuid_mod
+        from django.core.files.storage import default_storage
+        from django.core.files.base import ContentFile
+        from django.conf import settings as django_settings
+
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'Sem organização.'}, status=400)
+
+        uploaded = request.FILES.get('file')
+        if not uploaded:
+            return Response({'detail': 'Arquivo obrigatório.'}, status=400)
+
+        mime = uploaded.content_type or mimetypes.guess_type(uploaded.name)[0] or ''
+        if mime.startswith('image/'):
+            media_type = 'IMAGE'
+        elif mime.startswith('video/'):
+            media_type = 'VIDEO'
+        else:
+            return Response({'detail': 'Tipo não suportado. Envie imagens ou vídeos.'}, status=400)
+
+        max_bytes = 16 * 1024 * 1024
+        if uploaded.size > max_bytes:
+            return Response({'detail': 'Arquivo muito grande. Máximo: 16 MB.'}, status=400)
+
+        ext = os.path.splitext(uploaded.name)[1].lower() or ''
+        filename = f'gallery/{org.id}/{uuid_mod.uuid4().hex}{ext}'
+        saved_path = default_storage.save(filename, ContentFile(uploaded.read()))
+
+        # Armazena como path relativo (/media/...) para funcionar tanto em dev
+        # (proxy Vite) quanto em produção sem depender do ngrok estar ativo.
+        file_url = f'/media/{saved_path}'
+
+        item = GalleryMedia.objects.create(
+            organization=org,
+            name=request.data.get('name', '') or uploaded.name,
+            description=request.data.get('description', ''),
+            file_url=file_url,
+            mime_type=mime,
+            media_type=media_type,
+            size_bytes=uploaded.size,
+        )
+        return Response(GalleryMediaSerializer(item).data, status=201)
+
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        allowed = {k: v for k, v in request.data.items() if k in ('name', 'description')}
+        serializer = GalleryMediaSerializer(instance, data=allowed, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def perform_destroy(self, instance):
+        import os
+        from django.core.files.storage import default_storage
+        try:
+            path = instance.file_url.split('/media/')[-1]
+            if default_storage.exists(path):
+                default_storage.delete(path)
+        except Exception:
+            pass
+        instance.delete()
 
 
 # ─── Quick Replies ─────────────────────────────────────────────────────────────
@@ -2221,3 +2698,388 @@ class TrainingDataExportView(APIView):
         response = HttpResponse(jsonl_content, content_type='application/jsonl')
         response['Content-Disposition'] = f'attachment; filename="training_data_org{org.id}.jsonl"'
         return response
+
+
+# ─── Contracts ────────────────────────────────────────────────────────────────
+
+class ContractViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ContractSerializer
+
+    def get_queryset(self):
+        org = _get_org(self.request.user)
+        if not org:
+            from apps.contracts.models import SaleContract
+            return SaleContract.objects.none()
+        from apps.contracts.models import SaleContract
+        qs = SaleContract.objects.filter(organization=org).select_related('lead')
+        lead_id = self.request.query_params.get('lead')
+        if lead_id:
+            qs = qs.filter(lead_id=lead_id)
+        return qs
+
+    def perform_create(self, serializer):
+        org = _get_org(self.request.user)
+        serializer.save(organization=org)
+
+    @action(detail=True, methods=['post'])
+    def send(self, request, pk=None):
+        contract = self.get_object()
+        if contract.status not in ('draft',):
+            return Response({'detail': 'Contrato já foi enviado.'}, status=400)
+        from django.conf import settings as dj_settings
+        from django.utils import timezone as tz
+        contract.status = 'sent'
+        contract.save(update_fields=['status', 'updated_at'])
+
+        base = (dj_settings.MEDIA_BASE_URL or '').rstrip('/')
+        link = f"{base}/contrato/{contract.token}"
+
+        if contract.lead and contract.lead.phone:
+            msg = (
+                f"Olá! Seu contrato de compra do filhote Border Collie está pronto para preenchimento.\n\n"
+                f"Acesse o link abaixo, preencha seus dados e aguarde a aprovação:\n{link}"
+            )
+            try:
+                _send_whatsapp_to_lead(contract.lead, msg)
+            except Exception as e:
+                logger.warning("Falha ao enviar WhatsApp para contrato #%s: %s", contract.id, e)
+
+        serializer = self.get_serializer(contract)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        contract = self.get_object()
+        if contract.status != 'buyer_filled':
+            return Response({'detail': 'Aguardando o comprador preencher o contrato.'}, status=400)
+        from django.utils import timezone as tz
+        from django.conf import settings as dj_settings
+        contract.status = 'approved'
+        contract.approved_at = tz.now()
+        contract.save(update_fields=['status', 'approved_at', 'updated_at'])
+
+        base = (dj_settings.MEDIA_BASE_URL or '').rstrip('/')
+        link = f"{base}/contrato/{contract.token}"
+
+        if contract.lead and contract.lead.phone:
+            msg = (
+                f"Seu contrato foi aprovado! Agora você pode assinar digitalmente.\n\n"
+                f"Acesse o link para assinar:\n{link}"
+            )
+            try:
+                _send_whatsapp_to_lead(contract.lead, msg)
+            except Exception as e:
+                logger.warning("Falha ao enviar WhatsApp (approve) para contrato #%s: %s", contract.id, e)
+
+        serializer = self.get_serializer(contract)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def generate_pdf(self, request, pk=None):
+        from apps.contracts.pdf_utils import generate_contract_pdf
+        from django.http import HttpResponse
+        contract = self.get_object()
+        try:
+            pdf_bytes = generate_contract_pdf(contract)
+        except RuntimeError as e:
+            return Response({'detail': str(e)}, status=500)
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="contrato_{contract.id}.pdf"'
+        return response
+
+    @action(detail=True, methods=['get'])
+    def preview_html(self, request, pk=None):
+        from apps.contracts.pdf_utils import render_contract_html
+        from django.http import HttpResponse
+        contract = self.get_object()
+        html = render_contract_html(contract)
+        return HttpResponse(html, content_type='text/html; charset=utf-8')
+
+    @action(detail=True, methods=['post'])
+    def send_whatsapp(self, request, pk=None):
+        contract = self.get_object()
+        if not contract.lead or not contract.lead.phone:
+            return Response({'detail': 'Lead sem telefone cadastrado.'}, status=400)
+        from django.conf import settings as dj_settings
+        base = (dj_settings.MEDIA_BASE_URL or '').rstrip('/')
+        link = f"{base}/contrato/{contract.token}"
+        custom_msg = request.data.get('message', '')
+        msg = custom_msg or f"Acesse seu contrato: {link}"
+        try:
+            _send_whatsapp_to_lead(contract.lead, msg)
+        except Exception as e:
+            return Response({'detail': f'Erro ao enviar WhatsApp: {e}'}, status=500)
+        return Response({'detail': 'Mensagem enviada com sucesso.'})
+
+
+def _send_whatsapp_to_lead(lead, message):
+    """Envia mensagem WhatsApp para o lead usando o canal ativo da organização."""
+    from apps.channels.models import ChannelProvider
+    channel = ChannelProvider.objects.filter(
+        organization=lead.organization, provider='whatsapp', is_active=True
+    ).first()
+    if not channel:
+        raise ValueError('Nenhum canal WhatsApp ativo configurado.')
+    _send_whatsapp_message(
+        channel=channel,
+        to=lead.phone,
+        message=message,
+    )
+
+
+# ─── Public Contract Views ────────────────────────────────────────────────────
+
+class PublicContractView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        from apps.contracts.models import SaleContract
+        try:
+            contract = SaleContract.objects.get(token=token)
+        except SaleContract.DoesNotExist:
+            return Response({'detail': 'Contrato não encontrado.'}, status=404)
+        if contract.status == 'draft':
+            return Response({'detail': 'Este contrato ainda não foi liberado.'}, status=403)
+        serializer = ContractPublicSerializer(contract)
+        return Response(serializer.data)
+
+
+class PublicContractFillView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, token):
+        from apps.contracts.models import SaleContract
+        from django.utils import timezone as tz
+        try:
+            contract = SaleContract.objects.get(token=token)
+        except SaleContract.DoesNotExist:
+            return Response({'detail': 'Contrato não encontrado.'}, status=404)
+
+        if contract.status != 'sent':
+            return Response({'detail': 'Este contrato não está disponível para preenchimento.'}, status=400)
+
+        data = request.data
+        contract.buyer_name = data.get('buyer_name', '').strip()
+        contract.buyer_cpf = data.get('buyer_cpf', '').strip()
+        contract.buyer_marital_status = data.get('buyer_marital_status', '').strip()
+        contract.buyer_address = data.get('buyer_address', '').strip()
+        contract.buyer_cep = data.get('buyer_cep', '').strip()
+        contract.buyer_email = data.get('buyer_email', '').strip()
+        contract.status = 'buyer_filled'
+        contract.buyer_filled_at = tz.now()
+        contract.save(update_fields=[
+            'buyer_name', 'buyer_cpf', 'buyer_marital_status',
+            'buyer_address', 'buyer_cep', 'buyer_email',
+            'status', 'buyer_filled_at', 'updated_at',
+        ])
+        serializer = ContractPublicSerializer(contract)
+        return Response(serializer.data)
+
+
+class PublicContractSignView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, token):
+        from apps.contracts.models import SaleContract
+        from apps.contracts.pdf_utils import generate_contract_pdf
+        from django.utils import timezone as tz
+        try:
+            contract = SaleContract.objects.get(token=token)
+        except SaleContract.DoesNotExist:
+            return Response({'detail': 'Contrato não encontrado.'}, status=404)
+
+        if contract.status != 'approved':
+            return Response({'detail': 'Este contrato ainda não foi aprovado para assinatura.'}, status=400)
+
+        signature_data = request.data.get('signature_data', '')
+        signature_type = request.data.get('signature_type', 'canvas')
+
+        if not signature_data:
+            return Response({'detail': 'Dados de assinatura não informados.'}, status=400)
+
+        contract.signature_data = signature_data
+        contract.signature_type = signature_type
+        contract.status = 'signed'
+        contract.signed_at = tz.now()
+        contract.save(update_fields=[
+            'signature_data', 'signature_type', 'status', 'signed_at', 'updated_at'
+        ])
+
+        try:
+            generate_contract_pdf(contract)
+        except Exception as e:
+            logger.warning("Falha ao gerar PDF após assinatura do contrato #%s: %s", contract.id, e)
+
+        serializer = ContractPublicSerializer(contract)
+        return Response(serializer.data)
+
+
+# ─── Generic Notes ────────────────────────────────────────────────────────────
+
+class GenericNoteViewSet(viewsets.ModelViewSet):
+    serializer_class = GenericNoteSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        from apps.notes.models import GenericNote
+        org = _get_org(self.request.user)
+        if not org:
+            from apps.notes.models import GenericNote as GN
+            return GN.objects.none()
+        return GenericNote.objects.filter(organization=org)
+
+    def perform_create(self, serializer):
+        org = _get_org(self.request.user)
+        serializer.save(organization=org, author=self.request.user)
+
+    @action(detail=True, methods=['post'])
+    def toggle_pin(self, request, pk=None):
+        note = self.get_object()
+        note.is_pinned = not note.is_pinned
+        note.save(update_fields=['is_pinned', 'updated_at'])
+        return Response(self.get_serializer(note).data)
+
+
+# ─── Kennel ───────────────────────────────────────────────────────────────────
+
+class DogViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        from apps.kennel.models import Dog
+        org = _get_org(self.request.user)
+        if not org:
+            return Dog.objects.none()
+        qs = Dog.objects.filter(organization=org).select_related(
+            'father', 'mother', 'origin_litter'
+        ).prefetch_related('media', 'health_records')
+        status_filter = self.request.query_params.get('status')
+        sex_filter = self.request.query_params.get('sex')
+        breed_filter = self.request.query_params.get('breed')
+        search = self.request.query_params.get('search')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if sex_filter:
+            qs = qs.filter(sex=sex_filter)
+        if breed_filter:
+            qs = qs.filter(breed__icontains=breed_filter)
+        if search:
+            qs = qs.filter(name__icontains=search)
+        return qs
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return DogListSerializer
+        return DogDetailSerializer
+
+    def perform_create(self, serializer):
+        org = _get_org(self.request.user)
+        serializer.save(organization=org)
+
+    @action(detail=True, methods=['post'], parser_classes=[])
+    def add_media(self, request, pk=None):
+        from rest_framework.parsers import MultiPartParser
+        from apps.kennel.models import DogMedia
+        dog = self.get_object()
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'detail': 'Arquivo não enviado.'}, status=400)
+        media = DogMedia.objects.create(
+            dog=dog,
+            file=file,
+            caption=request.data.get('caption', ''),
+        )
+        return Response(DogMediaSerializer(media, context={'request': request}).data, status=201)
+
+    @action(detail=True, methods=['delete'], url_path='media/(?P<media_id>[0-9]+)')
+    def remove_media(self, request, pk=None, media_id=None):
+        from apps.kennel.models import DogMedia
+        dog = self.get_object()
+        try:
+            media = DogMedia.objects.get(id=media_id, dog=dog)
+            media.file.delete(save=False)
+            media.delete()
+            return Response(status=204)
+        except DogMedia.DoesNotExist:
+            return Response({'detail': 'Mídia não encontrada.'}, status=404)
+
+
+class LitterViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        from apps.kennel.models import Litter
+        org = _get_org(self.request.user)
+        if not org:
+            return Litter.objects.none()
+        return Litter.objects.filter(organization=org).select_related(
+            'father', 'mother'
+        ).prefetch_related('media', 'health_records', 'puppies', 'puppies__media')
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return LitterListSerializer
+        return LitterDetailSerializer
+
+    def perform_create(self, serializer):
+        org = _get_org(self.request.user)
+        serializer.save(organization=org)
+
+    @action(detail=True, methods=['post'])
+    def add_media(self, request, pk=None):
+        from apps.kennel.models import LitterMedia
+        litter = self.get_object()
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'detail': 'Arquivo não enviado.'}, status=400)
+        media = LitterMedia.objects.create(
+            litter=litter,
+            file=file,
+            caption=request.data.get('caption', ''),
+        )
+        return Response(LitterMediaSerializer(media, context={'request': request}).data, status=201)
+
+    @action(detail=True, methods=['delete'], url_path='media/(?P<media_id>[0-9]+)')
+    def remove_media(self, request, pk=None, media_id=None):
+        from apps.kennel.models import LitterMedia
+        litter = self.get_object()
+        try:
+            media = LitterMedia.objects.get(id=media_id, litter=litter)
+            media.file.delete(save=False)
+            media.delete()
+            return Response(status=204)
+        except LitterMedia.DoesNotExist:
+            return Response({'detail': 'Mídia não encontrada.'}, status=404)
+
+
+class DogHealthRecordViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = DogHealthRecordSerializer
+
+    def get_queryset(self):
+        from apps.kennel.models import DogHealthRecord
+        org = _get_org(self.request.user)
+        if not org:
+            return DogHealthRecord.objects.none()
+        qs = DogHealthRecord.objects.filter(dog__organization=org).select_related('dog')
+        dog_id = self.request.query_params.get('dog')
+        if dog_id:
+            qs = qs.filter(dog_id=dog_id)
+        return qs
+
+
+class LitterHealthRecordViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = LitterHealthRecordSerializer
+
+    def get_queryset(self):
+        from apps.kennel.models import LitterHealthRecord
+        org = _get_org(self.request.user)
+        if not org:
+            return LitterHealthRecord.objects.none()
+        qs = LitterHealthRecord.objects.filter(litter__organization=org).select_related('litter')
+        litter_id = self.request.query_params.get('litter')
+        if litter_id:
+            qs = qs.filter(litter_id=litter_id)
+        return qs

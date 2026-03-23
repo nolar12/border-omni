@@ -3,12 +3,15 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { leadsService } from '../services/leads';
 import { authService } from '../services/auth';
 import { messageTemplatesService } from '../services/messageTemplates';
+import { mediaUploadService } from '../services/mediaUpload';
+import { galleryService, type GalleryMedia } from '../services/gallery';
 import { quickRepliesService } from '../services/quickReplies';
 import type { LeadListItem, Lead, Message, ChannelType, MessageTemplate } from '../types';
 import TierBadge from '../components/TierBadge';
 import StatusBadge from '../components/StatusBadge';
 import AIStatusBadge from '../components/AIStatusBadge';
 import QuickReplyDrawer from '../components/QuickReplyDrawer';
+import VideoThumbnail from '../components/VideoThumbnail';
 
 // ─── Lead List Item (middle column) ──────────────────────────────────────────
 
@@ -244,6 +247,7 @@ function ChannelIcon({ channel, size = 'sm' }: { channel: ChannelType; size?: 'x
 // ─── Chat Panel (right column) ───────────────────────────────────────────────
 
 function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () => void; onDeleted: () => void }) {
+  const navigate = useNavigate();
   const [lead, setLead] = useState<Lead | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -258,8 +262,8 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<'chat' | 'info' | 'notes'>('chat');
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [closing, setClosing] = useState(false);
   const [showClassMenu, setShowClassMenu] = useState(false);
   const [ragSuggestion, setRagSuggestion] = useState<string | null>(null);
@@ -274,6 +278,24 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [templateVars, setTemplateVars] = useState<string[]>([]);
   const [templateMediaUrl, setTemplateMediaUrl] = useState('');
   const [sendingTemplate, setSendingTemplate] = useState(false);
+  const [templateError, setTemplateError] = useState('');
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const mediaFileInputRef = useRef<HTMLInputElement>(null);
+  const [templateModalView, setTemplateModalView] = useState<'list' | 'detail'>('list');
+  const [showTemplateGalleryPicker, setShowTemplateGalleryPicker] = useState(false);
+  const [templateGalleryItems, setTemplateGalleryItems] = useState<GalleryMedia[]>([]);
+  const [loadingTemplateGallery, setLoadingTemplateGallery] = useState(false);
+  const [templateVideoPreview, setTemplateVideoPreview] = useState<GalleryMedia | null>(null);
+  const [showGalleryModal, setShowGalleryModal] = useState(false);
+  const [galleryItems, setGalleryItems] = useState<GalleryMedia[]>([]);
+  const [galleryFilter, setGalleryFilter] = useState<'ALL' | 'IMAGE' | 'VIDEO'>('ALL');
+  const [gallerySelections, setGallerySelections] = useState<Map<number, { item: GalleryMedia; sendDesc: boolean }>>(new Map());
+  const [galleryVideoPreview, setGalleryVideoPreview] = useState<GalleryMedia | null>(null);
+  const [sendingGallery, setSendingGallery] = useState(false);
+  const [galleryError, setGalleryError] = useState('');
+  const [loadingGallery, setLoadingGallery] = useState(false);
+  const [uploadingGalleryItem, setUploadingGalleryItem] = useState(false);
+  const galleryUploadInputRef = useRef<HTMLInputElement>(null);
   const [saveAsQR, setSaveAsQR] = useState(false);
   const [showSaveQRModal, setShowSaveQRModal] = useState(false);
   const [pendingQRBody, setPendingQRBody] = useState('');
@@ -376,11 +398,20 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     setSelectedTemplate(null);
     setTemplateVars([]);
     setTemplateMediaUrl('');
+    setTemplateError('');
+    setShowTemplateGalleryPicker(false);
+    setTemplateModalView('list');
     setShowTemplateModal(true);
   }
 
   async function handleSendTemplate() {
     if (!lead || !selectedTemplate) return;
+    const needsMedia = ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(selectedTemplate.header_type);
+    if (needsMedia && !templateMediaUrl.trim()) {
+      setTemplateError(`Informe a URL do ${selectedTemplate.header_type === 'IMAGE' ? 'imagem' : selectedTemplate.header_type === 'VIDEO' ? 'vídeo' : 'documento'} para enviar este template.`);
+      return;
+    }
+    setTemplateError('');
     setSendingTemplate(true);
     try {
       const msg = await leadsService.sendTemplate(
@@ -394,9 +425,95 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
       setSelectedTemplate(null);
       setTemplateVars([]);
       setTemplateMediaUrl('');
+      setTemplateError('');
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setTemplateError(detail ?? 'Erro ao enviar template. Verifique os logs.');
     } finally {
       setSendingTemplate(false);
     }
+  }
+
+  async function handleMediaFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingMedia(true);
+    setTemplateError('');
+    try {
+      const result = await mediaUploadService.upload(file);
+      setTemplateMediaUrl(result.url);
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setTemplateError(detail ?? 'Erro ao fazer upload do arquivo.');
+    } finally {
+      setUploadingMedia(false);
+      if (mediaFileInputRef.current) mediaFileInputRef.current.value = '';
+    }
+  }
+
+  async function openGalleryModal() {
+    setGallerySelections(new Map());
+    setGalleryError('');
+    setGalleryFilter('ALL');
+    setShowGalleryModal(true);
+    setLoadingGallery(true);
+    try {
+      const data = await galleryService.list();
+      setGalleryItems(data);
+    } finally {
+      setLoadingGallery(false);
+    }
+  }
+
+  async function handleSendGalleryItem() {
+    if (!lead || gallerySelections.size === 0) return;
+    setSendingGallery(true);
+    setGalleryError('');
+    try {
+      const allMsgs: Message[] = [];
+      for (const { item, sendDesc } of gallerySelections.values()) {
+        const caption = sendDesc ? (item.description ?? '') : '';
+        const msgs = await leadsService.sendGalleryItem(lead.id, item.id, caption);
+        allMsgs.push(...msgs);
+      }
+      setMessages(prev => [...prev, ...allMsgs]);
+      setShowGalleryModal(false);
+      setGallerySelections(new Map());
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setGalleryError(detail ?? 'Erro ao enviar itens da galeria.');
+    } finally {
+      setSendingGallery(false);
+    }
+  }
+
+  async function openTemplateGalleryPicker(mediaType: 'IMAGE' | 'VIDEO') {
+    setShowTemplateGalleryPicker(true);
+    setLoadingTemplateGallery(true);
+    try {
+      const data = await galleryService.list(mediaType);
+      setTemplateGalleryItems(data);
+    } finally {
+      setLoadingTemplateGallery(false);
+    }
+  }
+
+  async function handleGalleryModalUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    setUploadingGalleryItem(true);
+    setGalleryError('');
+    for (const file of files) {
+      try {
+        const item = await galleryService.upload(file, file.name);
+        setGalleryItems(prev => [item, ...prev]);
+      } catch (err: unknown) {
+        const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+        setGalleryError(detail ?? `Erro ao enviar ${file.name}.`);
+      }
+    }
+    setUploadingGalleryItem(false);
+    if (galleryUploadInputRef.current) galleryUploadInputRef.current.value = '';
   }
 
   function triggerSaveQRModal(text: string) {
@@ -550,16 +667,16 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     onDeleted();
   }
 
-  async function handleDelete() {
+  async function handleArchive() {
     if (!lead) return;
-    setDeleting(true);
+    setArchiving(true);
     try {
-      await leadsService.deleteLead(lead.id);
+      await leadsService.archiveLead(lead.id);
       onDeleted();
       onBack();
     } finally {
-      setDeleting(false);
-      setConfirmDelete(false);
+      setArchiving(false);
+      setConfirmArchive(false);
     }
   }
 
@@ -579,13 +696,6 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     <div className="flex-1 flex flex-col h-full bg-white min-w-0">
       {/* Chat Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-white flex-shrink-0">
-        {/* Back button (mobile) */}
-        <button onClick={onBack} className="md:hidden flex items-center justify-center w-10 h-10 rounded-xl hover:bg-gray-100">
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-            <polyline points="15 18 9 12 15 6"/>
-          </svg>
-        </button>
-
         {/* Avatar */}
         <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
           <span className="text-blue-600 font-bold text-sm">
@@ -734,18 +844,18 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
             </button>
           )}
 
-          {/* Delete button */}
-          {confirmDelete ? (
+          {/* Archive button */}
+          {confirmArchive ? (
             <div className="flex items-center gap-1">
               <button
-                onClick={handleDelete}
-                disabled={deleting}
-                className="btn btn-error btn-xs"
+                onClick={handleArchive}
+                disabled={archiving}
+                className="btn btn-warning btn-xs"
               >
-                {deleting ? <span className="loading loading-spinner loading-xs" /> : 'Confirmar'}
+                {archiving ? <span className="loading loading-spinner loading-xs" /> : 'Arquivar?'}
               </button>
               <button
-                onClick={() => setConfirmDelete(false)}
+                onClick={() => setConfirmArchive(false)}
                 className="btn btn-ghost btn-xs text-gray-400"
               >
                 Cancelar
@@ -753,15 +863,14 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
             </div>
           ) : (
             <button
-              onClick={() => setConfirmDelete(true)}
-              title="Excluir lead"
-              className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-300 hover:bg-red-50 hover:text-red-500 transition-colors"
+              onClick={() => setConfirmArchive(true)}
+              title="Arquivar lead"
+              className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-300 hover:bg-amber-50 hover:text-amber-500 transition-colors"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                <polyline points="3 6 5 6 21 6"/>
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                <path d="M10 11v6"/><path d="M14 11v6"/>
-                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                <polyline points="21 8 21 21 3 21 3 8"/>
+                <rect x="1" y="3" width="22" height="5"/>
+                <line x1="10" y1="12" x2="14" y2="12"/>
               </svg>
             </button>
           )}
@@ -770,6 +879,17 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
 
       {/* Tabs */}
       <div className="flex border-b border-gray-100 bg-white flex-shrink-0">
+        {/* Botão voltar — mobile only, à esquerda das tabs */}
+        <button
+          onClick={onBack}
+          className="md:hidden flex items-center justify-center w-12 flex-shrink-0 text-gray-500 hover:bg-gray-100 transition-colors border-r border-gray-100"
+          title="Voltar"
+        >
+          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
+
         {(['chat', 'info', 'notes'] as const).map(t => (
           <button
             key={t}
@@ -1003,44 +1123,16 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
               )}
 
               {/* Barra principal de input */}
-              <div className="px-3 py-2.5 flex gap-2 items-end">
-                {/* Respostas rápidas */}
-                <button
-                  onClick={() => setShowQR(true)}
-                  title="Respostas rápidas"
-                  className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
-                >
-                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                  </svg>
-                </button>
-
-                {/* Anexar arquivo */}
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Enviar arquivo / documento"
-                  className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
-                >
-                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                  </svg>
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.gif,.webp,.mp4,.mp3"
-                  onChange={handleFileSelect}
-                />
-
+              <div className="px-3 pt-2 pb-2.5 flex flex-col gap-1.5">
+                {/* Textarea — largura total */}
                 <textarea
-                  rows={2}
+                  rows={3}
                   placeholder={!isWhatsappWindowOpen && selectedChannel === 'whatsapp'
                     ? 'Janela de 24h expirada — use um template'
                     : 'Digite sua mensagem...'}
                   disabled={!isWhatsappWindowOpen && selectedChannel === 'whatsapp'}
-                  className="flex-1 text-base border border-gray-200 rounded-xl px-3 py-2.5 outline-none focus:border-blue-400 transition-colors resize-none overflow-hidden disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
+                  className="w-full text-lg border border-gray-200 rounded-xl px-3 py-2.5 outline-none focus:border-blue-400 transition-colors resize-none overflow-hidden disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
+                  style={{ minHeight: '4.5rem' }}
                   value={msgText}
                   onChange={e => {
                     setMsgText(e.target.value);
@@ -1055,22 +1147,89 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                     }
                   }}
                 />
-                <button
-                  onClick={handleSend}
-                  disabled={sending || enhancing || !msgText.trim() || (!isWhatsappWindowOpen && selectedChannel === 'whatsapp')}
-                  className="flex items-center justify-center w-11 h-11 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0"
-                  title={enhancing ? 'Aprimorando mensagem...' : 'Enviar'}
-                >
-                  {(sending || enhancing)
-                    ? <span className="loading loading-spinner loading-sm" />
-                    : (
-                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                        <line x1="22" y1="2" x2="11" y2="13"/>
-                        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                      </svg>
-                    )
-                  }
-                </button>
+
+                {/* Linha de ações abaixo do textarea */}
+                <div className="flex items-center gap-1">
+                  {/* Respostas rápidas */}
+                  <button
+                    onClick={() => setShowQR(true)}
+                    title="Respostas rápidas"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                    </svg>
+                  </button>
+
+                  {/* Anexar arquivo */}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Enviar arquivo / documento"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.gif,.webp,.mp4,.mp3"
+                    onChange={handleFileSelect}
+                  />
+
+                  {/* Galeria */}
+                  <button
+                    onClick={openGalleryModal}
+                    title="Enviar da galeria"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-purple-600 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <rect x="3" y="3" width="18" height="18" rx="2"/>
+                      <circle cx="8.5" cy="8.5" r="1.5"/>
+                      <polyline points="21 15 16 10 5 21"/>
+                    </svg>
+                  </button>
+
+                  {/* Enviar Template */}
+                  <button
+                    onClick={openTemplateModal}
+                    title="Enviar template WhatsApp"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-orange-500 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                      <line x1="9" y1="10" x2="15" y2="10"/>
+                      <line x1="9" y1="14" x2="13" y2="14"/>
+                    </svg>
+                  </button>
+
+                  {/* Spacer */}
+                  <div className="flex-1" />
+
+                  {/* Enviar */}
+                  <button
+                    onClick={handleSend}
+                    disabled={sending || enhancing || !msgText.trim() || (!isWhatsappWindowOpen && selectedChannel === 'whatsapp')}
+                    className="flex items-center gap-2 px-5 h-10 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0 font-medium text-sm"
+                    title={enhancing ? 'Aprimorando mensagem...' : 'Enviar'}
+                  >
+                    {(sending || enhancing)
+                      ? <span className="loading loading-spinner loading-sm" />
+                      : (
+                        <>
+                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <line x1="22" y1="2" x2="11" y2="13"/>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                          </svg>
+                          <span>Enviar</span>
+                        </>
+                      )
+                    }
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -1121,9 +1280,9 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
               ['Fonte', lead.source],
               ['Estado IA', lead.conversation_state ?? '—'],
             ].map(([label, value]) => (
-              <div key={label} className="bg-gray-50 rounded-lg p-2.5">
-                <p className="text-xs text-gray-400 mb-0.5">{label}</p>
-                <p className="text-sm font-medium text-gray-700 capitalize">{value}</p>
+              <div key={label} className="bg-gray-50 rounded-lg p-3">
+                <p className="text-base text-gray-400 mb-1">{label}</p>
+                <p className="text-xl font-semibold text-gray-800 capitalize">{value}</p>
               </div>
             ))}
           </div>
@@ -1138,6 +1297,33 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
               </div>
             </div>
           )}
+
+          {/* ── Contract button ── */}
+          <div className="mt-5 pt-4 border-t border-gray-100">
+            <p className="text-xs text-gray-400 mb-2 uppercase tracking-wide font-semibold">Contrato</p>
+            <button
+              onClick={() =>
+                navigate('/contratos', {
+                  state: {
+                    openForLead: {
+                      id: lead.id,
+                      name: lead.full_name || '',
+                      phone: lead.phone,
+                    },
+                  },
+                })
+              }
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="12" y1="18" x2="12" y2="12"/>
+                <line x1="9" y1="15" x2="15" y2="15"/>
+              </svg>
+              Gerar Contrato
+            </button>
+          </div>
         </div>
       )}
 
@@ -1321,143 +1507,745 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
       {/* ── Modal de envio de template WhatsApp ── */}
       {showTemplateModal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+          <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+
+            {/* ── TELA 1: Lista de templates ── */}
+            {templateModalView === 'list' && (<>
+              <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+                <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 text-orange-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <p className="font-semibold text-gray-800 text-sm">Enviar Template WhatsApp</p>
+                  <p className="text-xs text-gray-500">{approvedTemplates.length} template(s) aprovado(s)</p>
+                </div>
+                <button onClick={() => setShowTemplateModal(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+                {approvedTemplates.length === 0 ? (
+                  <div className="text-center py-10">
+                    <p className="text-gray-500 text-sm">Nenhum template aprovado encontrado.</p>
+                    <p className="text-xs text-gray-400 mt-1">Crie e aguarde a aprovação em <strong>Templates WhatsApp</strong>.</p>
+                  </div>
+                ) : (
+                  approvedTemplates.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        setSelectedTemplate(t);
+                        setTemplateVars(Array.from({ length: t.variable_count }, (_, i) =>
+                          i === 0 ? (lead?.full_name ?? '') : ''
+                        ));
+                        setTemplateMediaUrl('');
+                        setTemplateError('');
+                        setShowTemplateGalleryPicker(false);
+                        setTemplateModalView('detail');
+                      }}
+                      className="w-full text-left rounded-xl border border-gray-200 hover:border-orange-300 hover:bg-orange-50/40 transition-colors overflow-hidden group"
+                    >
+                      {/* Miniatura do cabeçalho se tiver mídia */}
+                      {(t.header_type === 'IMAGE' || t.header_type === 'VIDEO') && t.header_media_url && (
+                        <div className="w-full h-28 bg-gray-100 overflow-hidden">
+                          {t.header_type === 'IMAGE' ? (
+                            <img src={t.header_media_url} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <VideoThumbnail src={t.header_media_url} className="w-full h-full" />
+                          )}
+                        </div>
+                      )}
+                      <div className="p-3">
+                        <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+                          <span className="font-mono text-sm font-bold text-gray-900">{t.name}</span>
+                          <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-medium">✓ Aprovado</span>
+                          {t.header_type && t.header_type !== 'NONE' && (
+                            <span className="text-[10px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full font-medium">
+                              {t.header_type === 'IMAGE' ? '🖼 Imagem' : t.header_type === 'VIDEO' ? '▶ Vídeo' : t.header_type === 'DOCUMENT' ? '📄 Doc' : `T ${t.header_text}`}
+                            </span>
+                          )}
+                          {t.variable_count > 0 && (
+                            <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-full font-medium">
+                              {t.variable_count} var
+                            </span>
+                          )}
+                          {t.category && (
+                            <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-medium uppercase">{t.category}</span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-600 line-clamp-2 leading-relaxed">{t.body_text}</p>
+                        {t.footer_text && <p className="text-xs text-gray-400 italic mt-1 truncate">{t.footer_text}</p>}
+                      </div>
+                      <div className="px-3 pb-2.5 flex items-center justify-end">
+                        <span className="text-xs text-orange-500 font-medium group-hover:text-orange-600">Usar este template →</span>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              <div className="px-5 py-3 border-t border-gray-100">
+                <button onClick={() => setShowTemplateModal(false)} className="w-full py-2 rounded-xl text-sm font-medium text-gray-600 bg-white border border-gray-200 hover:bg-gray-50">
+                  Cancelar
+                </button>
+              </div>
+            </>)}
+
+            {/* ── TELA 2: Detalhe do template selecionado ── */}
+            {templateModalView === 'detail' && selectedTemplate && (<>
+              {/* Header com voltar */}
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 bg-orange-50">
+                <button
+                  onClick={() => { setTemplateModalView('list'); setSelectedTemplate(null); setTemplateError(''); }}
+                  className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-orange-100 text-orange-600 transition-colors flex-shrink-0"
+                >
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <polyline points="15 18 9 12 15 6"/>
+                  </svg>
+                </button>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-gray-800 text-sm truncate">{selectedTemplate.name}</p>
+                  <p className="text-xs text-orange-600">Template selecionado</p>
+                </div>
+                <button onClick={() => setShowTemplateModal(false)} className="text-gray-400 hover:text-gray-600 p-1 flex-shrink-0">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+
+                {/* Preview estilo WhatsApp */}
+                <div className="bg-[#e5ddd5] rounded-xl p-3">
+                  <p className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold mb-2">Prévia da mensagem</p>
+                  <div className="bg-white rounded-xl shadow-sm overflow-hidden max-w-xs mx-auto">
+                    {/* Header de mídia */}
+                    {selectedTemplate.header_type === 'IMAGE' && selectedTemplate.header_media_url && (
+                      <img src={selectedTemplate.header_media_url} alt="" className="w-full h-36 object-cover" />
+                    )}
+                    {selectedTemplate.header_type === 'VIDEO' && selectedTemplate.header_media_url && (
+                      <div className="w-full h-36 overflow-hidden">
+                        <VideoThumbnail src={selectedTemplate.header_media_url} className="w-full h-full" />
+                      </div>
+                    )}
+                    {selectedTemplate.header_type === 'TEXT' && selectedTemplate.header_text && (
+                      <div className="px-3 pt-3 pb-1">
+                        <p className="font-bold text-gray-900 text-sm">{selectedTemplate.header_text}</p>
+                      </div>
+                    )}
+                    {/* Body */}
+                    <div className="px-3 py-2">
+                      <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
+                        {templateVars.reduce((txt, val, i) => txt.replace(`{{${i + 1}}}`, val || `{{${i + 1}}}`), selectedTemplate.body_text)}
+                      </p>
+                    </div>
+                    {/* Footer */}
+                    {selectedTemplate.footer_text && (
+                      <div className="px-3 pb-2.5">
+                        <p className="text-xs text-gray-400 italic">{selectedTemplate.footer_text}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Variáveis */}
+                {selectedTemplate.variable_count > 0 && (
+                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">
+                    <p className="text-sm font-semibold text-blue-800">Variáveis</p>
+                    {Array.from({ length: selectedTemplate.variable_count }).map((_, i) => (
+                      <div key={i}>
+                        <label className="block text-xs text-blue-700 mb-1 font-medium">
+                          {`{{${i + 1}}}`} {i === 0 ? '— Nome' : ''}
+                        </label>
+                        <input
+                          type="text"
+                          value={templateVars[i] ?? ''}
+                          onChange={e => {
+                            const v = [...templateVars];
+                            v[i] = e.target.value;
+                            setTemplateVars(v);
+                          }}
+                          placeholder={i === 0 ? lead?.full_name ?? '' : `Valor ${i + 1}`}
+                          className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Mídia do cabeçalho */}
+                {['IMAGE', 'VIDEO', 'DOCUMENT'].includes(selectedTemplate.header_type) && (
+                  <div className="bg-purple-50 border border-purple-100 rounded-xl p-4 space-y-3">
+                    <p className="text-sm font-semibold text-purple-800">
+                      {selectedTemplate.header_type === 'IMAGE' ? '🖼 Imagem do cabeçalho' : selectedTemplate.header_type === 'VIDEO' ? '▶ Vídeo do cabeçalho' : '📄 Documento do cabeçalho'}
+                      <span className="text-red-500 ml-1">*</span>
+                    </p>
+
+                    <div className="flex gap-2">
+                      <input
+                        ref={mediaFileInputRef}
+                        type="file"
+                        className="hidden"
+                        accept={selectedTemplate.header_type === 'IMAGE' ? 'image/jpeg,image/png' : selectedTemplate.header_type === 'VIDEO' ? 'video/mp4' : 'application/pdf'}
+                        onChange={e => { setShowTemplateGalleryPicker(false); handleMediaFileUpload(e); }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => { setShowTemplateGalleryPicker(false); mediaFileInputRef.current?.click(); }}
+                        disabled={uploadingMedia}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border-2 border-dashed border-purple-300 bg-white hover:bg-purple-50 text-purple-700 text-sm font-medium transition-colors disabled:opacity-60"
+                      >
+                        {uploadingMedia
+                          ? <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                          : <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        }
+                        {uploadingMedia ? 'Enviando…' : 'Dispositivo'}
+                      </button>
+                      {selectedTemplate.header_type !== 'DOCUMENT' && (
+                        <button
+                          type="button"
+                          onClick={() => showTemplateGalleryPicker ? setShowTemplateGalleryPicker(false) : openTemplateGalleryPicker(selectedTemplate.header_type as 'IMAGE' | 'VIDEO')}
+                          className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg border-2 text-sm font-medium transition-colors ${showTemplateGalleryPicker ? 'border-purple-500 bg-purple-100 text-purple-800' : 'border-purple-300 bg-white hover:bg-purple-50 text-purple-700'}`}
+                        >
+                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                          </svg>
+                          Da galeria
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Galeria picker */}
+                    {showTemplateGalleryPicker && (
+                      <div className="bg-white border border-purple-200 rounded-xl overflow-hidden">
+                        {loadingTemplateGallery ? (
+                          <div className="flex items-center justify-center h-28">
+                            <svg className="w-5 h-5 text-purple-400 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                          </div>
+                        ) : templateGalleryItems.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center h-24 text-center px-4">
+                            <p className="text-sm text-gray-500">Nenhum item na galeria.</p>
+                            <p className="text-xs text-gray-400 mt-0.5">Use "Dispositivo" ou a página Galeria.</p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 p-2 max-h-64 overflow-y-auto">
+                            {templateGalleryItems.map(item => (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => { setTemplateMediaUrl(item.file_url); setShowTemplateGalleryPicker(false); }}
+                                className={`flex flex-col rounded-lg overflow-hidden border-2 transition-all bg-gray-50 group ${
+                                  templateMediaUrl === item.file_url
+                                    ? 'border-purple-500'
+                                    : 'border-transparent hover:border-purple-400'
+                                }`}
+                                title={item.name}
+                              >
+                                <div className="relative w-full aspect-video overflow-hidden">
+                                  {item.media_type === 'IMAGE'
+                                    ? <img src={item.file_url} alt={item.name} className="w-full h-full object-cover" />
+                                    : <VideoThumbnail src={item.file_url} className="w-full h-full" />
+                                  }
+                                  <div className="absolute inset-0 bg-purple-600/0 group-hover:bg-purple-600/20 transition-colors" />
+
+                                  {/* Play preview — only on videos, stops propagation so it doesn't select */}
+                                  {item.media_type === 'VIDEO' && (
+                                    <button
+                                      type="button"
+                                      onClick={e => { e.stopPropagation(); setTemplateVideoPreview(item); }}
+                                      className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                                      title="Pré-visualizar vídeo"
+                                    >
+                                      <div className="w-9 h-9 rounded-full bg-black/60 flex items-center justify-center shadow-lg">
+                                        <svg className="w-4 h-4 text-white ml-0.5" viewBox="0 0 24 24" fill="currentColor">
+                                          <path d="M8 5v14l11-7z"/>
+                                        </svg>
+                                      </div>
+                                    </button>
+                                  )}
+                                </div>
+                                <div className="px-1.5 py-1">
+                                  <p className="text-[11px] font-medium text-gray-700 truncate">{item.name}</p>
+                                  {item.description && (
+                                    <p className="text-[10px] text-gray-400 truncate">{item.description}</p>
+                                  )}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Mídia selecionada */}
+                    {templateMediaUrl && (
+                      <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                        <svg className="w-4 h-4 text-green-600 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><polyline points="20 6 9 17 4 12"/></svg>
+                        <span className="text-xs text-green-700 truncate flex-1">{templateMediaUrl.split('/').pop()}</span>
+                        <button type="button" onClick={() => setTemplateMediaUrl('')} className="text-green-500 hover:text-green-700 flex-shrink-0">
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {templateError && (
+                <div className="mx-4 mb-1 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700 flex items-start gap-2">
+                  <svg className="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                  {templateError}
+                </div>
+              )}
+
+              <div className="flex gap-3 px-4 py-3 border-t border-gray-100">
+                <button
+                  onClick={() => { setTemplateModalView('list'); setSelectedTemplate(null); setTemplateError(''); }}
+                  className="flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-medium text-gray-600 bg-white border border-gray-200 hover:bg-gray-50"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><polyline points="15 18 9 12 15 6"/></svg>
+                  Voltar
+                </button>
+                <button
+                  onClick={handleSendTemplate}
+                  disabled={sendingTemplate}
+                  className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50 transition-colors"
+                >
+                  {sendingTemplate
+                    ? <svg className="w-4 h-4 animate-spin mx-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    : 'Enviar Template'}
+                </button>
+              </div>
+            </>)}
+
+            {/* ── Mini video preview inside template modal ── */}
+            {templateVideoPreview && (
+              <div
+                className="absolute inset-0 z-10 flex items-center justify-center bg-black/70 backdrop-blur-sm rounded-2xl"
+                onClick={() => setTemplateVideoPreview(null)}
+              >
+                <div
+                  className="relative w-full mx-4 bg-black rounded-2xl overflow-hidden shadow-2xl"
+                  onClick={e => e.stopPropagation()}
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-gray-900">
+                    <p className="text-white text-sm font-medium truncate max-w-xs">{templateVideoPreview.name}</p>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {/* Select button */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTemplateMediaUrl(templateVideoPreview.file_url);
+                          setShowTemplateGalleryPicker(false);
+                          setTemplateVideoPreview(null);
+                        }}
+                        className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                          templateMediaUrl === templateVideoPreview.file_url
+                            ? 'bg-purple-600 text-white hover:bg-purple-700'
+                            : 'bg-white/10 text-white hover:bg-white/20'
+                        }`}
+                      >
+                        {templateMediaUrl === templateVideoPreview.file_url ? (
+                          <>
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}><polyline points="20 6 9 17 4 12"/></svg>
+                            Selecionado
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                            Usar este
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTemplateVideoPreview(null)}
+                        className="text-white/60 hover:text-white p-1 transition-colors"
+                      >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Video player */}
+                  <video
+                    src={templateVideoPreview.file_url}
+                    controls
+                    autoPlay
+                    className="w-full max-h-64 bg-black"
+                  />
+
+                  {/* Description */}
+                  {templateVideoPreview.description && (
+                    <div className="px-4 py-2.5 bg-gray-900 border-t border-white/10">
+                      <p className="text-white/70 text-xs leading-relaxed">{templateVideoPreview.description}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal de Galeria ───────────────────────────────────────────────── */}
+      {showGalleryModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+
+            {/* Header */}
             <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
-              <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
-                <svg className="w-4 h-4 text-orange-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-purple-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <polyline points="21 15 16 10 5 21"/>
                 </svg>
               </div>
               <div className="flex-1">
-                <p className="font-semibold text-gray-800 text-sm">Enviar Template WhatsApp</p>
-                <p className="text-xs text-gray-500">Selecione um template aprovado para reabrir a conversa</p>
+                <p className="font-semibold text-gray-800 text-sm">Enviar da Galeria</p>
+                <p className="text-xs text-gray-500">
+                  {gallerySelections.size === 0
+                    ? 'Selecione uma ou mais mídias para enviar'
+                    : `${gallerySelections.size} item(s) selecionado(s)`}
+                </p>
               </div>
-              <button onClick={() => setShowTemplateModal(false)} className="text-gray-400 hover:text-gray-600 p-1">
+              <input
+                ref={galleryUploadInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm"
+                onChange={handleGalleryModalUpload}
+              />
+              <button
+                onClick={() => galleryUploadInputRef.current?.click()}
+                disabled={uploadingGalleryItem}
+                title="Adicionar à galeria"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold transition-colors disabled:opacity-60 flex-shrink-0"
+              >
+                {uploadingGalleryItem
+                  ? <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                  : <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                }
+                Upload
+              </button>
+              <button onClick={() => setShowGalleryModal(false)} className="text-gray-400 hover:text-gray-600 p-1">
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-              {approvedTemplates.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-gray-500 text-sm">Nenhum template aprovado encontrado.</p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    Crie e aguarde a aprovação de um template em <strong>Templates WhatsApp</strong>.
-                  </p>
+            {/* Filter tabs */}
+            <div className="flex items-center gap-1 px-5 pt-3 pb-1 flex-shrink-0">
+              {(['ALL', 'IMAGE', 'VIDEO'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setGalleryFilter(f)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    galleryFilter === f ? 'bg-purple-100 text-purple-700' : 'text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  {f === 'ALL' ? 'Todos' : f === 'IMAGE' ? 'Imagens' : 'Vídeos'}
+                </button>
+              ))}
+            </div>
+
+            {/* Grid — scrollable */}
+            <div className="flex-1 overflow-y-auto px-5 py-3 min-h-0">
+              {loadingGallery ? (
+                <div className="flex items-center justify-center h-40">
+                  <svg className="w-7 h-7 text-gray-400 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  </svg>
+                </div>
+              ) : galleryItems.filter(i => galleryFilter === 'ALL' || i.media_type === galleryFilter).length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-40 text-center">
+                  <p className="text-gray-500 text-sm">Nenhum item encontrado.</p>
+                  <p className="text-xs text-gray-400 mt-1">Adicione imagens ou vídeos na <strong>Galeria de Mídia</strong>.</p>
                 </div>
               ) : (
-                approvedTemplates.map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => {
-                      setSelectedTemplate(t);
-                      setTemplateVars(Array(t.variable_count).fill(''));
-                      setTemplateMediaUrl('');
-                    }}
-                    className={`w-full text-left p-4 rounded-xl border-2 transition-colors ${
-                      selectedTemplate?.id === t.id
-                        ? 'border-orange-400 bg-orange-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className="font-mono text-sm font-semibold text-gray-900">{t.name}</span>
-                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Aprovado</span>
-                      {t.header_type && t.header_type !== 'NONE' && (
-                        <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full">
-                          {t.header_type === 'IMAGE' ? '🖼 Imagem'
-                           : t.header_type === 'VIDEO' ? '▶ Vídeo'
-                           : t.header_type === 'DOCUMENT' ? '📄 Documento'
-                           : `T ${t.header_text}`}
-                        </span>
-                      )}
-                      {t.variable_count > 0 && (
-                        <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full">
-                          {t.variable_count} variável{t.variable_count !== 1 ? 'is' : ''}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-gray-600 line-clamp-2">{t.body_text}</p>
-                    {t.footer_text && (
-                      <p className="text-xs text-gray-400 italic mt-1">{t.footer_text}</p>
-                    )}
-                  </button>
-                ))
-              )}
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                  {galleryItems
+                    .filter(i => galleryFilter === 'ALL' || i.media_type === galleryFilter)
+                    .map(item => {
+                      const isSelected = gallerySelections.has(item.id);
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => {
+                            setGallerySelections(prev => {
+                              const next = new Map(prev);
+                              if (next.has(item.id)) {
+                                next.delete(item.id);
+                              } else {
+                                next.set(item.id, { item, sendDesc: !!item.description });
+                              }
+                              return next;
+                            });
+                          }}
+                          className={`relative rounded-xl overflow-hidden border-2 transition-all bg-white text-left ${
+                            isSelected
+                              ? 'border-purple-500 ring-2 ring-purple-200'
+                              : 'border-gray-200 hover:border-purple-300'
+                          }`}
+                        >
+                          <div className="aspect-square bg-gray-100 overflow-hidden relative">
+                            {item.media_type === 'IMAGE'
+                              ? <img src={item.file_url} alt={item.name} className="w-full h-full object-cover" />
+                              : <VideoThumbnail src={item.file_url} />
+                            }
+                            {/* Play preview button — only on videos */}
+                            {item.media_type === 'VIDEO' && (
+                              <button
+                                onClick={e => { e.stopPropagation(); setGalleryVideoPreview(item); }}
+                                className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/30 transition-colors group/play"
+                                title="Pré-visualizar vídeo"
+                              >
+                                <div className="w-10 h-10 rounded-full bg-black/60 flex items-center justify-center opacity-0 group-hover/play:opacity-100 transition-opacity shadow-lg">
+                                  <svg className="w-5 h-5 text-white ml-0.5" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M8 5v14l11-7z"/>
+                                  </svg>
+                                </div>
+                              </button>
+                            )}
+                          </div>
 
-              {/* Campo de mídia para templates com cabeçalho de imagem/vídeo/documento */}
-              {selectedTemplate && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(selectedTemplate.header_type) && (
-                <div className="bg-purple-50 border border-purple-100 rounded-xl p-4">
-                  <p className="text-sm font-medium text-purple-800 mb-2">
-                    {selectedTemplate.header_type === 'IMAGE' ? '🖼 URL da imagem'
-                     : selectedTemplate.header_type === 'VIDEO' ? '▶ URL do vídeo'
-                     : '📄 URL do documento'}
-                    <span className="text-red-500 ml-1">*</span>
-                  </p>
-                  <input
-                    type="url"
-                    value={templateMediaUrl}
-                    onChange={e => setTemplateMediaUrl(e.target.value)}
-                    placeholder={
-                      selectedTemplate.header_type === 'IMAGE'
-                        ? 'https://exemplo.com/foto.jpg'
-                        : selectedTemplate.header_type === 'VIDEO'
-                        ? 'https://exemplo.com/video.mp4'
-                        : 'https://exemplo.com/arquivo.pdf'
-                    }
-                    className="w-full border border-purple-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
-                  />
-                  <p className="text-xs text-purple-600 mt-1">
-                    A URL deve ser pública e acessível pela Meta. Use sua CDN ou hospedagem de imagens.
-                  </p>
-                </div>
-              )}
+                          {/* Check badge */}
+                          <div className={`absolute top-1.5 right-1.5 w-5 h-5 rounded-full flex items-center justify-center shadow transition-all ${
+                            isSelected ? 'bg-purple-500' : 'bg-white/80 border border-gray-300'
+                          }`}>
+                            {isSelected && (
+                              <svg className="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}>
+                                <polyline points="20 6 9 17 4 12"/>
+                              </svg>
+                            )}
+                          </div>
 
-              {/* Campos de variáveis */}
-              {selectedTemplate && selectedTemplate.variable_count > 0 && (
-                <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">
-                  <p className="text-sm font-medium text-blue-800">Preencha as variáveis do template:</p>
-                  {Array.from({ length: selectedTemplate.variable_count }).map((_, i) => (
-                    <div key={i}>
-                      <label className="block text-xs text-blue-700 mb-1">
-                        Variável {`{{${i + 1}}}`}
-                      </label>
-                      <input
-                        type="text"
-                        value={templateVars[i] ?? ''}
-                        onChange={e => {
-                          const v = [...templateVars];
-                          v[i] = e.target.value;
-                          setTemplateVars(v);
-                        }}
-                        placeholder={i === 0 ? lead?.full_name ?? '' : ''}
-                        className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                      />
-                    </div>
-                  ))}
+                          {/* Type badge */}
+                          <div className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide ${
+                            item.media_type === 'IMAGE' ? 'bg-blue-500/80 text-white' : 'bg-purple-600/80 text-white'
+                          }`}>
+                            {item.media_type === 'IMAGE' ? 'IMG' : 'VID'}
+                          </div>
+
+                          <div className="px-2 pt-1.5 pb-2">
+                            <p className="text-[11px] font-semibold text-gray-800 truncate leading-tight" title={item.name}>
+                              {item.name}
+                            </p>
+                            {item.description && (
+                              <p
+                                className="text-[10px] text-gray-500 mt-0.5 leading-snug"
+                                style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                                title={item.description}
+                              >
+                                {item.description}
+                              </p>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
                 </div>
               )}
             </div>
 
-            <div className="flex gap-3 px-5 py-4 border-t border-gray-100">
+            {/* ── Selection queue — each selected item with sendDesc toggle ── */}
+            {gallerySelections.size > 0 && (
+              <div className="border-t border-gray-100 px-5 py-3 flex-shrink-0 max-h-60 overflow-y-auto space-y-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                  Para enviar ({gallerySelections.size})
+                </p>
+                {Array.from(gallerySelections.values()).map(({ item, sendDesc }) => (
+                  <div key={item.id} className="flex items-start gap-3 bg-gray-50 rounded-xl p-2.5">
+                    {/* Thumb */}
+                    <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-gray-200">
+                      {item.media_type === 'IMAGE'
+                        ? <img src={item.file_url} alt={item.name} className="w-full h-full object-cover" />
+                        : <VideoThumbnail src={item.file_url} />
+                      }
+                    </div>
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-gray-800 truncate">{item.name}</p>
+                      {item.description ? (
+                        <p className="text-xs text-gray-500 mt-0.5 leading-snug break-words">
+                          {item.description}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-gray-400 italic mt-0.5">Sem descrição</p>
+                      )}
+
+                      {/* Checkbox: send description */}
+                      {item.description && (
+                        <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer select-none w-fit">
+                          <input
+                            type="checkbox"
+                            checked={sendDesc}
+                            onChange={() => {
+                              setGallerySelections(prev => {
+                                const next = new Map(prev);
+                                const sel = next.get(item.id);
+                                if (sel) next.set(item.id, { ...sel, sendDesc: !sel.sendDesc });
+                                return next;
+                              });
+                            }}
+                            className="w-3.5 h-3.5 rounded accent-purple-600 cursor-pointer"
+                          />
+                          <span className="text-[11px] text-gray-600">Enviar descrição como mensagem</span>
+                        </label>
+                      )}
+                    </div>
+
+                    {/* Remove from selection */}
+                    <button
+                      onClick={() => setGallerySelections(prev => {
+                        const next = new Map(prev); next.delete(item.id); return next;
+                      })}
+                      className="text-gray-300 hover:text-red-400 transition-colors flex-shrink-0 mt-0.5"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Error */}
+            {galleryError && (
+              <div className="mx-5 mb-1 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700 flex items-start gap-2">
+                <svg className="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                {galleryError}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div className="flex gap-3 px-5 py-4 border-t border-gray-100 flex-shrink-0">
               <button
-                onClick={() => setShowTemplateModal(false)}
+                onClick={() => setShowGalleryModal(false)}
                 className="flex-1 py-2 rounded-xl text-sm font-medium text-gray-600 bg-white border border-gray-200 hover:bg-gray-100"
               >
                 Cancelar
               </button>
               <button
-                onClick={handleSendTemplate}
-                disabled={!selectedTemplate || sendingTemplate}
-                className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-50 transition-colors"
+                onClick={handleSendGalleryItem}
+                disabled={gallerySelections.size === 0 || sendingGallery}
+                className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
               >
-                {sendingTemplate
-                  ? <span className="loading loading-spinner loading-xs" />
-                  : 'Enviar Template'}
+                {sendingGallery ? (
+                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                  </svg>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <line x1="22" y1="2" x2="11" y2="13"/>
+                      <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                    </svg>
+                    {gallerySelections.size > 1 ? `Enviar ${gallerySelections.size} mídias` : 'Enviar'}
+                  </>
+                )}
               </button>
             </div>
+
+            {/* ── Mini video preview player (inside modal, above everything) ── */}
+            {galleryVideoPreview && (
+              <div
+                className="absolute inset-0 z-10 flex items-center justify-center bg-black/70 backdrop-blur-sm rounded-2xl"
+                onClick={() => setGalleryVideoPreview(null)}
+              >
+                <div
+                  className="relative w-full max-w-lg mx-4 bg-black rounded-2xl overflow-hidden shadow-2xl"
+                  onClick={e => e.stopPropagation()}
+                >
+                  {/* Player header */}
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-gray-900">
+                    <p className="text-white text-sm font-medium truncate max-w-xs">{galleryVideoPreview.name}</p>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {/* Select / deselect from preview */}
+                      <button
+                        onClick={() => {
+                          setGallerySelections(prev => {
+                            const next = new Map(prev);
+                            if (next.has(galleryVideoPreview.id)) {
+                              next.delete(galleryVideoPreview.id);
+                            } else {
+                              next.set(galleryVideoPreview.id, { item: galleryVideoPreview, sendDesc: !!galleryVideoPreview.description });
+                            }
+                            return next;
+                          });
+                          setGalleryVideoPreview(null);
+                        }}
+                        className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                          gallerySelections.has(galleryVideoPreview.id)
+                            ? 'bg-purple-600 text-white hover:bg-purple-700'
+                            : 'bg-white/10 text-white hover:bg-white/20'
+                        }`}
+                      >
+                        {gallerySelections.has(galleryVideoPreview.id) ? (
+                          <>
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3}>
+                              <polyline points="20 6 9 17 4 12"/>
+                            </svg>
+                            Selecionado
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                              <circle cx="12" cy="12" r="10"/>
+                              <line x1="12" y1="8" x2="12" y2="16"/>
+                              <line x1="8" y1="12" x2="16" y2="12"/>
+                            </svg>
+                            Selecionar
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => setGalleryVideoPreview(null)}
+                        className="text-white/60 hover:text-white p-1 transition-colors"
+                      >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Video */}
+                  <video
+                    src={galleryVideoPreview.file_url}
+                    controls
+                    autoPlay
+                    className="w-full max-h-72 bg-black"
+                  />
+
+                  {/* Description */}
+                  {galleryVideoPreview.description && (
+                    <div className="px-4 py-2.5 bg-gray-900 border-t border-white/10">
+                      <p className="text-white/70 text-xs leading-relaxed">{galleryVideoPreview.description}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1472,9 +2260,11 @@ type LeadFilter = {
   status: string;
   is_ai_active: string;
   search: string;
+  lead_classification: string;
+  is_archived: string;
 };
 
-const FILTER_DEFAULTS: LeadFilter = { tier: '', status: '', is_ai_active: '', search: '' };
+const FILTER_DEFAULTS: LeadFilter = { tier: '', status: '', is_ai_active: '', search: '', lead_classification: '', is_archived: '' };
 
 export default function LeadsPage() {
   const { id } = useParams<{ id?: string }>();
@@ -1495,6 +2285,8 @@ export default function LeadsPage() {
     if (f.status) params.status = f.status;
     if (f.is_ai_active) params.is_ai_active = f.is_ai_active === 'true';
     if (f.search) params.search = f.search;
+    if (f.lead_classification) params.lead_classification = f.lead_classification;
+    params.is_archived = f.is_archived === 'true';
     return params;
   };
 
@@ -1586,6 +2378,42 @@ export default function LeadsPage() {
               onChange={e => applyFilter('search', e.target.value)}
             />
           </div>
+        </div>
+
+        {/* Quick classification filter buttons */}
+        <div className="px-3 py-2 border-b border-gray-100 flex items-center gap-1.5 flex-shrink-0 overflow-x-auto">
+          {([
+            { key: '', label: 'Todos', icon: null, activeClass: 'bg-gray-800 text-white', defaultClass: 'bg-gray-100 text-gray-500 hover:bg-gray-200' },
+            { key: 'HOT_LEAD',  label: 'Hot',       icon: '🔥', activeClass: 'bg-red-500 text-white',    defaultClass: 'bg-red-50 text-red-600 hover:bg-red-100' },
+            { key: 'WARM_LEAD', label: 'Warm',      icon: '🟡', activeClass: 'bg-amber-500 text-white',  defaultClass: 'bg-amber-50 text-amber-600 hover:bg-amber-100' },
+            { key: 'COLD_LEAD', label: 'Cold',      icon: '❄️', activeClass: 'bg-blue-500 text-white',   defaultClass: 'bg-blue-50 text-blue-600 hover:bg-blue-100' },
+            { key: 'ARCHIVED',  label: 'Arquivado', icon: '📁', activeClass: 'bg-gray-500 text-white',   defaultClass: 'bg-gray-100 text-gray-500 hover:bg-gray-200' },
+          ] as const).map(({ key, label, icon, activeClass, defaultClass }) => {
+            const isArchived = key === 'ARCHIVED';
+            const isActive = isArchived
+              ? filters.is_archived === 'true'
+              : filters.lead_classification === key && filters.is_archived !== 'true';
+            return (
+              <button
+                key={key}
+                onClick={() => {
+                  if (isArchived) {
+                    const next = { ...filters, lead_classification: '', is_archived: filters.is_archived === 'true' ? '' : 'true' };
+                    setFilters(next);
+                    load(next, 1);
+                  } else {
+                    const next = { ...filters, lead_classification: filters.lead_classification === key ? '' : key, is_archived: '' };
+                    setFilters(next);
+                    load(next, 1);
+                  }
+                }}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold flex-shrink-0 transition-colors ${isActive ? activeClass : defaultClass}`}
+              >
+                {icon && <span>{icon}</span>}
+                {label}
+              </button>
+            );
+          })}
         </div>
 
         {/* Filter dropdowns (collapsible) */}

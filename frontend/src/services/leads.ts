@@ -6,6 +6,8 @@ export interface LeadFilters {
   status?: string;
   source?: string;
   is_ai_active?: boolean;
+  lead_classification?: string;
+  is_archived?: boolean;
   search?: string;
   page?: number;
 }
@@ -87,6 +89,15 @@ export const leadsService = {
     return data;
   },
 
+  async archiveLead(id: number): Promise<void> {
+    await api.post(`/leads/${id}/archive/`);
+  },
+
+  async unarchiveLead(id: number): Promise<Lead> {
+    const { data } = await api.post<Lead>(`/leads/${id}/unarchive/`);
+    return data;
+  },
+
   async deleteLead(id: number): Promise<void> {
     await api.delete(`/leads/${id}/delete/`);
   },
@@ -115,5 +126,13 @@ export const leadsService = {
       ...(headerMediaUrl ? { header_media_url: headerMediaUrl } : {}),
     });
     return data;
+  },
+
+  async sendGalleryItem(leadId: number, galleryMediaId: number, caption?: string): Promise<Message[]> {
+    const { data } = await api.post<{ messages: Message[] }>(`/leads/${leadId}/send_gallery_item/`, {
+      gallery_media_id: galleryMediaId,
+      caption: caption ?? '',
+    });
+    return data.messages;
   },
 };

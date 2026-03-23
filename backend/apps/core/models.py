@@ -57,6 +57,7 @@ class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='members')
     role = models.CharField(max_length=50, default='agent', blank=True)
+    phone = models.CharField(max_length=30, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True, null=True)
 
     class Meta:
@@ -88,6 +89,28 @@ class InitialMessageMedia(models.Model):
 
     def __str__(self):
         return f'{self.media_type} — {self.original_name}'
+
+
+class GalleryMedia(models.Model):
+    MEDIA_TYPE_CHOICES = [('IMAGE', 'Imagem'), ('VIDEO', 'Vídeo')]
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name='gallery_media'
+    )
+    name = models.CharField(max_length=255, blank=True)
+    description = models.TextField(blank=True)
+    file_url = models.CharField(max_length=2000)
+    mime_type = models.CharField(max_length=100, blank=True)
+    media_type = models.CharField(max_length=10, choices=MEDIA_TYPE_CHOICES, default='IMAGE')
+    size_bytes = models.PositiveBigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'gallery_media'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.name} [{self.media_type}]'
 
 
 PLAN_CHOICES = [

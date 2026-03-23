@@ -32,6 +32,9 @@ LOCAL_APPS = [
     'apps.channels',
     'apps.qualifier',
     'apps.rag',
+    'apps.contracts',
+    'apps.notes',
+    'apps.kennel',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -55,7 +58,7 @@ _FRONTEND_DIST = BASE_DIR.parent / 'frontend' / 'dist'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [str(_FRONTEND_DIST)] if _FRONTEND_DIST.exists() else [],
+        'DIRS': ([str(_FRONTEND_DIST)] if _FRONTEND_DIST.exists() else []) + [str(BASE_DIR / 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [

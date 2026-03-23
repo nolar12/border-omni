@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/auth';
+import ProfileModal from './ProfileModal';
 
 interface Props {
   onMenuClick: () => void;
@@ -16,6 +17,7 @@ const MOCK_NOTIFICATIONS = [
 export default function Topbar({ onMenuClick }: Props) {
   const [showNotif, setShowNotif] = useState(false);
   const [showUser, setShowUser] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const user = authService.getCurrentUser();
   const navigate = useNavigate();
   const unreadCount = MOCK_NOTIFICATIONS.filter(n => n.unread).length;
@@ -29,12 +31,14 @@ export default function Topbar({ onMenuClick }: Props) {
 
   return (
     <>
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
+
       {/* Backdrop for dropdowns */}
       {(showNotif || showUser) && (
         <div className="fixed inset-0 z-30" onClick={closeAll} />
       )}
 
-      <header className="sticky top-0 z-40 bg-white border-b border-gray-200 flex items-center gap-3 px-4 h-16 flex-shrink-0">
+      <header className="fixed top-0 left-0 right-0 md:left-[240px] z-40 bg-white border-b border-gray-200 flex items-center gap-3 px-4 h-16">
         {/* Hamburger (mobile) */}
         <button
           onClick={onMenuClick}
@@ -148,6 +152,16 @@ export default function Topbar({ onMenuClick }: Props) {
                   <p className="text-sm text-gray-400">{user?.organization_name}</p>
                 </div>
                 <div className="py-1">
+                  <button
+                    onClick={() => { setShowProfile(true); closeAll(); }}
+                    className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                      <circle cx="12" cy="7" r="4"/>
+                    </svg>
+                    Meu Perfil
+                  </button>
                   <button
                     onClick={() => { navigate('/configuracoes'); closeAll(); }}
                     className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"

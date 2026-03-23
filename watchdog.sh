@@ -1,18 +1,22 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────
 #  Border Omni — Watchdog
-#  Monitora backend (porta 9022) e ngrok, reinicia se caírem.
-#  Uso: bash watchdog.sh
-#  Para rodar em background: nohup bash watchdog.sh &
+#  Monitora backend (9022), frontend (9021) e ngrok.
+#  Reinicia automaticamente qualquer serviço que cair.
+#  Gerenciado via: systemctl --user {start|stop|status} border-omni-watchdog.service
 # ─────────────────────────────────────────────────────────────
 
 BACKEND_PORT=9022
+FRONTEND_PORT=9021
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$PROJECT_DIR/backend"
+FRONTEND_DIR="$PROJECT_DIR/frontend"
 VENV_DIR="$PROJECT_DIR/venv"
+LOG_DIR="$PROJECT_DIR/logs"
 LOG_FILE="/tmp/border_omni_watchdog.log"
-BACKEND_LOG="/tmp/backend.log"
 CHECK_INTERVAL=20   # segundos entre cada verificação
+
+mkdir -p "$LOG_DIR"
 
 # Carrega variáveis de ambiente do .env se existir
 if [ -f "$PROJECT_DIR/.env" ]; then
@@ -26,26 +30,69 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
+# ─── Backend ─────────────────────────────────────────────────
 start_backend() {
   log "⚡ Iniciando backend na porta $BACKEND_PORT..."
-  pkill -f "runserver 0.0.0.0:$BACKEND_PORT" 2>/dev/null
+  pkill -f "runserver 0.0.0.0:$BACKEND_PORT" 2>/dev/null || true
   sleep 1
   cd "$BACKEND_DIR" && source "$VENV_DIR/bin/activate" && \
-    nohup python manage.py runserver "0.0.0.0:$BACKEND_PORT" >> "$BACKEND_LOG" 2>&1 &
+    nohup python manage.py runserver "0.0.0.0:$BACKEND_PORT" \
+      >> "$LOG_DIR/backend.log" 2>&1 &
+  BACKEND_PID=$!
+  disown "$BACKEND_PID"
+  echo "$BACKEND_PID" > "$LOG_DIR/backend.pid"
   sleep 3
-  log "✅ Backend iniciado (PID: $!)"
+  log "✅ Backend iniciado (PID: $BACKEND_PID)"
 }
 
+is_backend_alive() {
+  curl -s -o /dev/null -w "%{http_code}" \
+    --connect-timeout 3 --max-time 5 \
+    "http://localhost:$BACKEND_PORT/api/leads/" 2>/dev/null | grep -qE "^(200|401|403)"
+}
+
+# ─── Frontend ────────────────────────────────────────────────
+start_frontend() {
+  log "⚡ Iniciando frontend na porta $FRONTEND_PORT..."
+  pkill -f "vite.*$FRONTEND_PORT" 2>/dev/null || true
+  sleep 1
+  cd "$FRONTEND_DIR" && \
+    nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" \
+      >> "$LOG_DIR/frontend.log" 2>&1 &
+  FRONTEND_PID=$!
+  disown "$FRONTEND_PID"
+  echo "$FRONTEND_PID" > "$LOG_DIR/frontend.pid"
+  sleep 4
+  log "✅ Frontend iniciado (PID: $FRONTEND_PID)"
+}
+
+is_frontend_alive() {
+  curl -s -o /dev/null -w "%{http_code}" \
+    --connect-timeout 3 --max-time 5 \
+    "http://localhost:$FRONTEND_PORT/" 2>/dev/null | grep -q "^200$"
+}
+
+# ─── Ngrok ───────────────────────────────────────────────────
 NGROK_DOMAIN="borderomni.ngrok.app"
-# Ngrok expõe o backend (9022) diretamente — necessário para webhook do WhatsApp.
-# O frontend buildado é servido pelo próprio Django em /app/.
-NGROK_PORT=9022
+NGROK_PORT=$BACKEND_PORT
 
 start_ngrok() {
   log "🌐 Iniciando ngrok com domínio fixo $NGROK_DOMAIN (→ porta $NGROK_PORT)..."
-  pkill -f "ngrok http" 2>/dev/null
+  systemctl --user stop ngrok-borderomni.service 2>/dev/null || true
+  pkill -f "ngrok http" 2>/dev/null || true
   sleep 1
-  nohup ngrok http "$NGROK_PORT" --url="$NGROK_DOMAIN" >> /tmp/ngrok.log 2>&1 &
+
+  if systemd-run --user --unit=ngrok-borderomni \
+      ngrok http "$NGROK_PORT" --url="$NGROK_DOMAIN" --log=stdout \
+      >> /tmp/ngrok.log 2>&1; then
+    log "   Ngrok lançado via systemd-run"
+  else
+    log "⚠️  systemd-run falhou, tentando nohup..."
+    nohup ngrok http "$NGROK_PORT" --url="$NGROK_DOMAIN" --log=stdout \
+      >> /tmp/ngrok.log 2>&1 &
+    disown $!
+  fi
+
   sleep 6
 
   NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null \
@@ -53,18 +100,11 @@ start_ngrok() {
 
   if [ -n "$NGROK_URL" ]; then
     log "✅ Ngrok ativo: $NGROK_URL"
-    log "   App (celular/externo) : $NGROK_URL/app/"
-    log "   WhatsApp webhook      : $NGROK_URL/api/webhooks/whatsapp/"
-    log "   Meta webhook          : $NGROK_URL/api/webhooks/meta/"
+    log "   WhatsApp webhook : $NGROK_URL/api/webhooks/whatsapp/"
+    log "   Meta webhook     : $NGROK_URL/api/webhooks/meta/"
   else
     log "⚠️  Ngrok iniciado mas URL não detectada ainda."
   fi
-}
-
-is_backend_alive() {
-  curl -s -o /dev/null -w "%{http_code}" \
-    --connect-timeout 3 --max-time 5 \
-    "http://localhost:$BACKEND_PORT/api/leads/" 2>/dev/null | grep -qE "^(200|401|403)"
 }
 
 is_ngrok_alive() {
@@ -78,10 +118,12 @@ log " Projeto : $PROJECT_DIR"
 log " Intervalo de check: ${CHECK_INTERVAL}s"
 log "════════════════════════════════════"
 
-is_backend_alive || start_backend
-is_ngrok_alive   || start_ngrok
+is_backend_alive  || start_backend
+is_frontend_alive || start_frontend
+is_ngrok_alive    || start_ngrok
 
 BACKEND_RESTARTS=0
+FRONTEND_RESTARTS=0
 NGROK_RESTARTS=0
 
 # ─── Loop principal ──────────────────────────────────────────
@@ -93,9 +135,20 @@ while true; do
     log "🔴 Backend caiu! Reiniciando... (tentativa #$BACKEND_RESTARTS)"
     start_backend
     if is_backend_alive; then
-      log "✅ Backend recuperado com sucesso."
+      log "✅ Backend recuperado."
     else
       log "❌ Backend não respondeu após reinício."
+    fi
+  fi
+
+  if ! is_frontend_alive; then
+    FRONTEND_RESTARTS=$((FRONTEND_RESTARTS + 1))
+    log "🔴 Frontend caiu! Reiniciando... (tentativa #$FRONTEND_RESTARTS)"
+    start_frontend
+    if is_frontend_alive; then
+      log "✅ Frontend recuperado."
+    else
+      log "❌ Frontend não respondeu após reinício."
     fi
   fi
 

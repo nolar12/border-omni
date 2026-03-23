@@ -14,6 +14,12 @@ from api.views import (
     MessageTemplateViewSet,
     UploadMediaView,
     ServerConfigView,
+    GalleryMediaViewSet,
+    ContractViewSet,
+    PublicContractView, PublicContractFillView, PublicContractSignView,
+    GenericNoteViewSet,
+    DogViewSet, LitterViewSet,
+    DogHealthRecordViewSet, LitterHealthRecordViewSet,
 )
 
 router = DefaultRouter()
@@ -23,6 +29,13 @@ router.register(r'quick-reply-categories', QuickReplyCategoryViewSet, basename='
 router.register(r'quick-replies', QuickReplyViewSet, basename='quickreply')
 router.register(r'plans', PlanViewSet, basename='plan')
 router.register(r'message-templates', MessageTemplateViewSet, basename='messagetemplate')
+router.register(r'gallery', GalleryMediaViewSet, basename='gallery')
+router.register(r'contracts', ContractViewSet, basename='contract')
+router.register(r'notes', GenericNoteViewSet, basename='note')
+router.register(r'dogs', DogViewSet, basename='dog')
+router.register(r'litters', LitterViewSet, basename='litter')
+router.register(r'dog-health', DogHealthRecordViewSet, basename='doghealthrecord')
+router.register(r'litter-health', LitterHealthRecordViewSet, basename='litterhealthrecord')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -59,4 +72,9 @@ urlpatterns = [
 
     # Server configuration (read-only, for frontend info)
     path('server-config/', ServerConfigView.as_view(), name='server_config'),
+
+    # Public contract endpoints (no authentication required)
+    path('contracts/public/<uuid:token>/', PublicContractView.as_view(), name='contract_public'),
+    path('contracts/public/<uuid:token>/fill/', PublicContractFillView.as_view(), name='contract_public_fill'),
+    path('contracts/public/<uuid:token>/sign/', PublicContractSignView.as_view(), name='contract_public_sign'),
 ]

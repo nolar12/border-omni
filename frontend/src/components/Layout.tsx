@@ -14,17 +14,24 @@ export default function Layout() {
 
   const isFullHeight = FULLHEIGHT_ROUTES.some(r => location.pathname.startsWith(r));
 
+  // No mobile: quando um chat específico está aberto, esconde topbar e bottom nav
+  // para aproveitar toda a tela. No desktop permanecem visíveis.
+  const isMobileChat = /^\/leads\/\d+/.test(location.pathname);
+
   return (
     <div data-theme="border_omni" className="flex h-screen overflow-hidden bg-white">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       {/* Main area pushed right on desktop */}
-      <div className="md:ml-[240px] flex flex-col flex-1 min-w-0 overflow-hidden">
-        <Topbar onMenuClick={() => setSidebarOpen(true)} />
+      <div className={`md:ml-[240px] flex flex-col flex-1 min-w-0 overflow-hidden ${isMobileChat ? 'md:pt-16' : 'pt-16'}`}>
+        {/* Topbar: esconde no mobile quando o chat está aberto */}
+        <div className={isMobileChat ? 'hidden md:block' : ''}>
+          <Topbar onMenuClick={() => setSidebarOpen(true)} />
+        </div>
 
         {isFullHeight ? (
           /* Full-height area for the 3-column leads/chat layout */
-          <div className="flex-1 overflow-hidden">
+          <div className={`flex-1 overflow-hidden ${isMobileChat ? '' : 'pb-16'} md:pb-0`}>
             <Outlet />
           </div>
         ) : (
@@ -40,8 +47,8 @@ export default function Layout() {
         )}
       </div>
 
-      {/* Mobile bottom nav (hidden on leads page — it has its own nav logic) */}
-      {!isFullHeight && <BottomNav />}
+      {/* Mobile bottom nav: esconde quando o chat está aberto */}
+      {!isMobileChat && <BottomNav />}
     </div>
   );
 }
