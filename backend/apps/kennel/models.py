@@ -22,6 +22,7 @@ class Litter(models.Model):
     male_count = models.PositiveIntegerField(default=0)
     female_count = models.PositiveIntegerField(default=0)
     cbkc_number = models.CharField(max_length=100, blank=True)
+    is_featured = models.BooleanField(default=False)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

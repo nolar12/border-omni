@@ -553,7 +553,7 @@ class LitterListSerializer(serializers.ModelSerializer):
             'id', 'name', 'father', 'father_name', 'mother', 'mother_name',
             'mating_date', 'expected_birth_date', 'birth_date',
             'male_count', 'female_count', 'total_count',
-            'cbkc_number', 'cover_photo', 'created_at', 'updated_at',
+            'cbkc_number', 'is_featured', 'cover_photo', 'created_at', 'updated_at',
         ]
 
     def get_father_name(self, obj):
@@ -575,8 +575,16 @@ class LitterListSerializer(serializers.ModelSerializer):
         return obj.male_count + obj.female_count
 
 
+class DogWithMediaSerializer(DogListSerializer):
+    """DogListSerializer + media, used to embed puppies inside LitterDetailSerializer."""
+    media = DogMediaSerializer(many=True, read_only=True)
+
+    class Meta(DogListSerializer.Meta):
+        fields = DogListSerializer.Meta.fields + ['media']
+
+
 class LitterDetailSerializer(LitterListSerializer):
-    puppies = DogListSerializer(many=True, read_only=True)
+    puppies = DogWithMediaSerializer(many=True, read_only=True)
     media = LitterMediaSerializer(many=True, read_only=True)
     health_records = LitterHealthRecordSerializer(many=True, read_only=True)
 
@@ -584,3 +592,63 @@ class LitterDetailSerializer(LitterListSerializer):
         fields = LitterListSerializer.Meta.fields + [
             'notes', 'puppies', 'media', 'health_records',
         ]
+
+
+# ─── Public (no auth) ─────────────────────────────────────────────────────────
+
+class PublicPuppySerializer(serializers.ModelSerializer):
+    sex_display = serializers.SerializerMethodField()
+    status_display = serializers.SerializerMethodField()
+    media = DogMediaSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Dog
+        fields = [
+            'id', 'name', 'sex', 'sex_display',
+            'birth_date', 'color',
+            'status', 'status_display',
+            'media',
+        ]
+
+    def get_sex_display(self, obj):
+        return obj.get_sex_display()
+
+    def get_status_display(self, obj):
+        return obj.get_status_display()
+
+
+class PublicLitterSerializer(serializers.ModelSerializer):
+    father_name = serializers.SerializerMethodField()
+    mother_name = serializers.SerializerMethodField()
+    cover_photo = serializers.SerializerMethodField()
+    total_count = serializers.SerializerMethodField()
+    puppies = PublicPuppySerializer(many=True, read_only=True)
+    media = LitterMediaSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Litter
+        fields = [
+            'id', 'name', 'is_featured',
+            'father_name', 'mother_name',
+            'birth_date', 'expected_birth_date',
+            'male_count', 'female_count', 'total_count',
+            'cover_photo', 'puppies', 'media',
+        ]
+
+    def get_father_name(self, obj):
+        return obj.father.name if obj.father else ''
+
+    def get_mother_name(self, obj):
+        return obj.mother.name if obj.mother else ''
+
+    def get_cover_photo(self, obj):
+        first = obj.media.first()
+        if first:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(first.file.url)
+            return first.file.url
+        return None
+
+    def get_total_count(self, obj):
+        return obj.male_count + obj.female_count

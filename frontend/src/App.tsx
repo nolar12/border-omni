@@ -1,4 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { registerSW } from 'virtual:pwa-register';
 import Layout from './components/Layout';
 import PrivateRoute from './components/PrivateRoute';
 import Login from './pages/Login';
@@ -17,8 +19,13 @@ import ContractPublicPage from './pages/ContractPublicPage';
 import NotesPage from './pages/NotesPage';
 import DogsPage from './pages/DogsPage';
 import LittersPage from './pages/LittersPage';
+import ShareTargetPage from './pages/ShareTargetPage';
 
 export default function App() {
+  useEffect(() => {
+    registerSW({ immediate: true });
+  }, []);
+
   return (
     <BrowserRouter>
       <Routes>
@@ -55,6 +62,8 @@ export default function App() {
           <Route path="canil/caes" element={<DogsPage />} />
           <Route path="canil/ninhadas" element={<LittersPage />} />
         </Route>
+        {/* Share Target — recebe fotos compartilhadas pelo SO */}
+        <Route path="/share" element={<ShareTargetPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>

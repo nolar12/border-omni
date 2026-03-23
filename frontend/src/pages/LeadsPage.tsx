@@ -17,7 +17,7 @@ import VideoThumbnail from '../components/VideoThumbnail';
 
 function LeadRow({ lead, isActive, onClick }: { lead: LeadListItem; isActive: boolean; onClick: () => void }) {
   const name = lead.full_name || lead.phone;
-  const timeAgo = new Date(lead.updated_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const timeAgo = new Date(lead.updated_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
   const needsReply = lead.last_message_direction === 'IN' && lead.status !== 'CLOSED';
   const isClosed = lead.status === 'CLOSED';
 

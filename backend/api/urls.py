@@ -20,6 +20,7 @@ from api.views import (
     GenericNoteViewSet,
     DogViewSet, LitterViewSet,
     DogHealthRecordViewSet, LitterHealthRecordViewSet,
+    PublicLitterListView, PublicLitterDetailView,
 )
 
 router = DefaultRouter()
@@ -77,4 +78,8 @@ urlpatterns = [
     path('contracts/public/<uuid:token>/', PublicContractView.as_view(), name='contract_public'),
     path('contracts/public/<uuid:token>/fill/', PublicContractFillView.as_view(), name='contract_public_fill'),
     path('contracts/public/<uuid:token>/sign/', PublicContractSignView.as_view(), name='contract_public_sign'),
+
+    # Public kennel endpoints (no authentication required)
+    path('public/litters/', PublicLitterListView.as_view(), name='public_litters'),
+    path('public/litters/<int:pk>/', PublicLitterDetailView.as_view(), name='public_litter_detail'),
 ]

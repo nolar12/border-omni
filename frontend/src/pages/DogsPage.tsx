@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
+import DateInput from '../components/DateInput';
+import UploadZone from '../components/UploadZone';
 import { useNavigate } from 'react-router-dom';
 import { dogsService, type DogPayload } from '../services/dogs';
 import { dogHealthService, type HealthRecordPayload } from '../services/dogHealth';
@@ -44,52 +46,81 @@ function StatusBadge({ status }: { status: DogStatus }) {
 
 function DogCard({ dog, onEdit, onContract }: { dog: Dog; onEdit: () => void; onContract: () => void }) {
   const priceStr = dog.price ? `R$ ${parseFloat(dog.price).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : null;
+  const isMale = dog.sex === 'M';
 
   return (
     <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700 hover:border-slate-500 transition-colors flex flex-col">
-      <div className="aspect-square bg-slate-700 relative overflow-hidden">
+      {/* Photo */}
+      <div className="aspect-[4/3] bg-slate-700 relative overflow-hidden">
         {dog.cover_photo ? (
           <img src={dog.cover_photo} alt={dog.name} className="w-full h-full object-cover" />
         ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <svg className="w-16 h-16 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1}>
-              <path d="M10 5.172C10 3.782 8.423 2.679 6.5 3c-2.823.47-4.113 6.006-4 7 .08.703 1.725 1.722 3.656 2 1.261.19 2.148-.568 2.344-1"/>
-              <path d="M14.267 5.172c0-1.39 1.577-2.493 3.5-2.172 2.823.47 4.113 6.006 4 7-.08.703-1.725 1.722-3.656 2-1.261.19-2.148-.568-2.344-1"/>
-              <path d="M8 14v.5M16 14v.5"/>
-              <path d="M11.25 16.25h1.5L12 17l-.75-.75z"/>
-              <path d="M4.42 11.247A13.152 13.152 0 0 0 4 14.556C4 18.728 7.582 21 12 21s8-2.272 8-6.444c0-1.061-.162-2.2-.493-3.309m-9.243-6.082A8.801 8.801 0 0 1 12 5c.78 0 1.5.108 2.161.306"/>
-            </svg>
+          <div className={`w-full h-full flex items-center justify-center ${isMale ? 'bg-blue-900/40' : 'bg-pink-900/40'}`}>
+            <span className="text-5xl opacity-60">{isMale ? '♂' : '♀'}</span>
           </div>
         )}
+        {/* Sex badge — top left */}
+        <div className={`absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold ${isMale ? 'bg-blue-600 text-white' : 'bg-pink-500 text-white'}`}>
+          {isMale ? '♂ Macho' : '♀ Fêmea'}
+        </div>
+        {/* Status badge — top right */}
         <div className="absolute top-2 right-2">
           <StatusBadge status={dog.status} />
         </div>
       </div>
 
-      <div className="p-4 flex-1 flex flex-col gap-3">
+      <div className="p-3 flex-1 flex flex-col gap-2">
+        {/* Name + breed */}
         <div>
-          <h3 className="text-white font-bold text-base truncate">{dog.name}</h3>
-          <p className="text-slate-400 text-sm">{dog.breed} · {dog.sex_display}</p>
+          <h3 className="text-white font-bold text-sm truncate">{dog.name}</h3>
+          <p className="text-slate-400 text-xs truncate">{dog.breed}</p>
         </div>
 
-        {(dog.father_name || dog.mother_name) && (
-          <div className="text-xs text-slate-400 space-y-0.5">
-            {dog.father_name && <p><span className="text-slate-500">Pai:</span> {dog.father_name}</p>}
-            {dog.mother_name && <p><span className="text-slate-500">Mãe:</span> {dog.mother_name}</p>}
-          </div>
-        )}
-
-        {dog.birth_date && (
-          <p className="text-xs text-slate-400">
-            Nasc.: {new Date(dog.birth_date).toLocaleDateString('pt-BR')}
-          </p>
-        )}
+        {/* Info grid */}
+        <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs">
+          {dog.birth_date && (
+            <>
+              <span className="text-slate-500">Nascimento</span>
+              <span className="text-slate-300">{new Date(dog.birth_date).toLocaleDateString('pt-BR')}</span>
+            </>
+          )}
+          {dog.color && (
+            <>
+              <span className="text-slate-500">Pelagem</span>
+              <span className="text-slate-300 truncate">{dog.color}</span>
+            </>
+          )}
+          {dog.microchip && (
+            <>
+              <span className="text-slate-500">Microchip</span>
+              <span className="text-slate-300 truncate">{dog.microchip}</span>
+            </>
+          )}
+          {dog.father_name && (
+            <>
+              <span className="text-slate-500">Pai</span>
+              <span className="text-slate-300 truncate">{dog.father_name}</span>
+            </>
+          )}
+          {dog.mother_name && (
+            <>
+              <span className="text-slate-500">Mãe</span>
+              <span className="text-slate-300 truncate">{dog.mother_name}</span>
+            </>
+          )}
+          {dog.pedigree_number && (
+            <>
+              <span className="text-slate-500">Pedigree</span>
+              <span className="text-slate-300 truncate">{dog.pedigree_number}</span>
+            </>
+          )}
+        </div>
 
         {priceStr && (
           <p className="text-emerald-400 font-bold text-sm">{priceStr}</p>
         )}
 
-        <div className="mt-auto flex gap-2">
+        <div className="mt-auto flex gap-2 pt-1">
           <button
             onClick={onEdit}
             className="flex-1 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium transition-colors"
@@ -101,7 +132,7 @@ function DogCard({ dog, onEdit, onContract }: { dog: Dog; onEdit: () => void; on
               onClick={onContract}
               className="flex-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors"
             >
-              Gerar Contrato
+              Contrato
             </button>
           )}
         </div>
@@ -168,6 +199,7 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
   const [mediaFiles, setMediaFiles] = useState<{ file: File; preview: string }[]>([]);
   const [existingMedia, setExistingMedia] = useState(dog?.media ?? []);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   const set = (key: keyof DogPayload, value: unknown) =>
     setForm(f => ({ ...f, [key]: value }));
@@ -223,12 +255,6 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
     if (!dog) return;
     await dogsService.removeMedia(dog.id, mediaId);
     setExistingMedia(prev => prev.filter(m => m.id !== mediaId));
-  };
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    const previews = files.map(f => ({ file: f, preview: URL.createObjectURL(f) }));
-    setMediaFiles(prev => [...prev, ...previews]);
   };
 
   const tabs = [
@@ -306,10 +332,9 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
 
                 <div>
                   <label className="text-slate-400 text-xs font-medium block mb-1">Data de nascimento</label>
-                  <input
-                    type="date"
+                  <DateInput
                     value={form.birth_date ?? ''}
-                    onChange={e => set('birth_date', e.target.value || null)}
+                    onChange={v => set('birth_date', v || null)}
                     className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm border border-slate-600 focus:border-blue-500 outline-none"
                   />
                 </div>
@@ -459,10 +484,9 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
                       </div>
                       <div>
                         <label className="text-slate-400 text-xs mb-1 block">Data *</label>
-                        <input
-                          type="date"
+                        <DateInput
                           value={healthForm.date ?? ''}
-                          onChange={e => setHealthForm(f => ({ ...f, date: e.target.value }))}
+                          onChange={v => setHealthForm(f => ({ ...f, date: v }))}
                           className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm border border-slate-600 outline-none"
                         />
                       </div>
@@ -477,10 +501,9 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
                       </div>
                       <div>
                         <label className="text-slate-400 text-xs mb-1 block">Próxima data</label>
-                        <input
-                          type="date"
+                        <DateInput
                           value={healthForm.next_date ?? ''}
-                          onChange={e => setHealthForm(f => ({ ...f, next_date: e.target.value || null }))}
+                          onChange={v => setHealthForm(f => ({ ...f, next_date: v || null }))}
                           className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm border border-slate-600 outline-none"
                         />
                       </div>
@@ -517,42 +540,65 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
 
           {tab === 'photos' && (
             <>
-              <div className="grid grid-cols-3 gap-3">
-                {existingMedia.map(m => (
-                  <div key={m.id} className="relative aspect-square rounded-lg overflow-hidden bg-slate-700 group">
-                    <img src={m.file_url ?? m.file} alt="" className="w-full h-full object-cover" />
-                    <button
-                      onClick={() => removeExistingMedia(m.id)}
-                      className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
-                    >
-                      <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>
-                      </svg>
-                    </button>
-                  </div>
-                ))}
-                {mediaFiles.map((m, i) => (
-                  <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-slate-700 group">
-                    <img src={m.preview} alt="" className="w-full h-full object-cover" />
-                    <button
-                      onClick={() => setMediaFiles(prev => prev.filter((_, j) => j !== i))}
-                      className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
-                    >
-                      <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>
-                      </svg>
-                    </button>
-                  </div>
-                ))}
-                <label className="aspect-square rounded-lg border-2 border-dashed border-slate-600 hover:border-blue-500 flex items-center justify-center cursor-pointer transition-colors">
-                  <input type="file" multiple accept="image/*" className="hidden" onChange={handleFileSelect} />
-                  <svg className="w-8 h-8 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                  </svg>
-                </label>
-              </div>
+              {(existingMedia.length > 0 || mediaFiles.length > 0) && (
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  {existingMedia.map(m => (
+                    <div key={m.id} className="relative aspect-square rounded-lg overflow-hidden bg-slate-700 group">
+                      <img src={m.file_url ?? m.file} alt="" className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-3 transition-opacity">
+                        <button
+                          onClick={() => setLightboxUrl(m.file_url ?? m.file)}
+                          className="p-2.5 rounded-full bg-white/20 hover:bg-white/40 transition-colors"
+                          title="Visualizar"
+                        >
+                          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => removeExistingMedia(m.id)}
+                          className="p-2.5 rounded-full bg-white/20 hover:bg-red-500/80 transition-colors"
+                          title="Excluir"
+                        >
+                          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {mediaFiles.map((m, i) => (
+                    <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-slate-700 group">
+                      <img src={m.preview} alt="" className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-3 transition-opacity">
+                        <button
+                          onClick={() => setLightboxUrl(m.preview)}
+                          className="p-2.5 rounded-full bg-white/20 hover:bg-white/40 transition-colors"
+                          title="Visualizar"
+                        >
+                          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => setMediaFiles(prev => prev.filter((_, j) => j !== i))}
+                          className="p-2.5 rounded-full bg-white/20 hover:bg-red-500/80 transition-colors"
+                          title="Excluir"
+                        >
+                          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <UploadZone
+                onFiles={files => setMediaFiles(prev => [...prev, ...files.map(f => ({ file: f, preview: URL.createObjectURL(f) }))])}
+              />
               {uploadingMedia && (
-                <p className="text-blue-400 text-xs text-center">Enviando fotos…</p>
+                <p className="text-blue-400 text-xs text-center mt-2">Enviando fotos…</p>
               )}
             </>
           )}
@@ -571,6 +617,29 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
           </button>
         </div>
       </div>
+
+      {/* Lightbox */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/90"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <button
+            className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors"
+            onClick={() => setLightboxUrl(null)}
+          >
+            <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          <img
+            src={lightboxUrl}
+            alt=""
+            className="max-w-[90vw] max-h-[90vh] rounded-xl object-contain shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

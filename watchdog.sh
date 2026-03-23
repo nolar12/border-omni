@@ -16,6 +16,10 @@ LOG_DIR="$PROJECT_DIR/logs"
 LOG_FILE="/tmp/border_omni_watchdog.log"
 CHECK_INTERVAL=20   # segundos entre cada verificação
 
+# Caminhos absolutos — necessário quando rodando via systemd (PATH mínimo)
+NPM_BIN="/home/marcellosouza/.nvm/versions/node/v24.14.0/bin/npm"
+NGROK_BIN="/home/marcellosouza/.local/bin/ngrok"
+
 mkdir -p "$LOG_DIR"
 
 # Carrega variáveis de ambiente do .env se existir
@@ -57,13 +61,22 @@ start_frontend() {
   pkill -f "vite.*$FRONTEND_PORT" 2>/dev/null || true
   sleep 1
   cd "$FRONTEND_DIR" && \
-    nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" \
+    nohup "$NPM_BIN" run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" \
       >> "$LOG_DIR/frontend.log" 2>&1 &
   FRONTEND_PID=$!
   disown "$FRONTEND_PID"
   echo "$FRONTEND_PID" > "$LOG_DIR/frontend.pid"
-  sleep 4
-  log "✅ Frontend iniciado (PID: $FRONTEND_PID)"
+  # Aguarda até 30s pelo frontend ficar pronto (npm/vite leva tempo no cold boot)
+  local attempts=0
+  while [ $attempts -lt 15 ]; do
+    sleep 2
+    attempts=$((attempts + 1))
+    if is_frontend_alive; then
+      log "✅ Frontend pronto em $((attempts * 2))s (PID: $FRONTEND_PID)"
+      return 0
+    fi
+  done
+  log "⚠️  Frontend não respondeu em 30s — pode ainda estar carregando."
 }
 
 is_frontend_alive() {
@@ -82,16 +95,10 @@ start_ngrok() {
   pkill -f "ngrok http" 2>/dev/null || true
   sleep 1
 
-  if systemd-run --user --unit=ngrok-borderomni \
-      ngrok http "$NGROK_PORT" --url="$NGROK_DOMAIN" --log=stdout \
-      >> /tmp/ngrok.log 2>&1; then
-    log "   Ngrok lançado via systemd-run"
-  else
-    log "⚠️  systemd-run falhou, tentando nohup..."
-    nohup ngrok http "$NGROK_PORT" --url="$NGROK_DOMAIN" --log=stdout \
-      >> /tmp/ngrok.log 2>&1 &
-    disown $!
-  fi
+  nohup "$NGROK_BIN" http "$NGROK_PORT" --url="$NGROK_DOMAIN" --log=stdout \
+    >> /tmp/ngrok.log 2>&1 &
+  NGROK_PID=$!
+  disown "$NGROK_PID"
 
   sleep 6
 

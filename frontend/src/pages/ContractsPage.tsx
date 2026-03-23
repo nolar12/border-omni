@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import DateInput from '../components/DateInput';
 import { useLocation } from 'react-router-dom';
 import { contractsService, type ContractCreatePayload } from '../services/contracts';
 import { dogsService } from '../services/dogs';
@@ -308,10 +309,9 @@ function ContractDrawer({ initial, prefilledLead, prefilledDog, onClose, onSaved
           {/* Data de nascimento */}
           <div>
             <label className="text-slate-300 text-sm font-medium block mb-1">Data de nascimento</label>
-            <input
-              type="date"
+            <DateInput
               value={form.puppy_birth_date ?? ''}
-              onChange={e => setForm(f => ({ ...f, puppy_birth_date: e.target.value || null }))}
+              onChange={v => setForm(f => ({ ...f, puppy_birth_date: v || null }))}
               className="w-full bg-slate-700 text-white rounded-lg px-3 py-2 text-sm border border-slate-600 focus:border-blue-500 focus:outline-none"
             />
           </div>

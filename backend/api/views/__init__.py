@@ -1085,7 +1085,9 @@ class WhatsAppWebhookView(APIView):
             lead=lead, channel='whatsapp',
             defaults={'organization': org, 'state': 'active'},
         )
-        Conversation.objects.filter(pk=conv.pk).update(last_message_at=timezone.now())
+        now = timezone.now()
+        Conversation.objects.filter(pk=conv.pk).update(last_message_at=now)
+        Lead.objects.filter(pk=lead.pk).update(updated_at=now)
 
         Message.objects.create(
             conversation=conv,
@@ -1175,7 +1177,9 @@ class WhatsAppWebhookView(APIView):
             lead=lead, channel=channel,
             defaults={'organization': org, 'state': 'active', 'last_message_at': timezone.now()},
         )
-        Conversation.objects.filter(pk=conv.pk).update(last_message_at=timezone.now())
+        now = timezone.now()
+        Conversation.objects.filter(pk=conv.pk).update(last_message_at=now)
+        Lead.objects.filter(pk=lead.pk).update(updated_at=now)
 
         Message.objects.create(
             conversation=conv, organization=org, direction='IN', text=text,
@@ -1412,7 +1416,9 @@ class MetaWebhookView(APIView):
             lead=lead, channel='instagram',
             defaults={'organization': org, 'state': 'active', 'last_message_at': timezone.now()},
         )
-        Conversation.objects.filter(pk=conv.pk).update(last_message_at=timezone.now())
+        now = timezone.now()
+        Conversation.objects.filter(pk=conv.pk).update(last_message_at=now)
+        Lead.objects.filter(pk=lead.pk).update(updated_at=now)
 
         # Salva o comentário como mensagem IN com prefixo para diferenciar no painel
         msg_text = f'[Comentário] {text}'
@@ -2945,6 +2951,7 @@ class GenericNoteViewSet(viewsets.ModelViewSet):
 
 class DogViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
         from apps.kennel.models import Dog
@@ -2977,9 +2984,8 @@ class DogViewSet(viewsets.ModelViewSet):
         org = _get_org(self.request.user)
         serializer.save(organization=org)
 
-    @action(detail=True, methods=['post'], parser_classes=[])
+    @action(detail=True, methods=['post'])
     def add_media(self, request, pk=None):
-        from rest_framework.parsers import MultiPartParser
         from apps.kennel.models import DogMedia
         dog = self.get_object()
         file = request.FILES.get('file')
@@ -3007,6 +3013,7 @@ class DogViewSet(viewsets.ModelViewSet):
 
 class LitterViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
         from apps.kennel.models import Litter
@@ -3056,6 +3063,7 @@ class LitterViewSet(viewsets.ModelViewSet):
 class DogHealthRecordViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = DogHealthRecordSerializer
+    pagination_class = None
 
     def get_queryset(self):
         from apps.kennel.models import DogHealthRecord
@@ -3072,6 +3080,7 @@ class DogHealthRecordViewSet(viewsets.ModelViewSet):
 class LitterHealthRecordViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = LitterHealthRecordSerializer
+    pagination_class = None
 
     def get_queryset(self):
         from apps.kennel.models import LitterHealthRecord
@@ -3083,3 +3092,48 @@ class LitterHealthRecordViewSet(viewsets.ModelViewSet):
         if litter_id:
             qs = qs.filter(litter_id=litter_id)
         return qs
+
+
+# ─── Public kennel endpoints (no authentication required) ────────────────────
+
+class PublicLitterListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from apps.kennel.models import Litter
+        from api.serializers import PublicLitterSerializer
+
+        org_id = request.query_params.get('org_id')
+        if not org_id:
+            return Response({'detail': 'org_id is required.'}, status=400)
+
+        qs = (
+            Litter.objects
+            .filter(organization_id=org_id)
+            .select_related('father', 'mother')
+            .prefetch_related('media', 'puppies', 'puppies__media')
+            .order_by('-birth_date', '-created_at')
+        )
+        serializer = PublicLitterSerializer(qs, many=True, context={'request': request})
+        return Response(serializer.data)
+
+
+class PublicLitterDetailView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        from apps.kennel.models import Litter
+        from api.serializers import PublicLitterSerializer
+
+        try:
+            litter = (
+                Litter.objects
+                .select_related('father', 'mother')
+                .prefetch_related('media', 'puppies', 'puppies__media')
+                .get(pk=pk)
+            )
+        except Litter.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=404)
+
+        serializer = PublicLitterSerializer(litter, context={'request': request})
+        return Response(serializer.data)
