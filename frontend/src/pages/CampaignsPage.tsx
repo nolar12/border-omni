@@ -25,11 +25,6 @@ const STATUS_LABELS: Record<string, string> = {
   CLOSED: 'Fechado',
 };
 
-const TIER_COLORS: Record<string, string> = {
-  A: 'bg-green-100 text-green-700',
-  B: 'bg-blue-100 text-blue-700',
-  C: 'bg-gray-100 text-gray-600',
-};
 
 const CATEGORY_LABELS: Record<string, string> = {
   MARKETING: 'Marketing',
@@ -252,7 +247,8 @@ export default function CampaignsPage() {
 
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
-  const [filterTier, setFilterTier] = useState('');
+  const [filterClassification, setFilterClassification] = useState('');
+  const [filterWindow, setFilterWindow] = useState('');
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
@@ -315,7 +311,15 @@ export default function CampaignsPage() {
     )
       return false;
     if (filterStatus && l.status !== filterStatus) return false;
-    if (filterTier && l.tier !== filterTier) return false;
+    if (filterClassification && l.lead_classification !== filterClassification) return false;
+    if (filterWindow) {
+      const windowMs = 24 * 60 * 60 * 1000;
+      const isOpen = l.whatsapp_last_message_at
+        ? Date.now() - new Date(l.whatsapp_last_message_at).getTime() < windowMs
+        : false;
+      if (filterWindow === 'open' && !isOpen) return false;
+      if (filterWindow === 'closed' && isOpen) return false;
+    }
     return true;
   });
 
@@ -701,15 +705,25 @@ export default function CampaignsPage() {
                 ))}
               </select>
               <select
-                value={filterTier}
-                onChange={e => setFilterTier(e.target.value)}
+                value={filterClassification}
+                onChange={e => setFilterClassification(e.target.value)}
                 disabled={phase !== 'setup'}
                 className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 disabled:opacity-50"
               >
-                <option value="">Todos os tiers</option>
-                <option value="A">Tier A</option>
-                <option value="B">Tier B</option>
-                <option value="C">Tier C</option>
+                <option value="">Todas classificações</option>
+                <option value="HOT_LEAD">🔥 Hot</option>
+                <option value="WARM_LEAD">🟡 Warm</option>
+                <option value="COLD_LEAD">❄️ Cold</option>
+              </select>
+              <select
+                value={filterWindow}
+                onChange={e => setFilterWindow(e.target.value)}
+                disabled={phase !== 'setup'}
+                className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 disabled:opacity-50"
+              >
+                <option value="">Janela 24h — todos</option>
+                <option value="open">⏱ Janela aberta</option>
+                <option value="closed">⌛ Janela expirada</option>
               </select>
             </div>
 
@@ -793,7 +807,8 @@ export default function CampaignsPage() {
                     <th className="text-left px-3 py-2.5 text-gray-500 font-medium">Lead</th>
                     <th className="text-left px-3 py-2.5 text-gray-500 font-medium">Telefone</th>
                     <th className="text-left px-3 py-2.5 text-gray-500 font-medium">Status</th>
-                    <th className="text-left px-3 py-2.5 text-gray-500 font-medium">Tier</th>
+                    <th className="text-left px-3 py-2.5 text-gray-500 font-medium">Classificação</th>
+                    <th className="text-left px-3 py-2.5 text-gray-500 font-medium">Janela 24h</th>
                     <th className="text-left px-3 py-2.5 text-gray-500 font-medium">Canal</th>
                     {phase !== 'setup' && (
                       <th className="text-left px-3 py-2.5 text-gray-500 font-medium">Resultado</th>
@@ -848,10 +863,25 @@ export default function CampaignsPage() {
                               </div>
                             )}
                           </td>
-                          <td className="px-3 py-2.5">
+                          <td className="px-3 py-2.5 relative group/name">
                             <span className="font-medium text-gray-800">
                               {lead.full_name || '—'}
                             </span>
+                            {lead.last_message_text && (
+                              <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 z-50 w-72 hidden group-hover/name:block pointer-events-none">
+                                <div className="bg-gray-900 text-white text-xs rounded-lg px-3 py-2.5 shadow-xl leading-relaxed">
+                                  <p className="font-medium text-gray-400 mb-1 flex items-center gap-1.5">
+                                    {lead.last_message_direction === 'IN' ? (
+                                      <><span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block flex-shrink-0" /> Última mensagem do lead</>
+                                    ) : (
+                                      <><span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block flex-shrink-0" /> Última mensagem enviada</>
+                                    )}
+                                  </p>
+                                  <p className="text-gray-100 line-clamp-4 whitespace-pre-wrap break-words">{lead.last_message_text}</p>
+                                </div>
+                                <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-gray-900" />
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2.5 text-gray-500 font-mono">{lead.phone}</td>
                           <td className="px-3 py-2.5">
@@ -860,15 +890,38 @@ export default function CampaignsPage() {
                             </span>
                           </td>
                           <td className="px-3 py-2.5">
-                            {lead.tier ? (
-                              <span
-                                className={`px-1.5 py-0.5 rounded-full font-semibold ${TIER_COLORS[lead.tier] ?? 'bg-gray-100 text-gray-600'}`}
-                              >
-                                {lead.tier}
-                              </span>
-                            ) : (
+                            {lead.lead_classification === 'HOT_LEAD' && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-red-100 text-red-700">🔥 Hot</span>
+                            )}
+                            {lead.lead_classification === 'WARM_LEAD' && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-amber-100 text-amber-700">🟡 Warm</span>
+                            )}
+                            {lead.lead_classification === 'COLD_LEAD' && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-blue-100 text-blue-600">❄️ Cold</span>
+                            )}
+                            {!lead.lead_classification && (
                               <span className="text-gray-300">—</span>
                             )}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {(() => {
+                              if (!lead.whatsapp_last_message_at) return <span className="text-gray-300">—</span>;
+                              const delta = Date.now() - new Date(lead.whatsapp_last_message_at).getTime();
+                              const windowMs = 24 * 60 * 60 * 1000;
+                              const remaining = windowMs - delta;
+                              if (remaining <= 0) return (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-gray-100 text-gray-500">⌛ Expirada</span>
+                              );
+                              const hours = remaining / (60 * 60 * 1000);
+                              const label = hours < 1
+                                ? `${Math.ceil(remaining / (60 * 1000))}min`
+                                : `${Math.floor(hours)}h`;
+                              return (
+                                <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-xs font-semibold ${hours < 4 ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
+                                  ⏱ {label}
+                                </span>
+                              );
+                            })()}
                           </td>
                           <td className="px-3 py-2.5">
                             <ChannelBadge channels_used={lead.channels_used} />

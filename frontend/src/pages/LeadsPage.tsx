@@ -15,6 +15,37 @@ import VideoThumbnail from '../components/VideoThumbnail';
 
 // ─── Lead List Item (middle column) ──────────────────────────────────────────
 
+function WhatsApp24hBadge({ lastMessageAt }: { lastMessageAt: string | null }) {
+  if (!lastMessageAt) return null;
+  const delta = Date.now() - new Date(lastMessageAt).getTime();
+  const windowMs = 24 * 60 * 60 * 1000;
+  if (delta >= windowMs) return null;
+
+  const remainingMs = windowMs - delta;
+  const remainingHours = remainingMs / (60 * 60 * 1000);
+  const isExpiringSoon = remainingHours < 4;
+
+  const hoursLabel = remainingHours < 1
+    ? `${Math.ceil(remainingMs / (60 * 1000))}min`
+    : `${Math.floor(remainingHours)}h`;
+
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 text-xs font-semibold rounded-md px-1.5 py-0.5 ${
+        isExpiringSoon
+          ? 'bg-orange-100 text-orange-700'
+          : 'bg-green-100 text-green-700'
+      }`}
+      title={`Janela WhatsApp expira em ${hoursLabel}`}
+    >
+      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+        <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+      </svg>
+      {hoursLabel}
+    </span>
+  );
+}
+
 function LeadRow({ lead, isActive, onClick }: { lead: LeadListItem; isActive: boolean; onClick: () => void }) {
   const name = lead.full_name || lead.phone;
   const timeAgo = new Date(lead.updated_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
@@ -74,16 +105,24 @@ function LeadRow({ lead, isActive, onClick }: { lead: LeadListItem; isActive: bo
             : lead.lead_classification
               ? (
                 <span className={`inline-flex items-center gap-0.5 text-xs font-semibold rounded-md px-1.5 py-0.5 ${
-                  lead.lead_classification === 'HOT_LEAD'  ? 'bg-red-100 text-red-700'    :
-                  lead.lead_classification === 'WARM_LEAD' ? 'bg-amber-100 text-amber-700' :
-                                                             'bg-blue-100 text-blue-600'
+                  lead.lead_classification === 'DANGER_LEAD' ? 'bg-red-900 text-white'        :
+                  lead.lead_classification === 'HOT_LEAD'    ? 'bg-red-100 text-red-700'      :
+                  lead.lead_classification === 'WARM_LEAD'   ? 'bg-amber-100 text-amber-700'  :
+                                                               'bg-blue-100 text-blue-600'
                 }`}>
-                  {lead.lead_classification === 'HOT_LEAD' ? '🔥' : lead.lead_classification === 'WARM_LEAD' ? '🟡' : '❄️'}
-                  {lead.lead_classification === 'HOT_LEAD' ? 'Hot' : lead.lead_classification === 'WARM_LEAD' ? 'Warm' : 'Cold'}
+                  {lead.lead_classification === 'DANGER_LEAD' ? '⚠️' :
+                   lead.lead_classification === 'HOT_LEAD'    ? '🔥' :
+                   lead.lead_classification === 'WARM_LEAD'   ? '🟡' : '❄️'}
+                  {lead.lead_classification === 'DANGER_LEAD' ? 'Danger' :
+                   lead.lead_classification === 'HOT_LEAD'    ? 'Hot'    :
+                   lead.lead_classification === 'WARM_LEAD'   ? 'Warm'   : 'Cold'}
                 </span>
               )
               : <StatusBadge status={lead.status} />
           }
+          {!isClosed && (
+            <WhatsApp24hBadge lastMessageAt={lead.whatsapp_last_message_at} />
+          )}
           {!lead.is_ai_active && lead.assigned_to && !isClosed && (
             <span className="text-xs text-gray-400 truncate">
               → {lead.assigned_to.first_name}
@@ -265,10 +304,16 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [reclassifying, setReclassifying] = useState(false);
+  const [showBriefPanel, setShowBriefPanel] = useState(false);
+  const [briefText, setBriefText] = useState('');
+  const [loadingBrief, setLoadingBrief] = useState(false);
   const [showClassMenu, setShowClassMenu] = useState(false);
-  const [ragSuggestion, setRagSuggestion] = useState<string | null>(null);
+  const [ragSuggestions, setRagSuggestions] = useState<string[]>([]);
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
   const lastSuggestedMsgId = useRef<number | null>(null);
+  const isSendingRef = useRef(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [cordialityPreview, setCordialityPreview] = useState<{ original: string; enhanced: string } | null>(null);
   const [enhancing, setEnhancing] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState<ChannelType | null>(null);
@@ -288,7 +333,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [templateVideoPreview, setTemplateVideoPreview] = useState<GalleryMedia | null>(null);
   const [showGalleryModal, setShowGalleryModal] = useState(false);
   const [galleryItems, setGalleryItems] = useState<GalleryMedia[]>([]);
-  const [galleryFilter, setGalleryFilter] = useState<'ALL' | 'IMAGE' | 'VIDEO'>('ALL');
+  const [galleryFilter, setGalleryFilter] = useState<'ALL' | 'IMAGE' | 'VIDEO' | 'DOCUMENT'>('ALL');
   const [gallerySelections, setGallerySelections] = useState<Map<number, { item: GalleryMedia; sendDesc: boolean }>>(new Map());
   const [galleryVideoPreview, setGalleryVideoPreview] = useState<GalleryMedia | null>(null);
   const [sendingGallery, setSendingGallery] = useState(false);
@@ -355,19 +400,41 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     return () => clearInterval(timer);
   }, [leadId, selectedChannel]);
 
-  // Sugere resposta RAG quando nova mensagem IN chega e atendente está no controle
+  // Recalcula altura do textarea quando msgText muda programaticamente (ex: ao clicar "Usar")
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [msgText]);
+
+  // Sugere 3 respostas quando o lead tem mensagem sem resposta humana ainda.
+  // Mensagens automáticas/bot (sem provider_message_id) não contam como resposta humana.
   useEffect(() => {
     if (!lead || lead.is_ai_active || messages.length === 0) return;
-    const lastMsg = messages[messages.length - 1];
-    if (lastMsg.direction !== 'IN') return;
-    if (lastSuggestedMsgId.current === lastMsg.id) return;
-    lastSuggestedMsgId.current = lastMsg.id;
-    setRagSuggestion(null);
+
+    // Último IN do lead
+    const lastIn = [...messages].reverse().find(m => m.direction === 'IN');
+    if (!lastIn) return;
+
+    // Último OUT humano (com provider_message_id preenchido)
+    const lastHumanOut = [...messages].reverse().find(
+      m => m.direction === 'OUT' && m.provider_message_id,
+    );
+
+    // Se já há resposta humana mais recente que o último IN, não sugere
+    if (lastHumanOut && new Date(lastHumanOut.created_at) > new Date(lastIn.created_at)) return;
+
+    if (lastSuggestedMsgId.current === lastIn.id) return;
+    lastSuggestedMsgId.current = lastIn.id;
+    setRagSuggestions([]);
     setLoadingSuggestion(true);
-    leadsService.suggestResponse(lead.id, lastMsg.text).then(suggestion => {
-      if (suggestion) setRagSuggestion(suggestion);
-    }).finally(() => setLoadingSuggestion(false));
-  }, [messages, lead]);
+    leadsService.suggestResponse(lead.id, lastIn.text, selectedChannel ?? 'whatsapp').then(suggestions => {
+      if (suggestions.length > 0) setRagSuggestions(suggestions);
+      else console.warn('[IA] suggestResponse retornou vazio para msg id:', lastIn.id);
+    }).catch(e => console.error('[IA] suggestResponse erro:', e))
+      .finally(() => setLoadingSuggestion(false));
+  }, [messages, lead, selectedChannel]);
 
   async function handleAssume() {
     if (!lead) return;
@@ -525,7 +592,8 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   }
 
   async function handleSend() {
-    if (!lead || !msgText.trim()) return;
+    if (!lead || !msgText.trim() || isSendingRef.current) return;
+    isSendingRef.current = true;
     const rawText = msgText.trim();
     setEnhancing(true);
     try {
@@ -543,6 +611,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     } finally {
       setEnhancing(false);
       setSending(false);
+      isSendingRef.current = false;
     }
   }
 
@@ -746,9 +815,10 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                 style={{ minWidth: 52 }}
                 title="Alterar classificação"
               >
-                {lead.lead_classification === 'HOT_LEAD'  && <><span>🔥</span><span className="text-red-700">Hot</span></>}
-                {lead.lead_classification === 'WARM_LEAD' && <><span>🟡</span><span className="text-amber-700">Warm</span></>}
-                {lead.lead_classification === 'COLD_LEAD' && <><span>❄️</span><span className="text-blue-600">Cold</span></>}
+                {lead.lead_classification === 'DANGER_LEAD' && <><span>⚠️</span><span className="text-red-900 font-bold">Danger</span></>}
+                {lead.lead_classification === 'HOT_LEAD'    && <><span>🔥</span><span className="text-red-700">Hot</span></>}
+                {lead.lead_classification === 'WARM_LEAD'   && <><span>🟡</span><span className="text-amber-700">Warm</span></>}
+                {lead.lead_classification === 'COLD_LEAD'   && <><span>❄️</span><span className="text-blue-600">Cold</span></>}
                 {!lead.lead_classification && <span className="text-gray-400 italic">+ classificar</span>}
                 <svg className="w-3 h-3 text-gray-400 ml-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><polyline points="6 9 12 15 18 9"/></svg>
               </button>
@@ -759,9 +829,10 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                   <div className="fixed inset-0 z-10" onClick={() => setShowClassMenu(false)} />
                   <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-[130px]">
                     {([
-                      { value: 'HOT_LEAD',  label: 'Hot',  icon: '🔥', cls: 'hover:bg-red-50 text-gray-700 hover:text-red-700' },
-                      { value: 'WARM_LEAD', label: 'Warm', icon: '🟡', cls: 'hover:bg-amber-50 text-gray-700 hover:text-amber-700' },
-                      { value: 'COLD_LEAD', label: 'Cold', icon: '❄️', cls: 'hover:bg-blue-50 text-gray-700 hover:text-blue-600' },
+                      { value: 'DANGER_LEAD', label: 'Danger', icon: '⚠️', cls: 'hover:bg-red-100 text-gray-700 hover:text-red-900 font-semibold' },
+                      { value: 'HOT_LEAD',    label: 'Hot',    icon: '🔥', cls: 'hover:bg-red-50 text-gray-700 hover:text-red-700' },
+                      { value: 'WARM_LEAD',   label: 'Warm',   icon: '🟡', cls: 'hover:bg-amber-50 text-gray-700 hover:text-amber-700' },
+                      { value: 'COLD_LEAD',   label: 'Cold',   icon: '❄️', cls: 'hover:bg-blue-50 text-gray-700 hover:text-blue-600' },
                     ] as const).map(({ value, label, icon, cls }) => (
                       <button
                         key={value}
@@ -796,6 +867,27 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                 </>
               )}
             </div>
+
+            {/* Reclassificar IA */}
+            <button
+              onClick={async () => {
+                setReclassifying(true);
+                try {
+                  const result = await leadsService.reclassifyLead(lead.id);
+                  setLead(prev => prev ? { ...prev, lead_classification: result.lead_classification as never, score: result.score } : prev);
+                } catch { /* silencia */ } finally {
+                  setReclassifying(false);
+                }
+              }}
+              disabled={reclassifying}
+              title="Reclassificar com IA"
+              className="flex items-center justify-center w-7 h-7 rounded-lg text-gray-300 hover:bg-violet-50 hover:text-violet-500 transition-colors disabled:opacity-40"
+            >
+              {reclassifying
+                ? <span className="loading loading-spinner loading-xs" />
+                : <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path d="M12 2a10 10 0 0 1 10 10"/><path d="M12 22a10 10 0 0 1-10-10"/><polyline points="22 12 18 16 14 12"/><polyline points="2 12 6 8 10 12"/></svg>
+              }
+            </button>
 
             <AIStatusBadge isAiActive={lead.is_ai_active} assignedTo={lead.assigned_to} />
           </div>
@@ -1001,33 +1093,55 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                 </div>
               )}
 
-              {/* Banner de sugestão RAG */}
-              {(loadingSuggestion || ragSuggestion) && (
-                <div className="flex items-start gap-2 px-3 pt-2 pb-1">
-                  <div className="flex-1 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                    <span className="text-amber-500 text-sm flex-shrink-0 mt-0.5">💡</span>
-                    {loadingSuggestion && !ragSuggestion ? (
-                      <span className="text-xs text-amber-600 italic">Gerando sugestão...</span>
-                    ) : (
-                      <p className="text-xs text-gray-700 flex-1 leading-relaxed">{ragSuggestion}</p>
-                    )}
-                  </div>
-                  {ragSuggestion && (
-                    <div className="flex flex-col gap-1 flex-shrink-0">
-                      <button
-                        onClick={() => { setMsgText(ragSuggestion); setRagSuggestion(null); }}
-                        className="text-xs px-2 py-1 rounded-lg bg-amber-500 text-white hover:bg-amber-600 transition-colors font-medium"
-                      >
-                        Usar
-                      </button>
-                      <button
-                        onClick={() => setRagSuggestion(null)}
-                        className="text-xs px-2 py-1 rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 transition-colors"
-                      >
-                        Ignorar
-                      </button>
+              {/* Banner de sugestões IA — 3 opções clicáveis */}
+              {(loadingSuggestion || ragSuggestions.length > 0) && (
+                <div className="px-3 pt-2 pb-1">
+                  <div className="bg-violet-50 border border-violet-200 rounded-xl overflow-hidden">
+                    {/* Cabeçalho */}
+                    <div className="flex items-center justify-between px-3 py-1.5 border-b border-violet-100">
+                      <span className="text-xs font-semibold text-violet-700 flex items-center gap-1">
+                        ✨ Sugestões IA
+                      </span>
+                      {ragSuggestions.length > 0 && (
+                        <button
+                          onClick={() => setRagSuggestions([])}
+                          className="text-violet-400 hover:text-violet-600 transition-colors p-0.5"
+                          title="Ignorar sugestões"
+                        >
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                          </svg>
+                        </button>
+                      )}
                     </div>
-                  )}
+                    {/* Loading */}
+                    {loadingSuggestion && ragSuggestions.length === 0 && (
+                      <div className="px-3 py-2.5 flex items-center gap-2">
+                        <svg className="w-3.5 h-3.5 text-violet-500 animate-spin" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                        </svg>
+                        <span className="text-xs text-violet-600 italic">Gerando sugestões...</span>
+                      </div>
+                    )}
+                    {/* Opções */}
+                    {ragSuggestions.map((option, idx) => (
+                      <div
+                        key={idx}
+                        className={`flex items-start gap-2 px-3 py-2${idx < ragSuggestions.length - 1 ? ' border-b border-violet-100' : ''}`}
+                      >
+                        <span className="text-[10px] font-bold text-violet-400 mt-0.5 flex-shrink-0 w-4">{idx + 1}</span>
+                        <p className="text-xs text-gray-700 flex-1 leading-relaxed whitespace-pre-wrap">{option}</p>
+                        <button
+                          onClick={() => { setMsgText(option); setRagSuggestions([]); }}
+                          className="flex-shrink-0 text-xs px-2 py-1 rounded-lg bg-violet-500 text-white hover:bg-violet-600 transition-colors font-medium"
+                          title="Usar esta resposta"
+                        >
+                          Usar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -1126,6 +1240,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
               <div className="px-3 pt-2 pb-2.5 flex flex-col gap-1.5">
                 {/* Textarea — largura total */}
                 <textarea
+                  ref={textareaRef}
                   rows={3}
                   placeholder={!isWhatsappWindowOpen && selectedChannel === 'whatsapp'
                     ? 'Janela de 24h expirada — use um template'
@@ -1136,17 +1251,65 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                   value={msgText}
                   onChange={e => {
                     setMsgText(e.target.value);
-                    if (ragSuggestion) setRagSuggestion(null);
+                    if (ragSuggestions.length > 0) setRagSuggestions([]);
                     e.target.style.height = 'auto';
                     e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
                   }}
                   onKeyDown={e => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
+                    if (e.key === 'Enter' && !e.shiftKey && !isSendingRef.current) {
                       e.preventDefault();
                       handleSend();
                     }
                   }}
                 />
+
+                {/* Painel de briefing manual IA */}
+                {showBriefPanel && (
+                  <div className="flex items-center gap-2 py-1.5 border-t border-violet-100">
+                    <input
+                      type="text"
+                      value={briefText}
+                      onChange={e => setBriefText(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          const lastIn = [...messages].reverse().find(m => m.direction === 'IN');
+                          if (!lastIn || !lead) return;
+                          setLoadingBrief(true);
+                          leadsService.suggestResponse(lead.id, lastIn.text, selectedChannel ?? 'whatsapp', briefText)
+                            .then(s => { if (s.length > 0) setRagSuggestions(s); })
+                            .finally(() => setLoadingBrief(false));
+                        }
+                        if (e.key === 'Escape') { setShowBriefPanel(false); setBriefText(''); }
+                      }}
+                      placeholder="Diga o que quer responder… (opcional)"
+                      className="flex-1 text-sm border border-violet-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-violet-400 bg-violet-50 placeholder:text-violet-300"
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => {
+                        const lastIn = [...messages].reverse().find(m => m.direction === 'IN');
+                        if (!lastIn || !lead) return;
+                        setLoadingBrief(true);
+                        leadsService.suggestResponse(lead.id, lastIn.text, selectedChannel ?? 'whatsapp', briefText)
+                          .then(s => { if (s.length > 0) setRagSuggestions(s); })
+                          .finally(() => setLoadingBrief(false));
+                      }}
+                      disabled={loadingBrief}
+                      className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-violet-500 text-white text-xs font-medium hover:bg-violet-600 disabled:opacity-40 transition-colors flex-shrink-0"
+                    >
+                      {loadingBrief ? <span className="loading loading-spinner loading-xs" /> : '✨ Sugerir'}
+                    </button>
+                    <button
+                      onClick={() => { setShowBriefPanel(false); setBriefText(''); }}
+                      className="text-gray-300 hover:text-gray-500 transition-colors flex-shrink-0"
+                    >
+                      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+                  </div>
+                )}
 
                 {/* Linha de ações abaixo do textarea */}
                 <div className="flex items-center gap-1">
@@ -1204,6 +1367,22 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                       <line x1="9" y1="10" x2="15" y2="10"/>
                       <line x1="9" y1="14" x2="13" y2="14"/>
                     </svg>
+                  </button>
+
+                  {/* Sugerir com IA (briefing manual) */}
+                  <button
+                    onClick={() => { setShowBriefPanel(v => !v); if (showBriefPanel) setBriefText(''); }}
+                    title="Sugerir resposta com IA"
+                    className={`flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0 ${
+                      showBriefPanel ? 'bg-violet-100 text-violet-600' : 'text-gray-400 hover:bg-violet-50 hover:text-violet-500'
+                    }`}
+                  >
+                    {loadingBrief
+                      ? <span className="loading loading-spinner loading-xs" />
+                      : <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                          <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
+                        </svg>
+                    }
                   </button>
 
                   {/* Spacer */}
@@ -1370,6 +1549,17 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
         onSelect={text => setMsgText(text)}
         userName={agentName}
         leadName={lead.full_name ?? ''}
+        suggestions={ragSuggestions}
+        loadingSuggestion={loadingSuggestion}
+        onRequestSuggest={brief => {
+          const lastIn = [...messages].reverse().find(m => m.direction === 'IN');
+          if (!lastIn || !lead) return;
+          setLoadingSuggestion(true);
+          leadsService
+            .suggestResponse(lead.id, lastIn.text, selectedChannel ?? 'whatsapp', brief)
+            .then(s => { if (s.length > 0) setRagSuggestions(s); })
+            .finally(() => setLoadingSuggestion(false));
+        }}
       />
 
       {/* ── Modal: salvar mensagem como resposta rápida ── */}
@@ -1927,7 +2117,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                 type="file"
                 multiple
                 className="hidden"
-                accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm"
+                accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm,application/pdf"
                 onChange={handleGalleryModalUpload}
               />
               <button
@@ -1951,7 +2141,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
 
             {/* Filter tabs */}
             <div className="flex items-center gap-1 px-5 pt-3 pb-1 flex-shrink-0">
-              {(['ALL', 'IMAGE', 'VIDEO'] as const).map(f => (
+              {(['ALL', 'IMAGE', 'VIDEO', 'DOCUMENT'] as const).map(f => (
                 <button
                   key={f}
                   onClick={() => setGalleryFilter(f)}
@@ -1959,7 +2149,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                     galleryFilter === f ? 'bg-purple-100 text-purple-700' : 'text-gray-500 hover:bg-gray-100'
                   }`}
                 >
-                  {f === 'ALL' ? 'Todos' : f === 'IMAGE' ? 'Imagens' : 'Vídeos'}
+                  {f === 'ALL' ? 'Todos' : f === 'IMAGE' ? 'Imagens' : f === 'VIDEO' ? 'Vídeos' : 'PDFs'}
                 </button>
               ))}
             </div>
@@ -2006,7 +2196,19 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                           <div className="aspect-square bg-gray-100 overflow-hidden relative">
                             {item.media_type === 'IMAGE'
                               ? <img src={item.file_url} alt={item.name} className="w-full h-full object-cover" />
-                              : <VideoThumbnail src={item.file_url} />
+                              : item.media_type === 'VIDEO'
+                              ? <VideoThumbnail src={item.file_url} />
+                              : (
+                                <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-red-50 to-red-100">
+                                  <svg className="w-9 h-9 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                    <polyline points="14 2 14 8 20 8"/>
+                                    <line x1="9" y1="13" x2="15" y2="13"/>
+                                    <line x1="9" y1="17" x2="15" y2="17"/>
+                                  </svg>
+                                  <span className="text-red-600 text-xs font-bold">PDF</span>
+                                </div>
+                              )
                             }
                             {/* Play preview button — only on videos */}
                             {item.media_type === 'VIDEO' && (
@@ -2037,9 +2239,11 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
 
                           {/* Type badge */}
                           <div className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide ${
-                            item.media_type === 'IMAGE' ? 'bg-blue-500/80 text-white' : 'bg-purple-600/80 text-white'
+                            item.media_type === 'IMAGE' ? 'bg-blue-500/80 text-white'
+                            : item.media_type === 'VIDEO' ? 'bg-purple-600/80 text-white'
+                            : 'bg-red-500/80 text-white'
                           }`}>
-                            {item.media_type === 'IMAGE' ? 'IMG' : 'VID'}
+                            {item.media_type === 'IMAGE' ? 'IMG' : item.media_type === 'VIDEO' ? 'VID' : 'PDF'}
                           </div>
 
                           <div className="px-2 pt-1.5 pb-2">
@@ -2075,7 +2279,16 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                     <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 bg-gray-200">
                       {item.media_type === 'IMAGE'
                         ? <img src={item.file_url} alt={item.name} className="w-full h-full object-cover" />
-                        : <VideoThumbnail src={item.file_url} />
+                        : item.media_type === 'VIDEO'
+                        ? <VideoThumbnail src={item.file_url} />
+                        : (
+                          <div className="w-full h-full flex items-center justify-center bg-red-50">
+                            <svg className="w-6 h-6 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                              <polyline points="14 2 14 8 20 8"/>
+                            </svg>
+                          </div>
+                        )
                       }
                     </div>
 
@@ -2278,6 +2491,8 @@ export default function LeadsPage() {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<LeadFilter>(FILTER_DEFAULTS);
   const [showFilters, setShowFilters] = useState(false);
+  const [reclassifyingAll, setReclassifyingAll] = useState(false);
+  const [reclassifyAllDone, setReclassifyAllDone] = useState(false);
 
   const buildParams = (f: LeadFilter, p: number) => {
     const params: Record<string, string | number | boolean> = { page: p };
@@ -2351,17 +2566,46 @@ export default function LeadsPage() {
             <p className="font-semibold text-base text-gray-800">Leads</p>
             <p className="text-sm text-gray-400">{total} total</p>
           </div>
-          <button
-            onClick={() => setShowFilters(v => !v)}
-            className={`flex items-center justify-center w-10 h-10 rounded-xl transition-colors ${
-              hasActiveFilters ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:bg-gray-100'
-            }`}
-            title="Filtros"
-          >
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
-            </svg>
-          </button>
+          <div className="flex items-center gap-1">
+            {/* Classificar todos com IA */}
+            <button
+              onClick={async () => {
+                setReclassifyingAll(true);
+                setReclassifyAllDone(false);
+                try {
+                  await leadsService.reclassifyAll();
+                  setReclassifyAllDone(true);
+                  setTimeout(() => setReclassifyAllDone(false), 4000);
+                } catch { /* silencia */ } finally {
+                  setReclassifyingAll(false);
+                }
+              }}
+              disabled={reclassifyingAll}
+              title="Classificar todos os leads com IA"
+              className={`flex items-center justify-center w-10 h-10 rounded-xl transition-colors disabled:opacity-40 ${
+                reclassifyAllDone ? 'bg-violet-100 text-violet-600' : 'text-gray-400 hover:bg-violet-50 hover:text-violet-500'
+              }`}
+            >
+              {reclassifyingAll
+                ? <span className="loading loading-spinner loading-xs" />
+                : reclassifyAllDone
+                  ? <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><polyline points="20 6 9 17 4 12"/></svg>
+                  : <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+              }
+            </button>
+
+            <button
+              onClick={() => setShowFilters(v => !v)}
+              className={`flex items-center justify-center w-10 h-10 rounded-xl transition-colors ${
+                hasActiveFilters ? 'bg-blue-100 text-blue-600' : 'text-gray-400 hover:bg-gray-100'
+              }`}
+              title="Filtros"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Search */}
@@ -2383,11 +2627,12 @@ export default function LeadsPage() {
         {/* Quick classification filter buttons */}
         <div className="px-3 py-2 border-b border-gray-100 flex items-center gap-1.5 flex-shrink-0 overflow-x-auto">
           {([
-            { key: '', label: 'Todos', icon: null, activeClass: 'bg-gray-800 text-white', defaultClass: 'bg-gray-100 text-gray-500 hover:bg-gray-200' },
-            { key: 'HOT_LEAD',  label: 'Hot',       icon: '🔥', activeClass: 'bg-red-500 text-white',    defaultClass: 'bg-red-50 text-red-600 hover:bg-red-100' },
-            { key: 'WARM_LEAD', label: 'Warm',      icon: '🟡', activeClass: 'bg-amber-500 text-white',  defaultClass: 'bg-amber-50 text-amber-600 hover:bg-amber-100' },
-            { key: 'COLD_LEAD', label: 'Cold',      icon: '❄️', activeClass: 'bg-blue-500 text-white',   defaultClass: 'bg-blue-50 text-blue-600 hover:bg-blue-100' },
-            { key: 'ARCHIVED',  label: 'Arquivado', icon: '📁', activeClass: 'bg-gray-500 text-white',   defaultClass: 'bg-gray-100 text-gray-500 hover:bg-gray-200' },
+            { key: '',            label: 'Todos',     icon: null, activeClass: 'bg-gray-800 text-white',  defaultClass: 'bg-gray-100 text-gray-500 hover:bg-gray-200' },
+            { key: 'DANGER_LEAD', label: 'Danger',    icon: '⚠️', activeClass: 'bg-red-900 text-white',   defaultClass: 'bg-red-50 text-red-900 hover:bg-red-100 font-semibold' },
+            { key: 'HOT_LEAD',    label: 'Hot',       icon: '🔥', activeClass: 'bg-red-500 text-white',   defaultClass: 'bg-red-50 text-red-600 hover:bg-red-100' },
+            { key: 'WARM_LEAD',   label: 'Warm',      icon: '🟡', activeClass: 'bg-amber-500 text-white', defaultClass: 'bg-amber-50 text-amber-600 hover:bg-amber-100' },
+            { key: 'COLD_LEAD',   label: 'Cold',      icon: '❄️', activeClass: 'bg-blue-500 text-white',  defaultClass: 'bg-blue-50 text-blue-600 hover:bg-blue-100' },
+            { key: 'ARCHIVED',    label: 'Arquivado', icon: '📁', activeClass: 'bg-gray-500 text-white',  defaultClass: 'bg-gray-100 text-gray-500 hover:bg-gray-200' },
           ] as const).map(({ key, label, icon, activeClass, defaultClass }) => {
             const isArchived = key === 'ARCHIVED';
             const isActive = isArchived
@@ -2471,9 +2716,17 @@ export default function LeadsPage() {
             <>
               {[...leads]
                 .sort((a, b) => {
-                  const aClosed = a.status === 'CLOSED' ? 2 : a.last_message_direction === 'IN' ? 0 : 1;
-                  const bClosed = b.status === 'CLOSED' ? 2 : b.last_message_direction === 'IN' ? 0 : 1;
-                  if (aClosed !== bClosed) return aClosed - bClosed;
+                  const priority = (l: typeof a) => {
+                    if (l.lead_classification === 'DANGER_LEAD') return -1;
+                    if (l.awaiting_human_reply && l.status !== 'CLOSED') return 0;
+                    if (l.lead_classification === 'HOT_LEAD') return 1;
+                    if (l.lead_classification === 'WARM_LEAD') return 2;
+                    if (l.lead_classification === 'COLD_LEAD') return 3;
+                    if (l.status === 'CLOSED') return 8;
+                    return 5;
+                  };
+                  const pa = priority(a), pb = priority(b);
+                  if (pa !== pb) return pa - pb;
                   return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
                 })
                 .map(lead => (

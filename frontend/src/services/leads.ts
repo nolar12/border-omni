@@ -93,6 +93,16 @@ export const leadsService = {
     await api.post(`/leads/${id}/archive/`);
   },
 
+  async reclassifyLead(id: number): Promise<{ lead_classification: string; score: number; resumo_intencao: string }> {
+    const { data } = await api.post(`/leads/${id}/reclassify/`);
+    return data;
+  },
+
+  async reclassifyAll(): Promise<{ detail: string }> {
+    const { data } = await api.post('/leads/reclassify_all/');
+    return data;
+  },
+
   async unarchiveLead(id: number): Promise<Lead> {
     const { data } = await api.post<Lead>(`/leads/${id}/unarchive/`);
     return data;
@@ -107,15 +117,15 @@ export const leadsService = {
     return data;
   },
 
-  async suggestResponse(id: number, message: string): Promise<string | null> {
+  async suggestResponse(id: number, message: string, channel?: string, brief?: string): Promise<string[]> {
     try {
-      const { data } = await api.post<{ suggestion: string | null }>(
+      const { data } = await api.post<{ suggestions: string[] }>(
         `/leads/${id}/suggest_response/`,
-        { message },
+        { message, channel: channel ?? 'whatsapp', brief: brief ?? '' },
       );
-      return data.suggestion;
+      return data.suggestions ?? [];
     } catch {
-      return null;
+      return [];
     }
   },
 

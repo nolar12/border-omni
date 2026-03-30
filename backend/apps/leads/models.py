@@ -26,9 +26,10 @@ class Lead(models.Model):
         ('OTHER',   'Outro'),
     ]
     CLASSIFICATION_CHOICES = [
-        ('HOT_LEAD',  'Hot Lead'),
-        ('WARM_LEAD', 'Warm Lead'),
-        ('COLD_LEAD', 'Cold Lead'),
+        ('HOT_LEAD',    'Hot Lead'),
+        ('WARM_LEAD',   'Warm Lead'),
+        ('COLD_LEAD',   'Cold Lead'),
+        ('DANGER_LEAD', 'Danger Lead'),
     ]
     EXPERIENCE_CHOICES = [
         ('FIRST_DOG', 'Primeiro cão'),
@@ -86,6 +87,7 @@ class Lead(models.Model):
     conversation_state = models.CharField(max_length=50, null=True, blank=True)
     ab_variant = models.CharField(max_length=1, null=True, blank=True)
     lead_classification = models.CharField(max_length=15, choices=CLASSIFICATION_CHOICES, null=True, blank=True)
+    ai_profile = models.JSONField(null=True, blank=True)
     is_archived = models.BooleanField(default=False)
     tags = models.ManyToManyField(LeadTag, through='LeadTagAssignment', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

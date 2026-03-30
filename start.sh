@@ -52,7 +52,7 @@ start_backend() {
     "$FRONTEND/vite.config.ts" 2>/dev/null || true
 
   cd "$BACKEND"
-  python manage.py runserver 0.0.0.0:9022 > "$LOG_DIR/backend.log" 2>&1 &
+  python manage.py runserver 127.0.0.1:9022 > "$LOG_DIR/backend.log" 2>&1 &
   BACKEND_PID=$!
   echo $BACKEND_PID > "$LOG_DIR/backend.pid"
 
@@ -76,7 +76,7 @@ start_frontend() {
   kill_port 9021
 
   cd "$FRONTEND"
-  npm run dev -- --host 0.0.0.0 --port 9021 > "$LOG_DIR/frontend.log" 2>&1 &
+  npm run dev -- --host 127.0.0.1 --port 9021 > "$LOG_DIR/frontend.log" 2>&1 &
   FRONTEND_PID=$!
   echo $FRONTEND_PID > "$LOG_DIR/frontend.pid"
 
@@ -182,7 +182,7 @@ case "${1:-start}" in
     echo -e "   Frontend:  ${CYAN}http://localhost:9021${NC}"
     echo -e "   Backend:   ${CYAN}http://localhost:9022${NC}"
     echo -e "   Admin:     ${CYAN}http://localhost:9022/admin${NC}"
-    echo -e "   Login:     marcello12souza@gmail.com / admin123"
+    echo -e "   Login:     marcello12souza@gmail.com  (senha no .env ou no seu gerenciador de senhas)"
     echo ""
     echo -e "   Acesso externo (celular/fora do Wi-Fi):"
     echo -e "   App:       ${CYAN}https://$NGROK_DOMAIN${NC}  ← rode ./start.sh build primeiro"

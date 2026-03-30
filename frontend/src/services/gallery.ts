@@ -6,13 +6,13 @@ export interface GalleryMedia {
   description: string;
   file_url: string;
   mime_type: string;
-  media_type: 'IMAGE' | 'VIDEO';
+  media_type: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
   size_bytes: number;
   created_at: string;
 }
 
 export const galleryService = {
-  list: (mediaType?: 'IMAGE' | 'VIDEO'): Promise<GalleryMedia[]> => {
+  list: (mediaType?: 'IMAGE' | 'VIDEO' | 'DOCUMENT'): Promise<GalleryMedia[]> => {
     const params = mediaType ? { media_type: mediaType } : {};
     return api
       .get<GalleryMedia[] | { results: GalleryMedia[] }>('/gallery/', { params })

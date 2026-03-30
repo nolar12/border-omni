@@ -4,9 +4,18 @@ from datetime import timedelta
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-border-omni-dev-key-change-in-production')
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = ['*']
+_secret = os.getenv('SECRET_KEY')
+if not _secret:
+    raise RuntimeError('SECRET_KEY não definida. Adicione SECRET_KEY ao arquivo .env')
+SECRET_KEY = _secret
+
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
+
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+    if h.strip()
+]
 
 DJANGO_APPS = [
     'django.contrib.admin',
@@ -77,7 +86,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': os.getenv('DB_NAME', 'border_leads'),
         'USER': os.getenv('DB_USER', 'root'),
-        'PASSWORD': os.getenv('DB_PASSWORD', 'cello12'),
+        'PASSWORD': os.getenv('DB_PASSWORD', ''),
         'HOST': os.getenv('DB_HOST', 'localhost'),
         'PORT': os.getenv('DB_PORT', '3306'),
         'OPTIONS': {
@@ -100,14 +109,14 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-# URL pública base — usada para construir links de mídia acessíveis externamente pelo WhatsApp e Meta.
-# Em desenvolvimento, aponte para seu domínio Ngrok. Em produção, aponte para seu domínio HTTPS.
-# Exemplo: MEDIA_BASE_URL=https://seu-dominio.ngrok-free.app
-_NGROK = 'https://borderomni.ngrok.app'
-MEDIA_BASE_URL = os.getenv('MEDIA_BASE_URL', _NGROK).rstrip('/')
+# URL pública base — usada para construir links de mídia acessíveis pelo WhatsApp e Meta.
+# Em desenvolvimento: MEDIA_BASE_URL=https://borderomni.ngrok.app
+# Em produção: MEDIA_BASE_URL=https://api.bordercolliesul.com.br
+MEDIA_BASE_URL = os.getenv('MEDIA_BASE_URL', 'http://localhost:9022').rstrip('/')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -127,10 +136,33 @@ AB_MEDIA_VARIANTS = {
 }
 
 # CORS
-CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOW_ALL_ORIGINS = False
+_default_cors = (
+    'http://localhost:5173,'
+    'http://localhost:3000,'
+    'http://localhost:9023,'
+    'https://www.bordercolliesul.com.br,'
+    'https://bordercolliesul.com.br,'
+    'https://app.bordercolliesul.com.br'
+)
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost:5173',
-    'http://localhost:3000',
+    o.strip()
+    for o in os.getenv('CORS_ALLOWED_ORIGINS', _default_cors).split(',')
+    if o.strip()
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        'CSRF_TRUSTED_ORIGINS',
+        'https://api.bordercolliesul.com.br,https://admin.bordercolliesul.com.br,https://app.bordercolliesul.com.br'
+    ).split(',')
+    if o.strip()
+]
+
+from corsheaders.defaults import default_headers
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'ngrok-skip-browser-warning',
 ]
 
 # DRF
@@ -162,22 +194,26 @@ SIMPLE_JWT = {
 SUPABASE_URL = os.getenv('SUPABASE_URL', '')
 SUPABASE_SERVICE_KEY = os.getenv('SUPABASE_SERVICE_KEY', '')
 
-# Logging
-LOGGING = {
+# Logging — apenas console em produção (stdout/stderr capturado pelo CloudWatch)
+_log_handlers = ['console']
+_log_config: dict = {
     'version': 1,
     'disable_existing_loggers': False,
     'handlers': {
         'console': {'class': 'logging.StreamHandler'},
-        'file': {
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'border_omni.log',
-        },
     },
     'loggers': {
         'apps': {
-            'handlers': ['console', 'file'],
-            'level': 'DEBUG',
+            'handlers': _log_handlers,
+            'level': 'INFO' if not DEBUG else 'DEBUG',
             'propagate': False,
         },
     },
 }
+if DEBUG:
+    _log_config['handlers']['file'] = {  # type: ignore[index]
+        'class': 'logging.FileHandler',
+        'filename': BASE_DIR / 'border_omni.log',
+    }
+    _log_config['loggers']['apps']['handlers'] = ['console', 'file']  # type: ignore[index]
+LOGGING = _log_config

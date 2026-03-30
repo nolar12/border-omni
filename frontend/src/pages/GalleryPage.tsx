@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { galleryService, type GalleryMedia } from '../services/gallery';
 import VideoThumbnail from '../components/VideoThumbnail';
 
-type Filter = 'ALL' | 'IMAGE' | 'VIDEO';
+type Filter = 'ALL' | 'IMAGE' | 'VIDEO' | 'DOCUMENT';
 
 interface PendingUpload {
   file: File;
@@ -84,7 +84,7 @@ export default function GalleryPage() {
     dragCounter.current = 0;
     setIsDragging(false);
     const files = Array.from(e.dataTransfer.files).filter(f =>
-      f.type.startsWith('image/') || f.type.startsWith('video/')
+      f.type.startsWith('image/') || f.type.startsWith('video/') || f.type === 'application/pdf'
     );
     if (files.length) openUploadModal(files);
   }, []);
@@ -177,6 +177,7 @@ export default function GalleryPage() {
   const displayed = filter === 'ALL' ? items : items.filter(i => i.media_type === filter);
   const imageCount = items.filter(i => i.media_type === 'IMAGE').length;
   const videoCount = items.filter(i => i.media_type === 'VIDEO').length;
+  const docCount = items.filter(i => i.media_type === 'DOCUMENT').length;
 
   return (
     <div
@@ -205,14 +206,14 @@ export default function GalleryPage() {
           <div>
             <h1 className="text-xl font-bold text-gray-900">Galeria de Mídia</h1>
             <p className="text-sm text-gray-500 mt-0.5">
-              {items.length} arquivo(s) — {imageCount} imagem(ns) · {videoCount} vídeo(s)
+              {items.length} arquivo(s) — {imageCount} imagem(ns) · {videoCount} vídeo(s) · {docCount} PDF(s)
             </p>
           </div>
 
           <div className="flex items-center gap-3">
             {/* Filter tabs */}
             <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-              {(['ALL', 'IMAGE', 'VIDEO'] as Filter[]).map(f => (
+              {(['ALL', 'IMAGE', 'VIDEO', 'DOCUMENT'] as Filter[]).map(f => (
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
@@ -222,7 +223,7 @@ export default function GalleryPage() {
                       : 'text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  {f === 'ALL' ? 'Todos' : f === 'IMAGE' ? 'Imagens' : 'Vídeos'}
+                  {f === 'ALL' ? 'Todos' : f === 'IMAGE' ? 'Imagens' : f === 'VIDEO' ? 'Vídeos' : 'PDFs'}
                 </button>
               ))}
             </div>
@@ -233,7 +234,7 @@ export default function GalleryPage() {
               type="file"
               multiple
               className="hidden"
-              accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm"
+              accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm,application/pdf"
               onChange={handleFileSelect}
             />
             <button
@@ -293,13 +294,20 @@ export default function GalleryPage() {
                 {/* Thumbnail */}
                 <div className="aspect-square bg-gray-100 overflow-hidden">
                   {item.media_type === 'IMAGE' ? (
-                    <img
-                      src={item.file_url}
-                      alt={item.name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
+                    <img src={item.file_url} alt={item.name} className="w-full h-full object-cover" />
+                  ) : item.media_type === 'VIDEO' ? (
                     <VideoThumbnail src={item.file_url} />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-red-50 to-red-100">
+                      <svg className="w-10 h-10 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="9" y1="13" x2="15" y2="13"/>
+                        <line x1="9" y1="17" x2="15" y2="17"/>
+                        <line x1="9" y1="9" x2="11" y2="9"/>
+                      </svg>
+                      <span className="text-red-600 text-xs font-bold uppercase tracking-wider">PDF</span>
+                    </div>
                   )}
                 </div>
 
@@ -331,11 +339,11 @@ export default function GalleryPage() {
 
                 {/* Type badge */}
                 <div className={`absolute top-2 left-2 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${
-                  item.media_type === 'IMAGE'
-                    ? 'bg-blue-500/80 text-white'
-                    : 'bg-purple-600/80 text-white'
+                  item.media_type === 'IMAGE' ? 'bg-blue-500/80 text-white'
+                  : item.media_type === 'VIDEO' ? 'bg-purple-600/80 text-white'
+                  : 'bg-red-500/80 text-white'
                 }`}>
-                  {item.media_type === 'IMAGE' ? 'IMG' : 'VID'}
+                  {item.media_type === 'IMAGE' ? 'IMG' : item.media_type === 'VIDEO' ? 'VID' : 'PDF'}
                 </div>
 
                 {/* Description indicator */}
@@ -378,6 +386,14 @@ export default function GalleryPage() {
                   <div className="w-16 h-16 rounded-xl bg-gray-100 overflow-hidden flex-shrink-0 border border-gray-200">
                     {pending.file.type.startsWith('image/') ? (
                       <img src={pending.previewUrl} alt="" className="w-full h-full object-cover" />
+                    ) : pending.file.type === 'application/pdf' ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-red-50">
+                        <svg className="w-7 h-7 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                          <polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                        <span className="text-red-500 text-[9px] font-bold">PDF</span>
+                      </div>
                     ) : (
                       <VideoThumbnail src={pending.previewUrl} />
                     )}
@@ -488,19 +504,18 @@ export default function GalleryPage() {
             </div>
 
             {/* Media */}
-            <div className="bg-black flex items-center justify-center max-h-[50vh]">
+            <div className={`flex items-center justify-center ${preview.media_type === 'DOCUMENT' ? 'bg-gray-50' : 'bg-black'}`}
+              style={{ maxHeight: preview.media_type === 'DOCUMENT' ? '60vh' : '50vh' }}>
               {preview.media_type === 'IMAGE' ? (
-                <img
-                  src={preview.file_url}
-                  alt={preview.name}
-                  className="max-h-[50vh] max-w-full object-contain"
-                />
+                <img src={preview.file_url} alt={preview.name} className="max-h-[50vh] max-w-full object-contain" />
+              ) : preview.media_type === 'VIDEO' ? (
+                <video src={preview.file_url} controls autoPlay className="max-h-[50vh] max-w-full" />
               ) : (
-                <video
+                <iframe
                   src={preview.file_url}
-                  controls
-                  autoPlay
-                  className="max-h-[50vh] max-w-full"
+                  title={preview.name}
+                  className="w-full"
+                  style={{ height: '60vh', border: 'none' }}
                 />
               )}
             </div>

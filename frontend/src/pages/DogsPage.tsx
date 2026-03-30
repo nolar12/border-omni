@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import DateInput from '../components/DateInput';
 import UploadZone from '../components/UploadZone';
+import ImageCropEditor from '../components/ImageCropEditor';
 import { useNavigate } from 'react-router-dom';
 import { dogsService, type DogPayload } from '../services/dogs';
 import { dogHealthService, type HealthRecordPayload } from '../services/dogHealth';
 import { littersService } from '../services/litters';
-import type { Dog, DogHealthRecord, Litter, DogSex, DogStatus, HealthRecordType } from '../types';
+import type { Dog, DogHealthRecord, Litter, DogSex, DogStatus, HealthRecordType, DogMedia } from '../types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -201,6 +202,11 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
+  type CropTarget =
+    | { kind: 'existing'; media: DogMedia }
+    | { kind: 'local'; index: number; preview: string; file: File };
+  const [cropTarget, setCropTarget] = useState<CropTarget | null>(null);
+
   const set = (key: keyof DogPayload, value: unknown) =>
     setForm(f => ({ ...f, [key]: value }));
 
@@ -255,6 +261,27 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
     if (!dog) return;
     await dogsService.removeMedia(dog.id, mediaId);
     setExistingMedia(prev => prev.filter(m => m.id !== mediaId));
+  };
+
+  const handleCropComplete = async (croppedFile: File) => {
+    if (!cropTarget) return;
+    if (cropTarget.kind === 'existing') {
+      if (!dog) return;
+      setUploadingMedia(true);
+      try {
+        const newMedia = await dogsService.addMedia(dog.id, croppedFile) as DogMedia;
+        await dogsService.removeMedia(dog.id, cropTarget.media.id);
+        setExistingMedia(prev => prev.map(m => m.id === cropTarget.media.id ? newMedia : m));
+      } finally {
+        setUploadingMedia(false);
+      }
+    } else {
+      const preview = URL.createObjectURL(croppedFile);
+      setMediaFiles(prev => prev.map((m, i) =>
+        i === cropTarget.index ? { file: croppedFile, preview } : m,
+      ));
+    }
+    setCropTarget(null);
   };
 
   const tabs = [
@@ -545,22 +572,31 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
                   {existingMedia.map(m => (
                     <div key={m.id} className="relative aspect-square rounded-lg overflow-hidden bg-slate-700 group">
                       <img src={m.file_url ?? m.file} alt="" className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-3 transition-opacity">
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-opacity">
                         <button
                           onClick={() => setLightboxUrl(m.file_url ?? m.file)}
-                          className="p-2.5 rounded-full bg-white/20 hover:bg-white/40 transition-colors"
+                          className="p-2 rounded-full bg-white/20 hover:bg-white/40 transition-colors"
                           title="Visualizar"
                         >
-                          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                          <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
                           </svg>
                         </button>
                         <button
+                          onClick={() => setCropTarget({ kind: 'existing', media: m })}
+                          className="p-2 rounded-full bg-white/20 hover:bg-blue-500/80 transition-colors"
+                          title="Editar / Recortar"
+                        >
+                          <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <path d="M6 2v14a2 2 0 002 2h14"/><path d="M18 22V8a2 2 0 00-2-2H2"/>
+                          </svg>
+                        </button>
+                        <button
                           onClick={() => removeExistingMedia(m.id)}
-                          className="p-2.5 rounded-full bg-white/20 hover:bg-red-500/80 transition-colors"
+                          className="p-2 rounded-full bg-white/20 hover:bg-red-500/80 transition-colors"
                           title="Excluir"
                         >
-                          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                          <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                             <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
                           </svg>
                         </button>
@@ -570,22 +606,31 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
                   {mediaFiles.map((m, i) => (
                     <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-slate-700 group">
                       <img src={m.preview} alt="" className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-3 transition-opacity">
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-opacity">
                         <button
                           onClick={() => setLightboxUrl(m.preview)}
-                          className="p-2.5 rounded-full bg-white/20 hover:bg-white/40 transition-colors"
+                          className="p-2 rounded-full bg-white/20 hover:bg-white/40 transition-colors"
                           title="Visualizar"
                         >
-                          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                          <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
                           </svg>
                         </button>
                         <button
+                          onClick={() => setCropTarget({ kind: 'local', index: i, preview: m.preview, file: m.file })}
+                          className="p-2 rounded-full bg-white/20 hover:bg-blue-500/80 transition-colors"
+                          title="Editar / Recortar"
+                        >
+                          <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <path d="M6 2v14a2 2 0 002 2h14"/><path d="M18 22V8a2 2 0 00-2-2H2"/>
+                          </svg>
+                        </button>
+                        <button
                           onClick={() => setMediaFiles(prev => prev.filter((_, j) => j !== i))}
-                          className="p-2.5 rounded-full bg-white/20 hover:bg-red-500/80 transition-colors"
+                          className="p-2 rounded-full bg-white/20 hover:bg-red-500/80 transition-colors"
                           title="Excluir"
                         >
-                          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                          <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                             <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
                           </svg>
                         </button>
@@ -639,6 +684,17 @@ function DogModal({ dog, dogs, litters, onClose, onSaved }: DogModalProps) {
             onClick={e => e.stopPropagation()}
           />
         </div>
+      )}
+
+      {/* Image crop editor */}
+      {cropTarget && (
+        <ImageCropEditor
+          src={cropTarget.kind === 'existing' ? (cropTarget.media.file_url ?? cropTarget.media.file) : cropTarget.preview}
+          fileName={cropTarget.kind === 'local' ? cropTarget.file.name : undefined}
+          onComplete={handleCropComplete}
+          onCancel={() => setCropTarget(null)}
+          zClass="z-[200]"
+        />
       )}
     </div>
   );

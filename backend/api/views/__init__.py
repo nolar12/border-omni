@@ -2,6 +2,7 @@ import logging
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
 from django.db import transaction
+from django.db.models import OuterRef, Subquery, Case, When, Value, IntegerField, BooleanField, Q, F
 from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -89,9 +90,10 @@ class LoginView(APIView):
         user = authenticate(request, username=email, password=password)
         if not user:
             try:
-                u = User.objects.get(email=email)
-                user = authenticate(request, username=u.username, password=password)
-            except User.DoesNotExist:
+                u = User.objects.filter(email=email).first()
+                if u:
+                    user = authenticate(request, username=u.username, password=password)
+            except Exception:
                 pass
         if not user:
             return Response({'detail': 'Credenciais inválidas.'}, status=401)
@@ -146,6 +148,68 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         lead_classification = self.request.query_params.get('lead_classification')
         if lead_classification:
             qs = qs.filter(lead_classification=lead_classification)
+
+        # Ordenação inteligente:
+        # -1 → DANGER (risco — sempre no topo, sobrescreve qualquer outra)
+        #  0 → aguardando resposta HUMANA (lead IN mais recente que o último OUT humano)
+        #  1 → HOT
+        #  2 → WARM
+        #  3 → COLD
+        #  5 → sem classificação
+        #  8 → CLOSED
+        #
+        # Mensagens humanas têm provider_message_id preenchido.
+        # Mensagens de bot/template têm provider_message_id = NULL.
+
+        # Timestamp da última mensagem IN do lead
+        last_in_ts_sq = Subquery(
+            Message.objects.filter(
+                conversation__lead=OuterRef('pk'),
+                direction='IN',
+            ).order_by('-created_at').values('created_at')[:1]
+        )
+        # Timestamp do último OUT humano (com provider_message_id preenchido)
+        last_human_out_ts_sq = Subquery(
+            Message.objects.filter(
+                conversation__lead=OuterRef('pk'),
+                direction='OUT',
+            ).exclude(provider_message_id=None).exclude(provider_message_id='')
+            .order_by('-created_at').values('created_at')[:1]
+        )
+
+        qs = qs.annotate(
+            _last_in_ts=last_in_ts_sq,
+            _last_human_out_ts=last_human_out_ts_sq,
+        ).annotate(
+            # True se o lead tem uma mensagem IN mais recente que o último OUT humano
+            _awaiting_human=Case(
+                When(
+                    Q(_last_in_ts__isnull=False) & (
+                        Q(_last_human_out_ts__isnull=True) |
+                        Q(_last_in_ts__gt=F('_last_human_out_ts'))
+                    ),
+                    then=Value(True),
+                ),
+                default=Value(False),
+                output_field=BooleanField(),
+            )
+        ).annotate(
+            _sort_priority=Case(
+                When(lead_classification='DANGER_LEAD', then=Value(-1)),
+                When(_awaiting_human=True, then=Case(
+                    When(status='CLOSED', then=Value(8)),
+                    default=Value(0),
+                    output_field=IntegerField(),
+                )),
+                When(lead_classification='HOT_LEAD', then=Value(1)),
+                When(lead_classification='WARM_LEAD', then=Value(2)),
+                When(lead_classification='COLD_LEAD', then=Value(3)),
+                When(status='CLOSED', then=Value(8)),
+                default=Value(5),
+                output_field=IntegerField(),
+            )
+        ).order_by('_sort_priority', '-updated_at')
+
         return qs
 
     def get_serializer_class(self):
@@ -301,29 +365,46 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'])
     def suggest_response(self, request, pk=None):
-        """Gera sugestão de resposta RAG para o atendente. Não envia nada."""
+        """Gera 3 sugestões de resposta para o atendente usando a persona Border Collie Sul."""
         lead = self.get_object()
         org = lead.organization
         message_text = request.data.get('message', '').strip()
+        channel = request.data.get('channel', 'whatsapp')
+        brief = request.data.get('brief', '').strip()  # contexto adicional do atendente
+
         if not message_text:
-            return Response({'suggestion': None})
+            return Response({'suggestions': []})
 
         try:
             agent_config = org.agent_config
         except AgentConfig.DoesNotExist:
-            return Response({'suggestion': None})
+            return Response({'suggestions': []})
 
-        if not agent_config.is_ready():
-            return Response({'suggestion': None})
+        if not agent_config.openai_api_key:
+            return Response({'suggestions': []})
+
+        # Busca a conversa ativa para a lógica de saudação
+        conv = Conversation.objects.filter(lead=lead, channel=channel).first()
+
+        # Apenas o primeiro nome do atendente para a saudação
+        user = request.user
+        agent_name = (
+            user.first_name.strip()
+            or user.get_full_name().strip().split()[0]
+            if (user.first_name or user.get_full_name())
+            else user.username
+        )
 
         try:
             from apps.rag.services.rag_service import RAGService
-            suggestion = RAGService(agent_config).suggest(lead, message_text)
+            suggestions = RAGService(agent_config).suggest_three_options(
+                lead, message_text, conv=conv, brief=brief, agent_name=agent_name
+            )
         except Exception as e:
-            logger.warning(f'suggest_response error: {e}')
-            suggestion = None
+            logger.exception(f'suggest_response error: {e}')
+            suggestions = []
 
-        return Response({'suggestion': suggestion})
+        return Response({'suggestions': suggestions})
 
     @action(detail=True, methods=['post'])
     def send_file(self, request, pk=None):
@@ -775,6 +856,66 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         return Response(LeadDetailSerializer(lead).data)
 
     @action(detail=True, methods=['post'])
+    def reclassify(self, request, pk=None):
+        """Reclassifica o lead com o agente de IA — executa em foreground e retorna resultado."""
+        lead = self.get_object()
+        org = lead.organization
+        try:
+            cfg = org.agent_config
+            if not getattr(cfg, 'openai_api_key', None):
+                return Response({'detail': 'OpenAI não configurado.'}, status=400)
+        except Exception:
+            return Response({'detail': 'Configuração não encontrada.'}, status=400)
+        try:
+            from apps.qualifier.ai_classifier import AILeadClassifier
+            classifier = AILeadClassifier(lead, cfg)
+            result = classifier.classify()
+            if result:
+                classifier._map_to_db(result)
+                lead.refresh_from_db()
+                return Response({
+                    'lead_classification': lead.lead_classification,
+                    'score': lead.score,
+                    'nivel_maturidade': result.get('nivel_maturidade'),
+                    'probabilidade_conversao': result.get('probabilidade_conversao'),
+                    'resumo_intencao': result.get('resumo_intencao'),
+                })
+            return Response({'detail': 'Sem dados suficientes para classificar.'}, status=200)
+        except Exception as e:
+            logger.warning(f'reclassify error: {e}')
+            return Response({'detail': str(e)}, status=500)
+
+    @action(detail=False, methods=['post'])
+    def reclassify_all(self, request):
+        """Reclassifica todos os leads da organização em background."""
+        import threading
+        org = _get_org(request.user)
+        if not org:
+            return Response({'detail': 'Organização não encontrada.'}, status=400)
+        try:
+            cfg = org.agent_config
+            if not getattr(cfg, 'openai_api_key', None):
+                return Response({'detail': 'OpenAI não configurado.'}, status=400)
+        except Exception:
+            return Response({'detail': 'Configuração não encontrada.'}, status=400)
+
+        def _run():
+            from apps.qualifier.ai_classifier import AILeadClassifier
+            leads_qs = Lead.objects.filter(organization=org, is_archived=False)
+            for lead in leads_qs.iterator():
+                try:
+                    classifier = AILeadClassifier(lead, cfg)
+                    result = classifier.classify()
+                    if result:
+                        classifier._map_to_db(result)
+                except Exception as e:
+                    logger.warning(f'reclassify_all lead {lead.pk}: {e}')
+
+        threading.Thread(target=_run, daemon=True).start()
+        total = Lead.objects.filter(organization=org, is_archived=False).count()
+        return Response({'detail': f'Classificação iniciada para {total} leads em background.'})
+
+    @action(detail=True, methods=['post'])
     def archive(self, request, pk=None):
         lead = self.get_object()
         lead.is_archived = True
@@ -1185,6 +1326,9 @@ class WhatsAppWebhookView(APIView):
             conversation=conv, organization=org, direction='IN', text=text,
         )
 
+        # Classificação psicológica em background — nunca bloqueia o webhook
+        _run_ai_classification(lead, org)
+
         _notify_users_via_whatsapp(org=org, lead=lead, text=text, channel_provider=channel_provider)
 
         # ── Mensagem inicial + mídia + sequência (somente no primeiro contato) ──
@@ -1257,6 +1401,10 @@ class WhatsAppWebhookView(APIView):
                             to=sender_id,
                             text=reply,
                         )
+
+        # Vectoriza par IN/OUT do bot automaticamente em background
+        if reply_texts and text:
+            _vectorize_bot_reply(org, lead, text, reply_texts[0])
 
         return Response({'received': True, 'replies': reply_texts, 'lead': _lead_summary(lead)})
 
@@ -1444,6 +1592,48 @@ class MetaWebhookView(APIView):
             self, org=org, sender_id=sender_id, text=text,
             channel=channel, channel_provider=channel_provider, contact_name=contact_name,
         )
+
+
+def _vectorize_bot_reply(org, lead, message_in: str, message_out: str):
+    """Vectoriza par IN/OUT gerado pelo bot em background thread."""
+    import threading
+
+    def _run():
+        try:
+            cfg = org.agent_config
+            if not cfg.is_ready():
+                return
+            skip_words = ['[vídeo]', '[imagem]', '[documento]', '[mídia]']
+            if any(w in message_out for w in skip_words):
+                return
+            from apps.rag.services.training_service import store_conversation_pair
+            store_conversation_pair(cfg, message_in, message_out, lead)
+        except Exception as e:
+            import logging as _log
+            _log.getLogger(__name__).warning(f'_vectorize_bot_reply error: {e}')
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _run_ai_classification(lead, org):
+    """Lança classificação psicológica do lead em background thread."""
+    import threading
+
+    def _run():
+        try:
+            cfg = org.agent_config
+            if not getattr(cfg, 'openai_api_key', None):
+                return
+            from apps.qualifier.ai_classifier import AILeadClassifier
+            classifier = AILeadClassifier(lead, cfg)
+            result = classifier.classify()
+            if result:
+                classifier._map_to_db(result)
+        except Exception as e:
+            import logging as _log
+            _log.getLogger(__name__).warning(f'_run_ai_classification error: {e}')
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _send_welcome_sequence(org, lead, conv, channel, channel_provider):
@@ -2363,12 +2553,14 @@ class GalleryMediaViewSet(viewsets.ModelViewSet):
             media_type = 'IMAGE'
         elif mime.startswith('video/'):
             media_type = 'VIDEO'
+        elif mime == 'application/pdf':
+            media_type = 'DOCUMENT'
         else:
-            return Response({'detail': 'Tipo não suportado. Envie imagens ou vídeos.'}, status=400)
+            return Response({'detail': 'Tipo não suportado. Envie imagens, vídeos ou PDFs.'}, status=400)
 
-        max_bytes = 16 * 1024 * 1024
+        max_bytes = 100 * 1024 * 1024  # 100 MB (PDFs podem ser maiores)
         if uploaded.size > max_bytes:
-            return Response({'detail': 'Arquivo muito grande. Máximo: 16 MB.'}, status=400)
+            return Response({'detail': 'Arquivo muito grande. Máximo: 100 MB.'}, status=400)
 
         ext = os.path.splitext(uploaded.name)[1].lower() or ''
         filename = f'gallery/{org.id}/{uuid_mod.uuid4().hex}{ext}'

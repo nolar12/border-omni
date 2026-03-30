@@ -37,7 +37,7 @@ export interface AssignedUser {
 export type Tier = 'A' | 'B' | 'C';
 export type LeadStatus = 'NEW' | 'QUALIFYING' | 'QUALIFIED' | 'HANDOFF' | 'CLOSED';
 export type LeadSource = 'INSTAGRAM_AD' | 'ORGANIC' | 'OTHER';
-export type LeadClassification = 'HOT_LEAD' | 'WARM_LEAD' | 'COLD_LEAD';
+export type LeadClassification = 'HOT_LEAD' | 'WARM_LEAD' | 'COLD_LEAD' | 'DANGER_LEAD';
 export type HousingType = 'HOUSE_Y' | 'HOUSE_N' | 'HOUSE' | 'APT' | 'OTHER';
 
 export interface Lead {
@@ -91,6 +91,9 @@ export interface LeadListItem {
   assigned_to: AssignedUser | null;
   tags: string[];
   last_message_direction: 'IN' | 'OUT' | null;
+  awaiting_human_reply: boolean;
+  whatsapp_last_message_at: string | null;
+  last_message_text: string | null;
   created_at: string;
   updated_at: string;
 }

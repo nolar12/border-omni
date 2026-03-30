@@ -37,10 +37,10 @@ log() {
 # ─── Backend ─────────────────────────────────────────────────
 start_backend() {
   log "⚡ Iniciando backend na porta $BACKEND_PORT..."
-  pkill -f "runserver 0.0.0.0:$BACKEND_PORT" 2>/dev/null || true
+  pkill -f "runserver 127.0.0.1:$BACKEND_PORT" 2>/dev/null || true
   sleep 1
   cd "$BACKEND_DIR" && source "$VENV_DIR/bin/activate" && \
-    nohup python manage.py runserver "0.0.0.0:$BACKEND_PORT" \
+    nohup python manage.py runserver "127.0.0.1:$BACKEND_PORT" \
       >> "$LOG_DIR/backend.log" 2>&1 &
   BACKEND_PID=$!
   disown "$BACKEND_PID"
@@ -61,7 +61,7 @@ start_frontend() {
   pkill -f "vite.*$FRONTEND_PORT" 2>/dev/null || true
   sleep 1
   cd "$FRONTEND_DIR" && \
-    nohup "$NPM_BIN" run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" \
+    nohup "$NPM_BIN" run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" \
       >> "$LOG_DIR/frontend.log" 2>&1 &
   FRONTEND_PID=$!
   disown "$FRONTEND_PID"

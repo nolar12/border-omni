@@ -68,6 +68,9 @@ class LeadListSerializer(serializers.ModelSerializer):
     assigned_to = AssignedUserSerializer(read_only=True)
     last_message_direction = serializers.SerializerMethodField()
     lead_classification = serializers.CharField(read_only=True)
+    whatsapp_last_message_at = serializers.SerializerMethodField()
+    last_message_text = serializers.SerializerMethodField()
+    awaiting_human_reply = serializers.SerializerMethodField()
 
     class Meta:
         model = Lead
@@ -75,6 +78,7 @@ class LeadListSerializer(serializers.ModelSerializer):
             'id', 'phone', 'full_name', 'city', 'state', 'tier', 'score',
             'lead_classification', 'status', 'source', 'channels_used', 'is_ai_active',
             'is_archived', 'assigned_to', 'tags', 'last_message_direction',
+            'whatsapp_last_message_at', 'last_message_text', 'awaiting_human_reply',
             'created_at', 'updated_at',
         ]
 
@@ -89,6 +93,50 @@ class LeadListSerializer(serializers.ModelSerializer):
             return msg.direction if msg else None
         except Exception:
             return None
+
+    def get_whatsapp_last_message_at(self, obj):
+        try:
+            conv = obj.conversations.filter(channel='whatsapp').order_by('-last_message_at').first()
+            if conv and conv.last_message_at:
+                return conv.last_message_at.isoformat()
+            return None
+        except Exception:
+            return None
+
+    def get_last_message_text(self, obj):
+        try:
+            msg = Message.objects.filter(
+                conversation__lead=obj
+            ).order_by('-created_at').first()
+            return msg.text if msg else None
+        except Exception:
+            return None
+
+    def get_awaiting_human_reply(self, obj):
+        """
+        True quando o lead enviou uma mensagem que ainda não foi respondida
+        por um humano (mensagens automáticas/bot não contam como resposta humana).
+        Mensagens humanas são identificadas por terem provider_message_id preenchido.
+        """
+        try:
+            msgs = list(
+                Message.objects.filter(conversation__lead=obj)
+                .order_by('-created_at')
+                .values('direction', 'provider_message_id', 'created_at')[:20]
+            )
+            last_in = next((m for m in msgs if m['direction'] == 'IN'), None)
+            if not last_in:
+                return False
+            last_human_out = next(
+                (m for m in msgs
+                 if m['direction'] == 'OUT' and m['provider_message_id']),
+                None,
+            )
+            if not last_human_out:
+                return True
+            return last_in['created_at'] > last_human_out['created_at']
+        except Exception:
+            return False
 
 
 class ConversationSerializer(serializers.ModelSerializer):
