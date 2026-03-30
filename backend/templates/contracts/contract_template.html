@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Contrato de Compra e Venda de Cão Filhote</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 2.5cm 2cm;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Times New Roman', Times, serif;
+      font-size: 12pt;
+      line-height: 1.6;
+      color: #111;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 28px;
+      border-bottom: 2px solid #111;
+      padding-bottom: 16px;
+    }
+    .header h1 {
+      font-size: 14pt;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .header p {
+      font-size: 10pt;
+      color: #444;
+      margin-top: 4px;
+    }
+    .parties {
+      margin-bottom: 20px;
+    }
+    .parties p {
+      margin-bottom: 10px;
+      text-align: justify;
+    }
+    .intro {
+      text-align: justify;
+      margin-bottom: 24px;
+    }
+    .divider {
+      border: none;
+      border-top: 1px solid #333;
+      margin: 18px 0;
+    }
+    .section-title {
+      font-size: 11pt;
+      font-weight: bold;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+      margin-top: 18px;
+    }
+    .clause {
+      margin-bottom: 14px;
+      text-align: justify;
+    }
+    .clause strong {
+      font-weight: bold;
+    }
+    .clause .paragraph {
+      margin-top: 8px;
+      padding-left: 20px;
+      text-align: justify;
+    }
+    .price-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 11pt;
+    }
+    .price-table td {
+      padding: 6px 10px;
+      border: 1px solid #ccc;
+    }
+    .price-table td:first-child {
+      font-weight: bold;
+      width: 40%;
+    }
+    .highlight {
+      background-color: #f5f5f5;
+    }
+    .signatures {
+      margin-top: 60px;
+      page-break-inside: avoid;
+    }
+    .sig-block {
+      margin-bottom: 40px;
+    }
+    .sig-line {
+      border-top: 1px solid #333;
+      width: 70%;
+      margin-bottom: 6px;
+    }
+    .sig-image {
+      width: 200px;
+      height: 70px;
+      object-fit: contain;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .sig-label {
+      font-size: 10pt;
+    }
+    .witness-row {
+      display: flex;
+      gap: 40px;
+    }
+    .footer-note {
+      margin-top: 30px;
+      text-align: center;
+      font-size: 9pt;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>Contrato de Compra e Venda de Cão Filhote</h1>
+    <p>Canil Border Collie Sul · Imbituba – SC · CBKC</p>
+  </div>
+
+  <div class="parties">
+    <p>
+      <strong>Vendedor:</strong> MARCELLO SOUZA, criador do canil BORDER COLLIE SUL, inscrito na CBKC,
+      com sede em Imbituba – SC, representado neste ato por seu responsável legal, brasileiro, criador de cães,
+      residente e domiciliado em Imbituba – SC.
+    </p>
+    <p>
+      <strong>Comprador:</strong> {{ buyer_name|default:"_________________________________" }},
+      estado civil {{ buyer_marital_status|default:"_______________" }},
+      inscrito no CPF sob o nº {{ buyer_cpf|default:"___.___.___-__" }},
+      residente e domiciliado à {{ buyer_address|default:"_________________________________________" }},
+      CEP: {{ buyer_cep|default:"_____-___" }},
+      e-mail {{ buyer_email|default:"___________________________" }}.
+    </p>
+  </div>
+
+  <p class="intro">
+    Pelo presente instrumento particular e na melhor forma de Direito, os signatários retro nomeados e qualificados,
+    têm, entre si, certa e ajustada a presente compra e venda que se regerá pelas cláusulas e condições
+    mutuamente aceitas e reciprocamente outorgadas, a saber:
+  </p>
+
+  <hr class="divider" />
+
+  <div class="section-title">Do Objeto</div>
+
+  <div class="clause">
+    <strong>CLÁUSULA PRIMEIRA:</strong> O presente contrato tem como OBJETO a venda de um cão filhote para fins de companhia:
+    <div class="paragraph">
+      <table class="price-table">
+        <tr><td>Raça</td><td>Border Collie</td></tr>
+        <tr><td>Cor</td><td>{{ puppy_color|default:"_______________" }}</td></tr>
+        <tr><td>Sexo</td><td>{{ puppy_sex_display|default:"_______________" }}</td></tr>
+        <tr><td>Microchip</td><td>{{ puppy_microchip|default:"_______________" }}</td></tr>
+        <tr><td>Pedigree</td><td>Aguardando registro CBKC</td></tr>
+        <tr><td>Pai</td><td>{{ puppy_father|default:"_______________" }}</td></tr>
+        <tr><td>Mãe</td><td>{{ puppy_mother|default:"_______________" }}</td></tr>
+        <tr><td>Data de Nascimento</td><td>{{ puppy_birth_date_display|default:"_______________" }}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <div class="section-title">Do Preço e do Pagamento</div>
+
+  <div class="clause">
+    <strong>CLÁUSULA SEGUNDA:</strong> O comprador pagará ao vendedor, pela compra do filhote objeto deste contrato, o valor de:
+    <div class="paragraph">
+      <table class="price-table highlight">
+        <tr><td>Valor total</td><td><strong>{{ price_display|default:"R$ —" }}</strong></td></tr>
+        <tr><td>Sinal / Reserva (30%)</td><td><strong>{{ deposit_display|default:"R$ —" }}</strong></td></tr>
+        <tr><td>Saldo no ato da entrega (70%)</td><td><strong>{{ balance_display|default:"R$ —" }}</strong></td></tr>
+      </table>
+    </div>
+    <div class="paragraph">
+      <strong>Parágrafo Primeiro:</strong> O pagamento será realizado da seguinte forma: 30% (trinta por cento) do valor total
+      como sinal de reserva, via Pix (chave: marcello@nolar.com.br), e os 70% (setenta por cento) restantes por
+      ocasião da entrega do filhote.
+    </div>
+    <div class="paragraph">
+      <strong>Parágrafo Segundo:</strong> O valor pago a título de reserva possui natureza jurídica de ARRAS CONFIRMATÓRIAS,
+      nos termos do artigo 418 do Código Civil, não sendo devolvido em hipótese alguma de desistência por parte do comprador.
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA TERCEIRA:</strong> O supracitado filhote será entregue a partir dos 60 (sessenta) dias de idade.
+  </div>
+
+  <div class="clause">
+    <strong>CLÁUSULA QUARTA:</strong> O transporte será por conta do COMPRADOR.
+  </div>
+
+  <div class="clause">
+    <strong>CLÁUSULA QUINTA:</strong> Os custos com o despacho do cão ocorrerão por conta exclusiva do COMPRADOR.
+  </div>
+
+  <div class="clause">
+    <strong>CLÁUSULA SEXTA:</strong> O filhote será entregue, impreterivelmente, já vacinado conforme protocolo veterinário
+    inicial e devidamente vermifugado pelo vendedor, conforme fará prova o cartão de vacinação.
+    <div class="paragraph">
+      <strong>Parágrafo Único:</strong> Além disso, também será entregue ao comprador uma pasta contendo: cartão de vacina,
+      certificado de microchip e pedigree (quando emitido pela CBKC).
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA SÉTIMA:</strong> O cão é adquirido pelo comprador para fins de companhia, sendo expressamente vedada
+    sua utilização para reprodução.
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA OITAVA:</strong> O VENDEDOR afirma que o animal objeto desse contrato possui o padrão da raça Border Collie,
+    não possui nenhuma falta desqualificante aparente e não apresenta sinais clínicos de doenças no momento da entrega,
+    sendo proveniente de linhagem selecionada.
+    <div class="paragraph">
+      <strong>Parágrafo Único:</strong> Os pais do filhote possuem exames genéticos compatíveis com a raça e seguem
+      padrões de seleção responsáveis.
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA NONA:</strong> O comprador se obriga a manter a vacinação e a vermifugação do cachorro em dia.
+    <div class="paragraph">
+      <strong>Parágrafo Primeiro:</strong> Além disso, deve fornecer apenas ração de primeira linha (premium ou super premium),
+      não havendo necessidade de oferecer ao seu cão outro tipo de alimento sem orientação veterinária.
+    </div>
+    <div class="paragraph">
+      <strong>Parágrafo Segundo:</strong> O comprador deverá submeter o filhote a uma avaliação de saúde por médico veterinário
+      de sua escolha no prazo improrrogável de 72 (setenta e duas) horas após o recebimento, enviando o atestado ao vendedor.
+    </div>
+    <div class="paragraph">
+      <strong>Parágrafo Terceiro:</strong> O vendedor extinguirá qualquer garantia de saúde caso ocorra o descumprimento desta cláusula.
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA DÉCIMA:</strong> Fica terminantemente proibida a revenda futura desse cão objeto do contrato,
+    exercendo o vendedor o DIREITO DE PREFERÊNCIA em relação à sua destinação.
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA DÉCIMA PRIMEIRA:</strong> O animal não poderá ser submetido a maus-tratos, abandono ou qualquer
+    prática cruel, sob pena de medidas judiciais cabíveis.
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA DÉCIMA SEGUNDA:</strong> Levar imediatamente ao conhecimento do VENDEDOR o surgimento de qualquer
+    problema de saúde relevante no animal.
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA DÉCIMA TERCEIRA:</strong> Em caso de doença congênita grave comprovada por laudo veterinário
+    especializado, poderá haver substituição do animal.
+    <div class="paragraph">
+      <strong>Parágrafo Primeiro:</strong> Para requerer a substituição, o comprador deverá apresentar laudos técnicos
+      elaborados por médico veterinário especializado.
+    </div>
+    <div class="paragraph">
+      <strong>Parágrafo Segundo:</strong> Doenças adquiridas, acidentes ou condições decorrentes de manejo inadequado
+      não são de responsabilidade do vendedor.
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA DÉCIMA QUARTA:</strong> O vendedor não se responsabiliza por acidentes domésticos, maus-tratos,
+    alimentação inadequada ou qualquer conduta do comprador que cause dano ao animal, inclusive óbito.
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA DÉCIMA QUINTA:</strong> Fica proibido ao comprador utilizar o animal para fins inadequados ou ilegais,
+    sob pena de rescisão contratual, com devolução do animal ao vendedor, sem restituição de valores, além de
+    responsabilização civil e criminal.
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA DÉCIMA SEXTA:</strong> O presente contrato é intransferível, irrevogável e irretratável.
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA DÉCIMA SÉTIMA:</strong> É terminantemente proibida a utilização do nome do canil BORDER COLLIE SUL,
+    bem como imagens de seus cães, sem autorização.
+    <div class="paragraph">
+      <strong>Parágrafo Único:</strong> O descumprimento implicará multa contratual equivalente ao valor total do contrato.
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA DÉCIMA OITAVA:</strong> Caso o filhote venha a óbito antes da entrega, estando ainda sob
+    responsabilidade do vendedor, caberá ao comprador optar por:
+    <div class="paragraph">
+      (a) reembolso integral; OU (b) escolha de outro filhote disponível.
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA DÉCIMA NONA:</strong> O vendedor garante a pureza da raça Border Collie do cão vendido, podendo
+    eventuais dúvidas serem dirimidas por laudos técnicos e exames de DNA.
+  </div>
+
+  <hr class="divider" />
+
+  <div class="clause">
+    <strong>CLÁUSULA VIGÉSIMA:</strong> Fica expressamente proibida a utilização do animal para reprodução.
+    <div class="paragraph">
+      <strong>Parágrafo Único:</strong> O descumprimento desta cláusula implicará multa no valor de
+      R$ 10.000,00 (dez mil reais).
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  <p style="text-align:justify; margin-bottom: 20px;">
+    Fica eleito o foro da comarca de Imbituba – SC para dirimir quaisquer dúvidas ou controvérsias
+    oriundas deste contrato.
+  </p>
+
+  <p style="text-align:justify; margin-bottom: 40px;">
+    E, por estarem ambas de comum acordo com o disposto em suas cláusulas, assinam-no em 02 (duas) vias,
+    de igual teor e forma.
+  </p>
+
+  <p style="text-align:right; font-size: 10pt; color: #555; margin-bottom: 30px;">
+    Imbituba – SC, {{ signed_date|default:"___ / ___ / ______" }}
+  </p>
+
+  <div class="signatures">
+    <div class="sig-block">
+      {% if buyer_signature %}
+        <img class="sig-image" src="{{ buyer_signature }}" alt="Assinatura do Comprador" />
+      {% endif %}
+      <div class="sig-line"></div>
+      <p class="sig-label"><strong>COMPRADOR</strong><br />{{ buyer_name|default:"_________________________________" }}<br />CPF: {{ buyer_cpf|default:"___.___.___-__" }}</p>
+    </div>
+
+    <div class="sig-block">
+      <div class="sig-line"></div>
+      <p class="sig-label"><strong>VENDEDOR</strong><br />Marcello Souza<br />Canil Border Collie Sul</p>
+    </div>
+
+    <div class="witness-row">
+      <div class="sig-block" style="flex:1;">
+        <div class="sig-line" style="width:90%;"></div>
+        <p class="sig-label"><strong>TESTEMUNHA 1</strong></p>
+      </div>
+      <div class="sig-block" style="flex:1;">
+        <div class="sig-line" style="width:90%;"></div>
+        <p class="sig-label"><strong>TESTEMUNHA 2</strong></p>
+      </div>
+    </div>
+  </div>
+
+  <p class="footer-note">
+    Contrato gerado digitalmente pelo sistema Border Omni · Contrato nº {{ contract_id }}
+  </p>
+
+</body>
+</html>

@@ -40,13 +40,13 @@ export default function BottomNav() {
           key={item.to}
           to={item.to}
           className={({ isActive }) =>
-            `flex-1 flex flex-col items-center justify-center py-2 text-xs transition-colors ${
+            `flex-1 flex flex-col items-center justify-center py-2.5 text-xs transition-colors ${
               isActive ? 'text-blue-600' : 'text-gray-400'
             }`
           }
         >
           {item.icon}
-          <span className="mt-0.5 text-[10px]">{item.label}</span>
+          <span className="mt-1 text-xs">{item.label}</span>
         </NavLink>
       ))}
     </nav>

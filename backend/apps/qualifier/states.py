@@ -14,40 +14,35 @@ STATE_ORDER = [
     STATE_COMPLETE,
 ]
 
-MSG_MEDIA_CAPTION = (
-    "Esse vídeo é de uma ninhada anterior nossa 🐾\n\n"
-    "Só para você conhecer melhor o padrão dos nossos filhotes.\n\n"
-    "A ninhada atual ainda é bem novinha, mas já temos algumas reservas feitas.\n\n"
-    "Vou te fazer 4 perguntinhas rápidas para entender melhor o que você procura."
-)
+MSG_MEDIA_CAPTION_VIDEO = ''
+MSG_MEDIA_CAPTION_IMAGE = ''
+# Alias para compatibilidade com o fallback legado (sempre vídeo)
+MSG_MEDIA_CAPTION = MSG_MEDIA_CAPTION_VIDEO
 
 MSG_INTRO = (
-    "Olá! 🐕 Aqui é a Border Collie Sul.\n\n"
-    "Nossos filhotes são filhos do Sky e da Leia, com excelente linhagem e criados em ambiente familiar.\n\n"
-    "Eles são entregues com:\n\n"
-    "✔ Pedigree\n"
-    "✔ Microchip\n"
-    "✔ Registro do canil\n"
-    "✔ Vermifugação e primeira vacina\n\n"
-    "Alguns filhotes desta ninhada já estão reservados.\n\n"
-    "Depois das perguntinhas eu já te mostro quais ainda estão disponíveis. 🐾"
+    "Olá! Que bom te ver por aqui!\n\n"
+    "Sou da Border Collie Sul — criamos nossos filhotes em casa, com muito amor e atenção desde o primeiro dia.\n\n"
+    "Essa ninhada é filha do Sky e da Leia, dois Border Collies de linhagem excepcional. "
+    "Cada filhote sai com pedigree, microchip, registro de canil, vermifugação e a primeira vacininha já em dia.\n\n"
+    "Alguns já foram reservados — mas ainda temos disponíveis!\n\n"
+    "São só 4 perguntas rápidas e já te mostro quais ainda estão disponíveis."
 )
 
 MESSAGES = {
     STATE_INITIAL: MSG_INTRO,
     STATE_Q1_TIMELINE: (
-        "Para quando você está pensando em trazer seu Border Collie para casa? 📅\n\n"
-        "1️⃣ Agora — quero o mais rápido possível\n"
-        "2️⃣ Em até 30 dias\n"
-        "3️⃣ Em 2 a 3 meses\n"
-        "4️⃣ Ainda estou pesquisando"
+        "Para quando você está pensando em trazer seu Border Collie para casa?\n\n"
+        "1. Agora — quero o mais rápido possível\n"
+        "2. Em até 30 dias\n"
+        "3. Em 2 a 3 meses\n"
+        "4. Ainda estou pesquisando"
     ),
     STATE_Q2_HOUSING: (
         "Legal! Agora me conta uma coisa:\n\n"
-        "Você mora em qual tipo de ambiente? 🏠\n\n"
-        "1️⃣ Casa com pátio\n"
-        "2️⃣ Casa sem pátio\n"
-        "3️⃣ Apartamento"
+        "Você mora em qual tipo de ambiente?\n\n"
+        "1. Casa com pátio\n"
+        "2. Casa sem pátio\n"
+        "3. Apartamento"
     ),
     STATE_Q3_BUDGET: (
         "Perfeito!\n\n"
@@ -55,23 +50,22 @@ MESSAGES = {
         "Nossos filhotes, com pedigree, microchip e todo acompanhamento inicial, "
         "têm valor a partir de R$ 5.000.\n\n"
         "Esse investimento está dentro do que você planeja para adquirir seu filhote?\n\n"
-        "1️⃣ Sim, está dentro do planejamento\n"
-        "2️⃣ Talvez, gostaria de entender melhor\n"
-        "3️⃣ Ainda estou pesquisando valores"
+        "1. Sim, está dentro do planejamento\n"
+        "2. Talvez, gostaria de entender melhor\n"
+        "3. Ainda estou pesquisando valores"
     ),
     STATE_Q4_PURPOSE: (
-        "Última curiosidade 😊\n\n"
+        "Última curiosidade:\n\n"
         "Você procura seu Border Collie principalmente para:\n\n"
-        "1️⃣ Companhia / família\n"
-        "2️⃣ Esporte (agility, frisbee, atividades)\n"
-        "3️⃣ Trabalho ou pastoreio\n"
-        "4️⃣ Ainda estou pesquisando sobre a raça"
+        "1. Companhia / família\n"
+        "2. Esporte (agility, frisbee, atividades)\n"
+        "3. Trabalho ou pastoreio\n"
+        "4. Ainda estou pesquisando sobre a raça"
     ),
     STATE_COMPLETE: (
         "Perfeito! Obrigado pelas respostas.\n\n"
-        "Vou te mostrar agora quais filhotes ainda estão disponíveis desta ninhada "
-        "e te enviar algumas fotos. 🐾\n\n"
-        "Se quiser, também posso te explicar as diferenças entre eles para te ajudar a escolher."
+        "Estamos juntando as fotos e opções disponíveis da nova ninhada para te enviar.\n\n"
+        "Entraremos em contato em breve!"
     ),
 }
 

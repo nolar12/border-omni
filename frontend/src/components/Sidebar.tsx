@@ -52,15 +52,85 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: 'Canil',
+    items: [
+      {
+        to: '/canil/caes',
+        label: 'Cães',
+        icon: (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <path d="M10 5.172C10 3.782 8.423 2.679 6.5 3c-2.823.47-4.113 6.006-4 7 .08.703 1.725 1.722 3.656 2 1.261.19 2.148-.568 2.344-1"/>
+            <path d="M14.267 5.172c0-1.39 1.577-2.493 3.5-2.172 2.823.47 4.113 6.006 4 7-.08.703-1.725 1.722-3.656 2-1.261.19-2.148-.568-2.344-1"/>
+            <path d="M8 14v.5M16 14v.5"/>
+            <path d="M11.25 16.25h1.5L12 17l-.75-.75z"/>
+            <path d="M4.42 11.247A13.152 13.152 0 0 0 4 14.556C4 18.728 7.582 21 12 21s8-2.272 8-6.444c0-1.061-.162-2.2-.493-3.309m-9.243-6.082A8.801 8.801 0 0 1 12 5c.78 0 1.5.108 2.161.306"/>
+          </svg>
+        ),
+      },
+      {
+        to: '/canil/ninhadas',
+        label: 'Ninhadas',
+        icon: (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <polyline points="9 22 9 12 15 12 15 22"/>
+          </svg>
+        ),
+      },
+    ],
+  },
+  {
     title: 'Comunicação',
     items: [
       {
+        to: '/templates',
+        label: 'Templates WhatsApp',
+        icon: (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+        ),
+      },
+      {
         to: '/campanhas',
         label: 'Campanhas',
-        soon: true,
         icon: (
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
             <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+          </svg>
+        ),
+      },
+      {
+        to: '/galeria',
+        label: 'Galeria de Mídia',
+        icon: (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+        ),
+      },
+      {
+        to: '/contratos',
+        label: 'Contratos',
+        icon: (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
+        ),
+      },
+      {
+        to: '/notas',
+        label: 'Notas',
+        icon: (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <path d="M12 20h9"/>
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
           </svg>
         ),
       },
@@ -126,7 +196,6 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
       {
         to: '/configuracoes',
         label: 'Configurações',
-        soon: true,
         icon: (
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
             <circle cx="12" cy="12" r="3"/>
@@ -161,15 +230,15 @@ export default function Sidebar({ open, onClose }: Props) {
       >
         {/* Logo / Brand */}
         <div className="flex items-center gap-3 px-4 py-4 border-b border-white/10">
-          <div className="w-8 h-8 rounded-xl bg-blue-500 flex items-center justify-center flex-shrink-0 shadow-lg">
-            <span className="text-white font-bold text-sm">B</span>
+          <div className="w-9 h-9 rounded-xl bg-blue-500 flex items-center justify-center flex-shrink-0 shadow-lg">
+            <span className="text-white font-bold text-base">B</span>
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-white font-bold text-sm leading-tight">Border Omni</p>
-            <p className="text-slate-400 text-xs truncate">{user?.organization_name ?? 'SaaS'}</p>
+            <p className="text-white font-bold text-base leading-tight">Border Omni</p>
+            <p className="text-slate-400 text-sm truncate">{user?.organization_name ?? 'SaaS'}</p>
           </div>
           <button className="text-slate-400 hover:text-white md:hidden flex-shrink-0" onClick={onClose}>
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
@@ -179,7 +248,7 @@ export default function Sidebar({ open, onClose }: Props) {
         <nav className="flex-1 px-3 py-3 space-y-5 overflow-y-auto">
           {SECTIONS.map(section => (
             <div key={section.title}>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 px-2 mb-1.5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 px-2 mb-2">
                 {section.title}
               </p>
               <div className="space-y-0.5">
@@ -192,10 +261,10 @@ export default function Sidebar({ open, onClose }: Props) {
                       `sidebar-link ${isActive ? 'active' : ''} ${item.soon ? 'opacity-60' : ''}`
                     }
                   >
-                    <span className="w-4 h-4 flex-shrink-0">{item.icon}</span>
+                    <span className="w-5 h-5 flex-shrink-0">{item.icon}</span>
                     <span className="flex-1">{item.label}</span>
                     {item.soon && (
-                      <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-500 bg-slate-700 px-1.5 py-0.5 rounded-full">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 bg-slate-700 px-1.5 py-0.5 rounded-full">
                         em breve
                       </span>
                     )}
@@ -209,13 +278,13 @@ export default function Sidebar({ open, onClose }: Props) {
         {/* User footer */}
         <div className="p-3 border-t border-white/10">
           <div className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg">
-            <div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center flex-shrink-0">
-              <span className="text-white text-xs font-bold">
+            <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center flex-shrink-0">
+              <span className="text-white text-sm font-bold">
                 {user?.first_name?.[0]?.toUpperCase() ?? 'U'}
               </span>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-white text-xs font-medium truncate">
+              <p className="text-white text-sm font-medium truncate">
                 {user?.first_name} {user?.last_name}
               </p>
               <p className="text-slate-400 text-xs capitalize">{user?.plan_name}</p>
@@ -225,7 +294,7 @@ export default function Sidebar({ open, onClose }: Props) {
               title="Sair"
               className="text-slate-400 hover:text-red-400 transition-colors flex-shrink-0"
             >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
                 <polyline points="16 17 21 12 16 7"/>
                 <line x1="21" y1="12" x2="9" y2="12"/>

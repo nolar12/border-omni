@@ -40,7 +40,7 @@ function Bar({ value, color }: { value: number; color: string }) {
 
 function WinnerBadge() {
   return (
-    <span className="ml-2 text-[10px] font-bold uppercase tracking-wide bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">
+    <span className="ml-2 text-xs font-bold uppercase tracking-wide bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">
       melhor
     </span>
   );

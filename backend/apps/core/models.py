@@ -3,6 +3,42 @@ from django.db import models
 from django.contrib.auth.models import User
 
 
+class AgentConfig(models.Model):
+    MODEL_CHOICES = [
+        ('gpt-4o', 'GPT-4o'),
+        ('gpt-4o-mini', 'GPT-4o Mini'),
+        ('gpt-3.5-turbo', 'GPT-3.5 Turbo'),
+    ]
+
+    organization = models.OneToOneField(
+        'Organization', on_delete=models.CASCADE, related_name='agent_config'
+    )
+    openai_api_key = models.CharField(max_length=255, blank=True)
+    model = models.CharField(max_length=50, choices=MODEL_CHOICES, default='gpt-4o-mini')
+    system_prompt = models.TextField(blank=True)
+    temperature = models.FloatField(default=0.7)
+    rag_enabled = models.BooleanField(default=False)
+    match_threshold = models.FloatField(default=0.75)
+    match_count = models.IntegerField(default=5)
+    max_history_messages = models.IntegerField(default=10)
+    cordiality_enabled = models.BooleanField(default=False)
+    cordiality_use_ai = models.BooleanField(default=False)
+    bot_enabled = models.BooleanField(default=True)
+    initial_message = models.TextField(blank=True, default='')
+    sequence_message = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'agent_configs'
+
+    def __str__(self):
+        return f"AgentConfig({self.organization.name})"
+
+    def is_ready(self):
+        return bool(self.rag_enabled and self.openai_api_key)
+
+
 class Organization(models.Model):
     name = models.CharField(max_length=200)
     api_key = models.UUIDField(default=uuid.uuid4, unique=True)
@@ -21,6 +57,7 @@ class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='members')
     role = models.CharField(max_length=50, default='agent', blank=True)
+    phone = models.CharField(max_length=30, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True, null=True)
 
     class Meta:
@@ -28,6 +65,52 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.email} @ {self.organization.name}"
+
+
+def _media_upload_path(instance, filename):
+    return f'initial_media/org_{instance.agent_config.organization_id}/{filename}'
+
+
+class InitialMessageMedia(models.Model):
+    MEDIA_TYPE_CHOICES = [('image', 'Imagem'), ('video', 'Vídeo')]
+
+    agent_config = models.ForeignKey(
+        AgentConfig, on_delete=models.CASCADE, related_name='initial_media'
+    )
+    file = models.FileField(upload_to=_media_upload_path)
+    media_type = models.CharField(max_length=10, choices=MEDIA_TYPE_CHOICES, default='image')
+    original_name = models.CharField(max_length=255, blank=True)
+    order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'initial_message_media'
+        ordering = ['order', 'created_at']
+
+    def __str__(self):
+        return f'{self.media_type} — {self.original_name}'
+
+
+class GalleryMedia(models.Model):
+    MEDIA_TYPE_CHOICES = [('IMAGE', 'Imagem'), ('VIDEO', 'Vídeo'), ('DOCUMENT', 'Documento')]
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name='gallery_media'
+    )
+    name = models.CharField(max_length=255, blank=True)
+    description = models.TextField(blank=True)
+    file_url = models.CharField(max_length=2000)
+    mime_type = models.CharField(max_length=100, blank=True)
+    media_type = models.CharField(max_length=10, choices=MEDIA_TYPE_CHOICES, default='IMAGE')
+    size_bytes = models.PositiveBigIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'gallery_media'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.name} [{self.media_type}]'
 
 
 PLAN_CHOICES = [

@@ -4,7 +4,7 @@ from django.conf import settings
 from .states import (
     STATE_INITIAL, STATE_Q1_TIMELINE, STATE_Q2_HOUSING,
     STATE_Q3_BUDGET, STATE_Q4_PURPOSE, STATE_COMPLETE,
-    MESSAGES, NEXT_STATE, MSG_MEDIA_CAPTION,
+    MESSAGES, NEXT_STATE, MSG_MEDIA_CAPTION_VIDEO, MSG_MEDIA_CAPTION_IMAGE,
 )
 from .parsers import infer_timeline, infer_budget, infer_purpose
 
@@ -35,17 +35,21 @@ class QualifierEngine:
             if variants and self.lead.ab_variant:
                 variant = variants[self.lead.ab_variant]
                 if variant.get('url'):
+                    default_caption = (
+                        MSG_MEDIA_CAPTION_VIDEO if variant['type'] == 'video'
+                        else MSG_MEDIA_CAPTION_IMAGE
+                    )
                     replies.append({
                         'type': variant['type'],
                         'url': variant['url'],
-                        'caption': variant.get('caption', MSG_MEDIA_CAPTION),
+                        'caption': variant.get('caption', default_caption),
                     })
             else:
-                # fallback para configuração legada
+                # fallback para configuração legada (sempre vídeo)
                 media_url = getattr(settings, 'QUALIFICATION_MEDIA_URL', '')
                 media_type = getattr(settings, 'QUALIFICATION_MEDIA_TYPE', 'video')
                 if media_url:
-                    replies.append({'type': media_type, 'url': media_url, 'caption': MSG_MEDIA_CAPTION})
+                    replies.append({'type': media_type, 'url': media_url, 'caption': MSG_MEDIA_CAPTION_VIDEO})
             replies.append(MESSAGES[STATE_INITIAL])
             replies.append(MESSAGES[STATE_Q1_TIMELINE])
             return replies

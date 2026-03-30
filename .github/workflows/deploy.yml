@@ -1,0 +1,158 @@
+name: Deploy to ECS
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: 695455468842.dkr.ecr.us-east-1.amazonaws.com
+  ECS_CLUSTER: 12habits-cluster
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Salvar task definition atual (para rollback)
+        id: current-task
+        run: |
+          CURRENT=$(          aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services borderomni-backend \
+            --region $AWS_REGION \
+            --query "services[0].taskDefinition" \
+            --output text)
+          echo "task_def=$CURRENT" >> $GITHUB_OUTPUT
+
+      - name: Build e push imagem backend
+        id: build
+        run: |
+          GIT_SHA=$(echo $GITHUB_SHA | cut -c1-7)
+          IMAGE="${ECR_REGISTRY}/borderomni/backend"
+          docker build -t "${IMAGE}:latest" -t "${IMAGE}:${GIT_SHA}" ./backend
+          docker push "${IMAGE}:latest"
+          docker push "${IMAGE}:${GIT_SHA}"
+
+      - name: Registrar nova task definition
+        id: register
+        run: |
+          NEW_TD=$(aws ecs register-task-definition \
+            --cli-input-json file://ecs/task-definition-backend.json \
+            --region $AWS_REGION \
+            --query "taskDefinition.taskDefinitionArn" \
+            --output text)
+          echo "task_def=$NEW_TD" >> $GITHUB_OUTPUT
+
+      - name: Deploy backend service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service borderomni-backend \
+            --task-definition ${{ steps.register.outputs.task_def }} \
+            --region $AWS_REGION
+
+      - name: Aguardar estabilização
+        id: wait
+        continue-on-error: true
+        run: |
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services borderomni-backend \
+            --region $AWS_REGION
+
+      - name: Rollback em caso de falha
+        if: steps.wait.outcome == 'failure'
+        run: |
+          echo "Deploy falhou! Revertendo para ${{ steps.current-task.outputs.task_def }}"
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service borderomni-backend \
+            --task-definition ${{ steps.current-task.outputs.task_def }} \
+            --region $AWS_REGION
+          exit 1
+
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Salvar task definition atual (para rollback)
+        id: current-task
+        run: |
+          CURRENT=$(          aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services borderomni-frontend \
+            --region $AWS_REGION \
+            --query "services[0].taskDefinition" \
+            --output text)
+          echo "task_def=$CURRENT" >> $GITHUB_OUTPUT
+
+      - name: Build e push imagem frontend
+        run: |
+          GIT_SHA=$(echo $GITHUB_SHA | cut -c1-7)
+          IMAGE="${ECR_REGISTRY}/borderomni/frontend"
+          docker build -t "${IMAGE}:latest" -t "${IMAGE}:${GIT_SHA}" ./frontend
+          docker push "${IMAGE}:latest"
+          docker push "${IMAGE}:${GIT_SHA}"
+
+      - name: Registrar nova task definition
+        id: register
+        run: |
+          NEW_TD=$(aws ecs register-task-definition \
+            --cli-input-json file://ecs/task-definition-frontend.json \
+            --region $AWS_REGION \
+            --query "taskDefinition.taskDefinitionArn" \
+            --output text)
+          echo "task_def=$NEW_TD" >> $GITHUB_OUTPUT
+
+      - name: Deploy frontend service
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service borderomni-frontend \
+            --task-definition ${{ steps.register.outputs.task_def }} \
+            --region $AWS_REGION
+
+      - name: Aguardar estabilização
+        id: wait
+        continue-on-error: true
+        run: |
+          aws ecs wait services-stable \
+            --cluster $ECS_CLUSTER \
+            --services borderomni-frontend \
+            --region $AWS_REGION
+
+      - name: Rollback em caso de falha
+        if: steps.wait.outcome == 'failure'
+        run: |
+          echo "Deploy falhou! Revertendo para ${{ steps.current-task.outputs.task_def }}"
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service borderomni-frontend \
+            --task-definition ${{ steps.current-task.outputs.task_def }} \
+            --region $AWS_REGION
+          exit 1

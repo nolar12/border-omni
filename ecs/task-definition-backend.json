@@ -1,0 +1,49 @@
+{
+  "family": "borderomni-backend",
+  "networkMode": "bridge",
+  "requiresCompatibilities": ["EC2"],
+  "executionRoleArn": "arn:aws:iam::695455468842:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::695455468842:role/ecsTaskRole",
+  "cpu": "512",
+  "memory": "768",
+  "containerDefinitions": [
+    {
+      "name": "backend",
+      "image": "695455468842.dkr.ecr.us-east-1.amazonaws.com/borderomni/backend:latest",
+      "essential": true,
+      "portMappings": [
+        {"containerPort": 8000, "hostPort": 0, "protocol": "tcp"}
+      ],
+      "environment": [
+        {"name": "DEBUG",                "value": "False"},
+        {"name": "ALLOWED_HOSTS",        "value": "api.bordercolliesul.com.br,admin.bordercolliesul.com.br,*"},
+        {"name": "CORS_ALLOWED_ORIGINS", "value": "https://app.bordercolliesul.com.br,https://www.bordercolliesul.com.br,https://bordercolliesul.com.br"},
+        {"name": "CSRF_TRUSTED_ORIGINS", "value": "https://api.bordercolliesul.com.br,https://admin.bordercolliesul.com.br,https://app.bordercolliesul.com.br"},
+        {"name": "MEDIA_BASE_URL",       "value": "https://api.bordercolliesul.com.br"},
+        {"name": "DB_NAME",              "value": "borderomni"},
+        {"name": "DB_USER",              "value": "borderomni_user"},
+        {"name": "DB_HOST",              "value": "nolar-db-7.crsvmvzfe8dy.us-east-1.rds.amazonaws.com"},
+        {"name": "DB_PORT",              "value": "3306"}
+      ],
+      "secrets": [
+        {"name": "SECRET_KEY",  "valueFrom": "arn:aws:secretsmanager:us-east-1:695455468842:secret:borderomni/backend/SECRET_KEY-3ArPbr"},
+        {"name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:us-east-1:695455468842:secret:borderomni/backend/DB_PASSWORD-5ZJxOg"}
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/borderomni/backend",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}

@@ -30,6 +30,12 @@ export const authService = {
     return data;
   },
 
+  async updateProfile(payload: { first_name?: string; last_name?: string; phone?: string }): Promise<User> {
+    const { data } = await api.patch<User>('/auth/me', payload);
+    localStorage.setItem('user', JSON.stringify(data));
+    return data;
+  },
+
   logout() {
     localStorage.clear();
     window.location.href = '/login';

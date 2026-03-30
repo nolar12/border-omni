@@ -32,27 +32,27 @@ export default function Simulator() {
   return (
     <div className="max-w-lg mx-auto space-y-4">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-        <h2 className="font-semibold text-gray-800 mb-1">Simulador de Webhook</h2>
-        <p className="text-xs text-gray-400 mb-4">Simule mensagens de leads para testar o fluxo da IA.</p>
+        <h2 className="font-semibold text-gray-800 text-lg mb-1">Simulador de Webhook</h2>
+        <p className="text-sm text-gray-400 mb-4">Simule mensagens de leads para testar o fluxo da IA.</p>
         <form onSubmit={handleSend} className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">API Key</label>
-            <input type="text" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs font-mono outline-none focus:border-blue-400"
+            <label className="block text-sm font-medium text-gray-600 mb-1">API Key</label>
+            <input type="text" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm font-mono outline-none focus:border-blue-400"
               value={orgKey} onChange={e => setOrgKey(e.target.value)} required />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Telefone</label>
-            <input type="text" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white outline-none focus:border-blue-400"
+            <label className="block text-sm font-medium text-gray-600 mb-1">Telefone</label>
+            <input type="text" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-base text-gray-900 bg-white outline-none focus:border-blue-400"
               value={phone} onChange={e => setPhone(e.target.value)} required />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Mensagem</label>
-            <textarea rows={3} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white outline-none focus:border-blue-400 resize-none"
+            <label className="block text-sm font-medium text-gray-600 mb-1">Mensagem</label>
+            <textarea rows={3} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-base text-gray-900 bg-white outline-none focus:border-blue-400 resize-none"
               placeholder="oi, quero saber sobre os filhotes" value={text} onChange={e => setText(e.target.value)} required />
           </div>
-          {error && <div className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</div>}
+          {error && <div className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</div>}
           <button type="submit" disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold rounded-xl py-2.5 text-sm transition-colors flex items-center justify-center gap-2">
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold rounded-xl py-3 text-base transition-colors flex items-center justify-center gap-2">
             {loading ? <span className="loading loading-spinner loading-sm" /> : '⚡ Enviar'}
           </button>
         </form>
