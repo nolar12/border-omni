@@ -1,0 +1,58 @@
+---
+description: Padrões de segurança para projetos locais com Ngrok expostos à internet
+alwaysApply: true
+---
+
+# Segurança — Projetos Locais com Ngrok
+
+## Regra principal: servidores locais sempre em 127.0.0.1
+
+Todo servidor de desenvolvimento (Django, Vite, Node, etc.) deve escutar **apenas em `127.0.0.1`**, nunca em `0.0.0.0`.
+O Ngrok faz o proxy externo — ele é a única "porta de entrada" da internet.
+
+```bash
+# ❌ ERRADO — expõe na rede local e potencialmente na internet
+python manage.py runserver 0.0.0.0:9022
+npm run dev -- --host 0.0.0.0
+
+# ✅ CORRETO — só local, Ngrok faz o proxy
+python manage.py runserver 127.0.0.1:9022
+npm run dev -- --host 127.0.0.1
+```
+
+## Django settings obrigatórios
+
+```python
+# ❌ ERRADO
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-...')  # fallback inseguro
+DEBUG = os.getenv('DEBUG', 'True') == 'True'                 # padrão True
+ALLOWED_HOSTS = ['*']
+CORS_ALLOW_ALL_ORIGINS = DEBUG
+
+# ✅ CORRETO
+_secret = os.getenv('SECRET_KEY')
+if not _secret:
+    raise RuntimeError('SECRET_KEY não definida no .env')
+SECRET_KEY = _secret
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'seu-dominio.ngrok.app']
+CORS_ALLOW_ALL_ORIGINS = False
+```
+
+## Variáveis de ambiente
+
+- Credenciais, chaves e senhas **sempre no `.env`**, nunca hardcoded
+- Nunca exibir senha em scripts de inicialização (`echo "Login: user / senha"`)
+- `.env` deve estar no `.gitignore`
+- Gerar `SECRET_KEY` com: `python3 -c "import secrets; print(secrets.token_urlsafe(50))"`
+
+## Checklist para novo projeto com Ngrok
+
+- [ ] Servidor backend: `127.0.0.1:PORTA`
+- [ ] Servidor frontend: `--host 127.0.0.1`
+- [ ] `SECRET_KEY` gerada e no `.env` (sem fallback no código)
+- [ ] `DEBUG=False` como padrão (ativar só via `.env` em dev)
+- [ ] `ALLOWED_HOSTS` lista explícita com domínio Ngrok
+- [ ] `CORS_ALLOW_ALL_ORIGINS = False`
+- [ ] `.env` no `.gitignore`
+- [ ] UFW ativo com as portas necessárias liberadas

@@ -7,7 +7,7 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REGISTRY: 695455468842.dkr.ecr.us-east-1.amazonaws.com
-  ECS_CLUSTER: 12habits-cluster
+  ECS_CLUSTER: borderomni-cluster
 
 jobs:
   deploy-backend:

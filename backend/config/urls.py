@@ -17,7 +17,9 @@ urlpatterns = [
     path('health', health),
     path('admin/', admin.site.urls),
     path('api/', include('api.urls')),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    # Serve media files in all environments (DEBUG=True or False)
+    re_path(r'^media/(?P<path>.*)$', static_serve, {'document_root': settings.MEDIA_ROOT}),
+]
 
 # Serve o frontend React buildado (gerado por ./start.sh build).
 # Quando o build existe, https://borderomni.ngrok.app abre o app completo.

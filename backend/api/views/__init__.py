@@ -3286,6 +3286,20 @@ class LitterHealthRecordViewSet(viewsets.ModelViewSet):
         return qs
 
 
+# ─── Public plans endpoint (no authentication required) ──────────────────────
+
+class PublicPlanListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from apps.core.models import Plan
+        from api.serializers import PlanSerializer
+
+        plans = Plan.objects.filter(is_active=True).order_by('price_monthly')
+        serializer = PlanSerializer(plans, many=True)
+        return Response(serializer.data)
+
+
 # ─── Public kennel endpoints (no authentication required) ────────────────────
 
 class PublicLitterListView(APIView):

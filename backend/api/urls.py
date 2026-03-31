@@ -21,6 +21,7 @@ from api.views import (
     DogViewSet, LitterViewSet,
     DogHealthRecordViewSet, LitterHealthRecordViewSet,
     PublicLitterListView, PublicLitterDetailView,
+    PublicPlanListView,
 )
 
 router = DefaultRouter()
@@ -82,4 +83,7 @@ urlpatterns = [
     # Public kennel endpoints (no authentication required)
     path('public/litters/', PublicLitterListView.as_view(), name='public_litters'),
     path('public/litters/<int:pk>/', PublicLitterDetailView.as_view(), name='public_litter_detail'),
+
+    # Public plans (no authentication required)
+    path('public/plans/', PublicPlanListView.as_view(), name='public_plans'),
 ]

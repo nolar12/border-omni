@@ -21,7 +21,7 @@ Preciso que você:
    - SECRET_KEY via variável de ambiente (sem fallback inseguro)
    - DEBUG=False por padrão
    - ALLOWED_HOSTS via variável de ambiente
-   - CORS configurado para https://app.PROJETO.com.br
+   - CORS configurado para https://app.bordercolliesul.com.br
    - CSRF configurado para os domínios corretos
    - DATABASE conectando ao RDS MySQL via variáveis de ambiente
 
@@ -51,7 +51,7 @@ Estou configurando um projeto React para rodar no AWS ECS com Docker.
 Arquitetura:
 - Build estático do React servido pelo Nginx
 - Container roda na porta 80
-- URL da API: https://api.PROJETO.com.br
+- URL da API: https://api.bordercolliesul.com.br
 - Variáveis de ambiente injetadas em runtime via env-config.js (não em build time)
 
 Preciso que você:
@@ -106,7 +106,7 @@ Frontend:
 - Porta do container: 80
 - CPU: 256, Memória: 512 MB
 - Log group: /ecs/PROJETO/frontend
-- Variável: API_URL=https://api.PROJETO.com.br
+- Variável: API_URL=https://api.bordercolliesul.com.br
 
 Gere os dois JSONs de task definition prontos para registrar com:
 aws ecs register-task-definition --cli-input-json file://task-definition-backend.json

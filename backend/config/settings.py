@@ -13,7 +13,10 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = [
     h.strip()
-    for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+    for h in os.getenv(
+        'ALLOWED_HOSTS',
+        'localhost,127.0.0.1,filhotefacil.com.br,www.filhotefacil.com.br,api.filhotefacil.com.br'
+    ).split(',')
     if h.strip()
 ]
 
@@ -143,7 +146,9 @@ _default_cors = (
     'http://localhost:9023,'
     'https://www.bordercolliesul.com.br,'
     'https://bordercolliesul.com.br,'
-    'https://app.bordercolliesul.com.br'
+    'https://app.bordercolliesul.com.br,'
+    'https://filhotefacil.com.br,'
+    'https://www.filhotefacil.com.br'
 )
 CORS_ALLOWED_ORIGINS = [
     o.strip()
@@ -155,7 +160,12 @@ CSRF_TRUSTED_ORIGINS = [
     o.strip()
     for o in os.getenv(
         'CSRF_TRUSTED_ORIGINS',
-        'https://api.bordercolliesul.com.br,https://admin.bordercolliesul.com.br,https://app.bordercolliesul.com.br'
+        'https://api.bordercolliesul.com.br,'
+        'https://admin.bordercolliesul.com.br,'
+        'https://app.bordercolliesul.com.br,'
+        'https://filhotefacil.com.br,'
+        'https://www.filhotefacil.com.br,'
+        'https://api.filhotefacil.com.br'
     ).split(',')
     if o.strip()
 ]
