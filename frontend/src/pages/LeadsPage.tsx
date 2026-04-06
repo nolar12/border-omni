@@ -314,8 +314,6 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const lastSuggestedMsgId = useRef<number | null>(null);
   const isSendingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [cordialityPreview, setCordialityPreview] = useState<{ original: string; enhanced: string } | null>(null);
-  const [enhancing, setEnhancing] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState<ChannelType | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [approvedTemplates, setApprovedTemplates] = useState<MessageTemplate[]>([]);
@@ -595,38 +593,15 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     if (!lead || !msgText.trim() || isSendingRef.current) return;
     isSendingRef.current = true;
     const rawText = msgText.trim();
-    setEnhancing(true);
+    setSending(true);
     try {
-      const result = await leadsService.enhanceMessage(lead.id, rawText);
-      if (result.changed) {
-        setCordialityPreview({ original: result.original, enhanced: result.enhanced });
-        return;
-      }
-      // Texto não foi alterado — envia direto
-      setSending(true);
       const msg = await leadsService.sendMessage(lead.id, rawText);
       setMessages(prev => [...prev, msg]);
       setMsgText('');
       triggerSaveQRModal(rawText);
     } finally {
-      setEnhancing(false);
       setSending(false);
       isSendingRef.current = false;
-    }
-  }
-
-  async function handleSendEnhanced() {
-    if (!lead || !cordialityPreview) return;
-    const sentText = cordialityPreview.enhanced;
-    setSending(true);
-    try {
-      const msg = await leadsService.sendMessage(lead.id, sentText);
-      setMessages(prev => [...prev, msg]);
-      setMsgText('');
-      setCordialityPreview(null);
-      triggerSaveQRModal(sentText);
-    } finally {
-      setSending(false);
     }
   }
 
@@ -1391,11 +1366,11 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                   {/* Enviar */}
                   <button
                     onClick={handleSend}
-                    disabled={sending || enhancing || !msgText.trim() || (!isWhatsappWindowOpen && selectedChannel === 'whatsapp')}
+                    disabled={sending || !msgText.trim() || (!isWhatsappWindowOpen && selectedChannel === 'whatsapp')}
                     className="flex items-center gap-2 px-5 h-10 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 transition-colors flex-shrink-0 font-medium text-sm"
-                    title={enhancing ? 'Aprimorando mensagem...' : 'Enviar'}
+                    title="Enviar"
                   >
-                    {(sending || enhancing)
+                    {sending
                       ? <span className="loading loading-spinner loading-sm" />
                       : (
                         <>
@@ -1638,59 +1613,6 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
             <polyline points="20 6 9 17 4 12"/>
           </svg>
           Resposta rápida salva com sucesso
-        </div>
-      )}
-
-      {/* ── Modal de aprovação de cordialidade ── */}
-      {cordialityPreview && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden">
-            {/* Header */}
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50">
-              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                <svg className="w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                  <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-                </svg>
-              </div>
-              <div>
-                <p className="font-semibold text-gray-800 text-sm">Mensagem aprimorada</p>
-                <p className="text-xs text-gray-500">A IA tornou sua mensagem mais cordial. Deseja enviá-la?</p>
-              </div>
-            </div>
-
-            {/* Body */}
-            <div className="px-5 py-4 space-y-3 max-h-72 overflow-y-auto">
-              <div>
-                <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">Original</p>
-                <p className="text-sm text-gray-500 bg-gray-50 rounded-xl px-3 py-2.5 whitespace-pre-wrap leading-relaxed">
-                  {cordialityPreview.original}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-blue-500 uppercase tracking-wide mb-1">Versão aprimorada</p>
-                <p className="text-sm text-gray-800 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5 whitespace-pre-wrap leading-relaxed">
-                  {cordialityPreview.enhanced}
-                </p>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="flex items-center gap-2 px-5 py-4 border-t border-gray-100 bg-gray-50">
-              <button
-                onClick={() => setCordialityPreview(null)}
-                className="flex-1 py-2 rounded-xl text-sm font-medium text-gray-600 bg-white border border-gray-200 hover:bg-gray-100 transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleSendEnhanced}
-                disabled={sending}
-                className="flex-1 py-2 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
-                {sending ? <span className="loading loading-spinner loading-xs" /> : 'Enviar versão aprimorada'}
-              </button>
-            </div>
-          </div>
         </div>
       )}
 

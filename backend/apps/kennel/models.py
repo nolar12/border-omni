@@ -1,5 +1,15 @@
+import os
+import uuid
 from django.db import models
 from apps.core.models import Organization
+
+
+def _unique_upload(base_dir):
+    """Retorna uma função upload_to que gera nome único com UUID, preservando extensão."""
+    def _fn(instance, filename):
+        ext = os.path.splitext(filename)[1].lower()
+        return f'{base_dir}/{uuid.uuid4().hex}{ext}'
+    return _fn
 
 
 class Litter(models.Model):
@@ -100,7 +110,7 @@ class Dog(models.Model):
 
 class DogMedia(models.Model):
     dog = models.ForeignKey(Dog, on_delete=models.CASCADE, related_name='media')
-    file = models.ImageField(upload_to='kennel/dogs/')
+    file = models.ImageField(upload_to=_unique_upload('kennel/dogs'))
     caption = models.CharField(max_length=200, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
@@ -114,7 +124,7 @@ class DogMedia(models.Model):
 
 class LitterMedia(models.Model):
     litter = models.ForeignKey(Litter, on_delete=models.CASCADE, related_name='media')
-    file = models.ImageField(upload_to='kennel/litters/')
+    file = models.ImageField(upload_to=_unique_upload('kennel/litters'))
     caption = models.CharField(max_length=200, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 

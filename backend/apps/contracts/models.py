@@ -1,5 +1,11 @@
+import os
 import uuid
 from django.db import models
+
+
+def _contract_pdf_path(instance, filename):
+    ext = os.path.splitext(filename)[1].lower() or '.pdf'
+    return f'contracts/pdfs/{uuid.uuid4().hex}{ext}'
 from apps.core.models import Organization
 from apps.leads.models import Lead
 
@@ -63,7 +69,7 @@ class SaleContract(models.Model):
     signature_type = models.CharField(max_length=20, blank=True)  # 'canvas' ou 'govbr'
 
     # PDF gerado
-    pdf_file = models.FileField(upload_to='contracts/pdfs/', null=True, blank=True)
+    pdf_file = models.FileField(upload_to=_contract_pdf_path, null=True, blank=True)
 
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)

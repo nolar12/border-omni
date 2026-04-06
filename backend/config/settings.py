@@ -113,13 +113,37 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+
+# --- Storage: S3 em produção, local em desenvolvimento ---
+_AWS_BUCKET = os.getenv('AWS_STORAGE_BUCKET_NAME', '')
+USE_S3 = bool(_AWS_BUCKET)
+
+if USE_S3:
+    INSTALLED_APPS += ['storages']  # type: ignore[operator]
+    AWS_STORAGE_BUCKET_NAME = _AWS_BUCKET
+    AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME', 'us-east-1')
+    AWS_DEFAULT_ACL = None
+    AWS_S3_FILE_OVERWRITE = False           # nunca sobrescreve — força nome único
+    AWS_QUERYSTRING_AUTH = False            # URLs públicas sem assinatura
+    AWS_LOCATION = 'media'                  # prefixo de todas as chaves no bucket
+    AWS_S3_CUSTOM_DOMAIN = os.getenv(
+        'AWS_S3_CUSTOM_DOMAIN',
+        f'{_AWS_BUCKET}.s3.amazonaws.com',
+    )
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
+    MEDIA_ROOT = ''
+else:
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = BASE_DIR / 'media'
 
 # URL pública base — usada para construir links de mídia acessíveis pelo WhatsApp e Meta.
 # Em desenvolvimento: MEDIA_BASE_URL=https://borderomni.ngrok.app
-# Em produção: MEDIA_BASE_URL=https://api.bordercolliesul.com.br
-MEDIA_BASE_URL = os.getenv('MEDIA_BASE_URL', 'http://localhost:9022').rstrip('/')
+# Em produção: definido via env ou derivado do bucket S3
+_default_media_base = (
+    f'https://{_AWS_BUCKET}.s3.amazonaws.com' if USE_S3 else 'http://localhost:9022'
+)
+MEDIA_BASE_URL = os.getenv('MEDIA_BASE_URL', _default_media_base).rstrip('/')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

@@ -1,0 +1,524 @@
+---
+description: Arquitetura de referência — blueprint para projeto omnichannel (foco dev local)
+alwaysApply: true
+---
+
+# Arquitetura de Referência — Projeto Omnichannel
+
+<!--
+  Banco MySQL local: nolar (127.0.0.1:3306, user: root)
+  Tabela de usuários existente: users
+-->
+
+Blueprint de projeto. **Fase atual: desenvolvimento 100% local, sem Docker.**
+AWS (ECS/ECR/ALB) será configurado apenas quando o projeto estiver maduro.
+
+**Objetivo:** reutilizar a arquitetura omnichannel do border_omni em outro projeto existente,
+conectando ao mesmo banco de dados que já possui a tabela de usuários.
+
+**Abordagem incremental:** começar apenas com autenticação (tabela de users).
+Demais módulos e tabelas do banco existente serão mapeados conforme o usuário indicar.
+
+**Projeto de referência:** `border_omni` (Cathedral/NOLAR/WWW7/border_omni) contém
+a implementação original de cada padrão descrito aqui.
+
+## Stack Resumida
+
+| Camada        | Tecnologia                                                |
+|---------------|-----------------------------------------------------------|
+| Backend       | Django 4.2 + DRF 3.15 + SimpleJWT 5.3                    |
+| Banco         | MySQL 8 local (PyMySQL) — banco único já existente         |
+| Frontend      | React 19 + TypeScript 5.9 + Vite 7 + Tailwind 4 + DaisyUI 5 |
+| Mobile        | Capacitor 8 (Android/iOS)                                 |
+| PWA           | vite-plugin-pwa + Workbox 7 (injectManifest)              |
+| IA            | OpenAI (chat + embeddings)                                |
+| Vetores       | Supabase (pgvector, isolado por org)                      |
+| PDF           | WeasyPrint 62                                             |
+| Deploy futuro | AWS ECS EC2 + ECR + ALB + GitHub Actions (STANDBY)        |
+
+## Ambiente de Desenvolvimento Local
+
+### Regras obrigatórias
+
+- **Servidores SEMPRE em `127.0.0.1`**, nunca `0.0.0.0`
+- Backend: `python manage.py runserver 127.0.0.1:PORTA`
+- Frontend: `npm run dev -- --host 127.0.0.1 --port PORTA`
+- Banco MySQL rodando localmente (localhost:3306)
+
+### Portas (fixas para este projeto — evitar conflito com outros servidores)
+
+| Serviço  | Porta |
+|----------|-------|
+| Frontend | 9041  |
+| Backend  | 9042  |
+| MySQL    | 3306  |
+
+### start.sh (desenvolvimento local)
+
+```bash
+#!/bin/bash
+set -e
+source .env
+
+# Backend
+cd backend
+python manage.py runserver 127.0.0.1:9042 &
+
+# Frontend
+cd ../frontend
+npm run dev -- --host 127.0.0.1 --port 9041 &
+
+wait
+```
+
+---
+
+## Backend — Django
+
+### Estrutura de diretórios
+
+```
+backend/
+├── config/
+│   ├── settings.py
+│   ├── urls.py
+│   ├── wsgi.py
+│   └── asgi.py
+├── api/
+│   ├── urls.py           # Router DRF + rotas manuais
+│   ├── views/            # ViewSets e APIViews
+│   └── serializers/      # Serializers DRF
+├── apps/
+│   ├── shared_auth/      # modelos managed=False (tabelas existentes, mapeadas sob demanda)
+│   │   ├── models.py     #   Fase 1: SharedUser. Demais tabelas conforme aprovação.
+│   │   └── backends.py   #   SharedUserBackend (auth custom)
+│   └── ... (apps do projeto — tabelas novas, migrations normais)
+├── manage.py
+└── requirements.txt
+```
+
+### Dependências backend
+
+Django 4.2, DRF 3.15, SimpleJWT 5.3, django-cors-headers 4.3, django-filter 24.3,
+PyMySQL 1.1, openai 1.56, supabase 2.9, WeasyPrint 62, Pillow 10.4, requests 2.32.
+
+### settings.py — padrões obrigatórios
+
+```python
+_secret = os.getenv('SECRET_KEY')
+if not _secret:
+    raise RuntimeError('SECRET_KEY não definida no .env')
+SECRET_KEY = _secret
+
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
+ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
+
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = [o.strip() for o in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',') if o.strip()]
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if o.strip()]
+```
+
+### Banco de Dados — MySQL único já existente
+
+O projeto conecta a um **banco MySQL local já existente** que possui a tabela de users.
+Tudo no mesmo database — tabelas existentes (managed=False) + tabelas novas do projeto (managed=True).
+
+- **Tabelas existentes**: `managed = False` → Django nunca tenta criar/alterar
+- **Tabelas novas**: `managed = True` (padrão) → Django cria via `migrate` normalmente
+- **Sem database router** — tudo no mesmo banco, sem multi-db
+
+### REGRA CRÍTICA — Proteção de Tabelas Existentes
+
+As tabelas que já existem no banco (users, organizations, user_profiles, plans, subscriptions,
+e qualquer outra tabela já existente) são **compartilhadas entre projetos**.
+
+**O que é PROIBIDO fazer automaticamente:**
+- Renomear colunas existentes
+- Alterar tipo de colunas existentes
+- Remover colunas ou tabelas
+- Executar ALTER TABLE, migrations ou SQL direto sem aprovação
+
+**O que PODE ser necessário (mas requer aprovação):**
+- Adicionar nova coluna a uma tabela existente
+- Adicionar novo índice
+- Alterar constraints (nullable, default, etc.)
+
+**Fluxo obrigatório para qualquer alteração em tabela existente:**
+
+1. **PROPOR** a mudança em texto claro (qual tabela, qual coluna, tipo, nullable, default)
+2. **EXPLICAR RISCOS**: impacto em outros projetos que usam o mesmo banco
+3. **AGUARDAR APROVAÇÃO** do usuário antes de gerar migration ou SQL
+4. Só após aprovação: criar migration manual com `RunSQL` (não `managed=True`)
+
+Exemplo de proposta:
+```
+PROPOSTA DE ALTERAÇÃO — tabela user_profiles
+- Adicionar coluna: `avatar_url VARCHAR(500) NULL DEFAULT NULL`
+- Motivo: permitir foto de perfil no novo projeto
+- Risco: nenhum para outros projetos (coluna nullable, não quebra queries existentes)
+- Aguardando aprovação para gerar migration.
+```
+
+**Se não houver necessidade de alterar tabelas existentes, não propor alterações.**
+A regra padrão é: mapear o que existe com `managed=False` e trabalhar com isso.
+
+```python
+# settings.py
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': os.getenv('DB_NAME', 'nolar'),
+        'USER': os.getenv('DB_USER', ''),
+        'PASSWORD': os.getenv('DB_PASSWORD', ''),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '3306'),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
+    },
+}
+
+AUTH_USER_MODEL = 'shared_auth.SharedUser'
+```
+
+### Abordagem Incremental — Mapear Tabelas Existentes
+
+O banco existente tem muitas tabelas legadas (projeto antigo). **NÃO mapear tudo de uma vez.**
+
+**Fase 1 (agora):** apenas a tabela de **users** para autenticação.
+**Fases seguintes:** o usuário indica quais módulos/tabelas do banco existente devem ser mapeados.
+Cada novo mapeamento é feito sob demanda, conforme aprovação.
+
+### Modelos Existentes (managed=False) — app shared_auth
+
+Campos devem espelhar **exatamente** as colunas reais — nunca renomear campos existentes.
+
+```python
+# apps/shared_auth/models.py — FASE 1: apenas users
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
+from django.db import models
+
+class SharedUserManager(BaseUserManager):
+    def get_by_natural_key(self, email):
+        return self.get(email=email)
+
+class SharedUser(AbstractBaseUser):
+    """
+    Tabela: nolar.users (Ruby on Rails / Devise — legada)
+    ATENÇÃO: senha armazenada em encrypted_password + password_salt (não formato Django).
+    O backend de autenticação precisa implementar o mesmo algoritmo do Rails.
+    Mapeados apenas os campos necessários para autenticação.
+    """
+    # --- identificação ---
+    username            = models.CharField(max_length=80, unique=True, blank=True, null=True)
+    email               = models.CharField(max_length=100, blank=True, null=True)
+    name                = models.CharField(max_length=100)
+
+    # --- senha (formato Devise/Rails — NÃO é hash Django) ---
+    encrypted_password  = models.CharField(max_length=128)
+    password_salt       = models.CharField(max_length=255)
+
+    # --- estado da conta ---
+    state               = models.CharField(max_length=255, default='passive')
+    admin               = models.IntegerField(blank=True, null=True)
+    tipo                = models.CharField(max_length=255, blank=True, null=True)
+    deleted_at          = models.DateTimeField(blank=True, null=True)
+
+    # --- timestamps ---
+    created_at          = models.DateTimeField(blank=True, null=True)
+    updated_at          = models.DateTimeField(blank=True, null=True)
+
+    # Django AbstractBaseUser requer este campo; não usar — autenticação é via backend custom
+    password            = None
+
+    USERNAME_FIELD  = 'email'
+    REQUIRED_FIELDS = ['name']
+    objects         = SharedUserManager()
+
+    @property
+    def is_active(self):
+        return self.state == 'active' and self.deleted_at is None
+
+    @property
+    def is_staff(self):
+        return bool(self.admin)
+
+    @property
+    def is_superuser(self):
+        return bool(self.admin)
+
+    def check_password(self, raw_password):
+        # PENDENTE: implementar verificação compatível com o algoritmo Devise do Rails.
+        # Verificar qual algoritmo está em uso (SHA512 + salt ou BCrypt).
+        # ⚠️ NÃO alterar encrypted_password ou password_salt na tabela.
+        raise NotImplementedError('Backend de autenticação Devise não implementado ainda.')
+
+    def has_perm(self, perm, obj=None): return bool(self.admin)
+    def has_module_perms(self, app_label): return bool(self.admin)
+
+    class Meta:
+        managed = False
+        db_table = 'users'
+```
+
+**ALERTA — Autenticação Devise:**
+A tabela `users` usa hash de senha do Ruby on Rails (Devise). O campo `encrypted_password`
+**não é compatível** com `check_password()` do Django. Antes de implementar o login,
+é necessário identificar o algoritmo exato (SHA512+salt ou BCrypt) e criar o backend custom.
+Isso será tratado como item separado de aprovação.
+
+Demais tabelas do banco serão mapeadas aqui com `managed = False` conforme o usuário indicar.
+
+### Custom Authentication Backend — Devise / restful_authentication_sha1
+
+**Algoritmo 100% confirmado** (fonte: `nolar7/app/models/user.rb` + `devise.rb`):
+- Gem: `devise-encryptable`, encryptor: `:restful_authentication_sha1`
+- Stretches: **10** | Pepper: `3416b23e13c51c713dfb3808af6e1dee9423b630`
+- Fórmula: `SHA1("--{salt}--{digest}--{password}--")` × 10 rounds, digest inicia no pepper
+- Contas OAuth (`provider IS NOT NULL`) não têm senha — ignorar no authenticate
+
+```python
+# apps/shared_auth/backends.py
+import hashlib
+from django.contrib.auth.backends import ModelBackend
+from .models import SharedUser
+
+DEVISE_PEPPER    = "3416b23e13c51c713dfb3808af6e1dee9423b630"
+DEVISE_STRETCHES = 10
+
+def _restful_auth_sha1(password: str, salt: str) -> str:
+    digest = DEVISE_PEPPER
+    for _ in range(DEVISE_STRETCHES):
+        digest = hashlib.sha1(f"--{salt}--{digest}--{password}--".encode()).hexdigest()
+    return digest
+
+class DeviseBackend(ModelBackend):
+    def authenticate(self, request, username=None, password=None, **kwargs):
+        email = (username or kwargs.get('email', '')).lower()
+        try:
+            user = SharedUser.objects.filter(
+                email=email,
+                state='active',
+                deleted_at__isnull=True,
+                provider__isnull=True,  # contas OAuth não têm senha local
+            ).first()
+            if not user:
+                return None
+        except SharedUser.DoesNotExist:
+            return None
+        if _restful_auth_sha1(password, user.password_salt) == user.encrypted_password:
+            return user
+        return None
+
+    def get_user(self, user_id):
+        try:
+            return SharedUser.objects.get(pk=user_id)
+        except SharedUser.DoesNotExist:
+            return None
+```
+
+```python
+# settings.py
+AUTHENTICATION_BACKENDS = ['apps.shared_auth.backends.DeviseBackend']
+```
+
+### Autenticação JWT (SimpleJWT)
+
+```python
+THIRD_PARTY_APPS = ['rest_framework', 'rest_framework_simplejwt', 'corsheaders', 'django_filters']
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': ['rest_framework_simplejwt.authentication.JWTAuthentication'],
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 30,
+}
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=24),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+}
+```
+
+### Padrão de views e URLs
+
+```python
+# _get_tokens: RefreshToken.for_user(user) → {'refresh', 'access', 'user'}
+# LoginView (AllowAny): autentica via SharedUserBackend → retorna tokens
+# MeView (IsAuthenticated): GET retorna user, PATCH atualiza perfil
+# Refresh: TokenRefreshView do SimpleJWT em /api/auth/refresh
+
+# config/urls.py: health + admin + api/
+# api/urls.py: DefaultRouter (ViewSets) + rotas manuais de auth
+# Multi-tenancy: ViewSets filtram por request.user.profile.organization
+```
+
+### Desenvolvimento local (sem Docker)
+
+```bash
+# Instalar dependências (virtualenv recomendado)
+pip install -r requirements.txt
+
+# Migrations criam apenas tabelas novas (managed=True); tabelas existentes não são tocadas
+python manage.py migrate --noinput
+
+# Iniciar servidor — SEMPRE 127.0.0.1, nunca 0.0.0.0
+python manage.py runserver 127.0.0.1:9042
+```
+
+---
+
+## Frontend — React + Vite
+
+### Estrutura
+
+```
+frontend/
+├── src/
+│   ├── services/api.ts    # Axios com interceptors JWT
+│   ├── services/auth.ts   # Login/logout/refresh helpers
+│   ├── components/
+│   ├── pages/
+│   ├── config.ts           # Runtime env config
+│   ├── index.css           # Tailwind + DaisyUI imports
+│   └── sw.ts               # Service Worker (Workbox)
+├── vite.config.ts
+└── package.json
+```
+
+### Dependências frontend
+
+React 19, react-router-dom 6, axios 1.x, Capacitor 8.
+Vite 7, Tailwind 4, DaisyUI 5, TypeScript 5.9, vite-plugin-pwa 1.x.
+
+### vite.config.ts (padrão dev local)
+
+```typescript
+// Plugins: tailwindcss(), react(), VitePWA({ strategies: 'injectManifest' })
+// server.port: 9041
+// server.proxy: /api e /media → http://localhost:9042 (backend local)
+```
+
+### Cliente HTTP (api.ts) — padrão Axios + JWT
+
+```typescript
+// baseURL: VITE_API_URL do .env (dev local: http://localhost:9042)
+const api = axios.create({ baseURL: `${API_BASE_URL}/api` });
+
+// Request interceptor: injeta Bearer token do localStorage
+// Response interceptor: em 401, tenta POST /api/auth/refresh com refresh_token
+//   → sucesso: atualiza localStorage e refaz request original
+//   → falha: localStorage.clear() + redirect /login
+```
+
+Referência: `border_omni/frontend/src/services/api.ts` (projeto de referência)
+
+### CSS — Tailwind v4 + DaisyUI
+
+`index.css`: `@import "tailwindcss"; @plugin "daisyui"; @theme { ... }`
+
+---
+
+## AWS / Docker / Deploy (STANDBY — só quando o projeto estiver maduro)
+
+**Localmente NÃO usa Docker.** Tudo roda nativo (Python + Node direto).
+Docker e AWS serão configurados apenas na fase de publicação.
+
+Referência futura (border_omni):
+- ECS EC2 + ECR + ALB, RDS MySQL, Secrets Manager, GitHub Actions CI/CD
+- Dockerfiles: backend Python 3.12-slim + Gunicorn, frontend Node 20 → Nginx 1.27
+- Consultar: `border_omni/Dockerfile`, `border_omni/ecs/`, `border_omni/.github/workflows/deploy.yml`
+
+---
+
+## Variáveis de Ambiente — Desenvolvimento Local
+
+### Backend (.env na raiz do backend/)
+
+```
+SECRET_KEY=<gerar com: python3 -c "import secrets; print(secrets.token_urlsafe(50))">
+DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1
+
+# Banco MySQL local — o mesmo banco que já tem as tabelas de users/orgs/plans
+DB_NAME=nolar
+DB_USER=root
+DB_PASSWORD=          # cello12 — nunca commitar a senha
+DB_HOST=127.0.0.1
+DB_PORT=3306
+
+MEDIA_BASE_URL=http://localhost:9042
+CORS_ALLOWED_ORIGINS=http://localhost:9041
+CSRF_TRUSTED_ORIGINS=http://localhost:9041
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_KEY=eyJ...
+```
+
+### Frontend (.env na raiz do frontend/)
+
+```
+VITE_API_URL=http://localhost:9042
+```
+
+### Setup inicial
+
+```bash
+# O banco MySQL local já existe com a tabela de users.
+# O migrate cria apenas tabelas novas do projeto; tabelas managed=False não são tocadas.
+cd backend
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py runserver 127.0.0.1:9042
+```
+
+---
+
+## Padrões de Código
+
+- **Banco único**: tudo no mesmo MySQL local. Tabelas existentes = `managed=False`. Tabelas novas = migrations normais.
+- **User model**: `SharedUser` (AbstractBaseUser, managed=False) no app `shared_auth`, mapeando tabela de users existente.
+- **Incremental**: o banco tem muitas tabelas legadas. Mapear apenas o que o usuário indicar, quando indicar.
+- **Modelos novos do projeto**: migrations normais, podem ter FK direta para SharedUser (mesmo banco).
+- **NUNCA alterar tabelas existentes sem aprovação**: propor → explicar riscos → aguardar OK → só então executar.
+- **NUNCA mapear tabelas do banco existente sem o usuário pedir**: esperar a indicação de qual módulo será usado.
+- **Sem Docker local**: rodar Django com `runserver` e Vite com `npm run dev` diretamente. Docker só para deploy AWS futuro.
+- **Serializers e Views**: organizados em `api/serializers/` e `api/views/`.
+- **ViewSets filtram por organização**: `queryset.filter(organization=_get_org(request))`.
+- **Endpoints públicos**: decorar com `permission_classes = [AllowAny]`.
+- **Roteamento**: `DefaultRouter` do DRF para CRUDs, `path()` manual para auth e endpoints especiais.
+- **Logging**: console + file handler em DEBUG (dev local).
+- **Frontend state**: tokens em `localStorage`; sem Redux — estado local + context quando necessário.
+- **Roteamento frontend**: `react-router-dom` v6 com `PrivateRoute` wrapper para autenticação.
+
+## Checklist — Setup Local de Novo Projeto
+
+### Banco de dados
+- [ ] MySQL local rodando em localhost:3306
+- [ ] Banco `nolar` (127.0.0.1:3306, root) com tabela `users` já existente
+- [ ] `.env` com `DB_NAME`, `DB_USER`, `DB_PASSWORD`
+
+### Backend — Fase 1: Auth (rodar nativo, sem Docker)
+- [ ] Criar virtualenv + `pip install -r requirements.txt`
+- [ ] App `shared_auth` com `SharedUser` (managed=False) mapeando a tabela de users real
+- [ ] Conferir `db_table` e colunas do SharedUser contra o banco local
+- [ ] `AUTH_USER_MODEL = 'shared_auth.SharedUser'` no settings
+- [ ] Algoritmo confirmado: restful_authentication_sha1, stretches=10, pepper=3416b23e...
+- [ ] `AUTHENTICATION_BACKENDS = ['apps.shared_auth.backends.DeviseBackend']`
+- [ ] `makemigrations` — só gera para apps novos, nunca para `shared_auth`
+- [ ] `migrate` — cria apenas tabelas novas, não toca nas existentes
+- [ ] `runserver 127.0.0.1:PORTA` (nunca 0.0.0.0)
+- [ ] SimpleJWT funciona com `AUTH_USER_MODEL` custom
+- [ ] **Aguardar indicação do usuário** para mapear próximas tabelas existentes
+
+### Frontend (rodar nativo, sem Docker)
+- [ ] `npm install` + `npm run dev -- --host 127.0.0.1`
+- [ ] Vite proxy configurado para apontar para o backend local
+- [ ] `VITE_API_URL` no `.env`

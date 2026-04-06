@@ -68,7 +68,9 @@ class UserProfile(models.Model):
 
 
 def _media_upload_path(instance, filename):
-    return f'initial_media/org_{instance.agent_config.organization_id}/{filename}'
+    import os, uuid
+    ext = os.path.splitext(filename)[1].lower()
+    return f'initial_media/org_{instance.agent_config.organization_id}/{uuid.uuid4().hex}{ext}'
 
 
 class InitialMessageMedia(models.Model):
