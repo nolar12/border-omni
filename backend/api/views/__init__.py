@@ -561,7 +561,7 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
             provider_message_id=wamid_file,
             msg_status='sent',
         )
-        logger.info(f'File sent to {lead.phone}: {uploaded.name} | wamid={wamid_file}')
+        logger.info(f'File sent to {lead.phone}: {file_name} | mime={mime_type} | wamid={wamid_file}')
         return Response(MessageSerializer(msg).data, status=201)
 
     @action(detail=True, methods=['post'], url_path='send_gallery_item')
@@ -1239,6 +1239,7 @@ class WhatsAppWebhookView(APIView):
                             # 3. Determina extensão do arquivo
                             ext = mimetypes.guess_extension(mime_type.split(';')[0]) or ''
                             if ext == '.jpe': ext = '.jpg'
+                            if ext == '.oga': ext = '.ogg'   # Python retorna .oga para audio/ogg (formato WhatsApp)
                             safe_name = filename or f'{msg_type}_{media_id[:8]}{ext}'
                             # Evita colisão de nomes
                             unique_name = f'{uuid.uuid4().hex[:8]}_{safe_name}'

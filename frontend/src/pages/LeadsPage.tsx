@@ -191,7 +191,7 @@ function MessageContent({ text }: { text: string }) {
     const urlExt = url.split('?')[0].split('.').pop()?.toLowerCase() || '';
     const imageExts = new Set(['jpg','jpeg','png','gif','webp','heic','heif']);
     const videoExts = new Set(['mp4','mov','avi','mkv','3gp']);
-    const audioExts = new Set(['mp3','ogg','aac','m4a','opus']);
+    const audioExts = new Set(['mp3','ogg','oga','aac','m4a','opus','webm','amr']);
 
     const isVideo = firstLine.startsWith('🎥') || videoExts.has(urlExt);
     const isAudio = firstLine.startsWith('🎵') || audioExts.has(urlExt);
