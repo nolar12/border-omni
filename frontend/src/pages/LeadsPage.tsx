@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { config } from '../config';
 import { leadsService } from '../services/leads';
 import { authService } from '../services/auth';
 import { messageTemplatesService } from '../services/messageTemplates';
@@ -178,7 +179,7 @@ function MessageContent({ text }: { text: string }) {
   const secondLine = lines[1] || '';
 
   const isMediaUrl = (s: string) => s.startsWith('https://') || s.startsWith('http://') || s.startsWith('/media/');
-  const toAbsolute = (s: string) => s.startsWith('/media/') ? `http://localhost:9022${s}` : s;
+  const toAbsolute = (s: string) => s.startsWith('/media/') ? `${config.apiUrl}${s}` : s;
   const isMediaMsg = isMediaUrl(secondLine) && /[\u{1F5BC}\u{1F4C4}\u{1F3B5}\u{1F3A5}\u{1F3AD}\u{1F4CE}📎]/u.test(firstLine);
 
   if (isMediaMsg) {
@@ -346,6 +347,11 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [qrShortcut, setQrShortcut] = useState('');
   const [savingQR, setSavingQR] = useState(false);
   const [qrSavedToast, setQrSavedToast] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const user = authService.getCurrentUser();
 
   // Calcula se a janela de 24h do WhatsApp está aberta
@@ -603,6 +609,52 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
       setSending(false);
       isSendingRef.current = false;
     }
+  }
+
+  async function startRecording() {
+    if (!lead) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+      const recorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        const file = new File([blob], `audio_${Date.now()}.webm`, { type: mimeType });
+        setSending(true);
+        try {
+          const msg = await leadsService.sendFile(lead.id, file, '');
+          setMessages(prev => [...prev, msg]);
+        } finally {
+          setSending(false);
+        }
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      recordingTimerRef.current = setInterval(() => setRecordingSeconds(s => s + 1), 1000);
+    } catch {
+      alert('Não foi possível acessar o microfone. Verifique as permissões do navegador.');
+    }
+  }
+
+  function stopRecording(send: boolean) {
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    setIsRecording(false);
+    setRecordingSeconds(0);
+    if (!send) {
+      mediaRecorderRef.current?.stream?.getTracks().forEach(t => t.stop());
+      audioChunksRef.current = [];
+      mediaRecorderRef.current = null;
+      return;
+    }
+    mediaRecorderRef.current?.stop();
+    mediaRecorderRef.current = null;
   }
 
   async function handleSaveQR() {
@@ -1363,7 +1415,56 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                   {/* Spacer */}
                   <div className="flex-1" />
 
-                  {/* Enviar */}
+                  {/* Gravar áudio */}
+                  {!msgText.trim() && !isRecording && (
+                    <button
+                      onClick={startRecording}
+                      disabled={sending}
+                      title="Gravar áudio"
+                      className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors flex-shrink-0"
+                    >
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                        <line x1="12" y1="19" x2="12" y2="23"/>
+                        <line x1="8" y1="23" x2="16" y2="23"/>
+                      </svg>
+                    </button>
+                  )}
+
+                  {/* UI de gravação ativa */}
+                  {isRecording && (
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                      <span className="text-sm font-mono text-red-600 w-10">
+                        {String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')}
+                      </span>
+                      <button
+                        onClick={() => stopRecording(false)}
+                        title="Cancelar"
+                        className="flex items-center justify-center w-8 h-8 rounded-xl text-gray-400 hover:bg-gray-100 transition-colors"
+                      >
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                          <polyline points="3 6 5 6 21 6"/>
+                          <path d="M19 6l-1 14H6L5 6"/>
+                          <path d="M10 11v6M14 11v6"/>
+                          <path d="M9 6V4h6v2"/>
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => stopRecording(true)}
+                        title="Enviar áudio"
+                        className="flex items-center justify-center w-10 h-10 rounded-xl bg-green-500 text-white hover:bg-green-600 transition-colors"
+                      >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                          <polyline points="20 6 9 17 4 12"/>
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Enviar texto */}
+                  {!isRecording && (
                   <button
                     onClick={handleSend}
                     disabled={sending || !msgText.trim() || (!isWhatsappWindowOpen && selectedChannel === 'whatsapp')}
@@ -1383,6 +1484,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                       )
                     }
                   </button>
+                  )}
                 </div>
               </div>
             </div>
