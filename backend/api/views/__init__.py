@@ -433,6 +433,8 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
 
         mime_type = uploaded.content_type or mimetypes.guess_type(uploaded.name)[0] or 'application/octet-stream'
         is_image = mime_type.startswith('image/')
+        is_audio = mime_type.startswith('audio/')
+        is_video = mime_type.startswith('video/')
 
         # 1. Faz upload da mídia para o Meta e obtém media_id
         upload_url = f'https://graph.facebook.com/v22.0/{channel_provider.phone_number_id}/media'
@@ -461,6 +463,20 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
                 'to': lead.phone,
                 'type': 'image',
                 'image': {'id': media_id, 'caption': caption},
+            }
+        elif is_audio:
+            media_payload = {
+                'messaging_product': 'whatsapp',
+                'to': lead.phone,
+                'type': 'audio',
+                'audio': {'id': media_id},
+            }
+        elif is_video:
+            media_payload = {
+                'messaging_product': 'whatsapp',
+                'to': lead.phone,
+                'type': 'video',
+                'video': {'id': media_id, 'caption': caption},
             }
         else:
             media_payload = {
@@ -491,7 +507,14 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
             lead=lead, channel='whatsapp',
             defaults={'organization': org, 'state': 'active'},
         )
-        msg_text = f'📎 {uploaded.name}' + (f' — {caption}' if caption else '')
+        if is_audio:
+            msg_text = f'🎵 {uploaded.name}'
+        elif is_video:
+            msg_text = f'🎥 {uploaded.name}' + (f' — {caption}' if caption else '')
+        elif is_image:
+            msg_text = f'🖼 {uploaded.name}' + (f' — {caption}' if caption else '')
+        else:
+            msg_text = f'📎 {uploaded.name}' + (f' — {caption}' if caption else '')
         wamid_file = send_resp.json().get('messages', [{}])[0].get('id')
         msg = Message.objects.create(
             conversation=conv,

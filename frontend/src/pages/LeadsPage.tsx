@@ -629,6 +629,9 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
         try {
           const msg = await leadsService.sendFile(lead.id, file, '');
           setMessages(prev => [...prev, msg]);
+        } catch (err: any) {
+          const detail = err?.response?.data?.detail || 'Erro ao enviar áudio.';
+          setFileError(`❌ ${detail}`);
         } finally {
           setSending(false);
         }
