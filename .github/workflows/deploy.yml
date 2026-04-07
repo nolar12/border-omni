@@ -71,7 +71,8 @@ jobs:
           aws ecs wait services-stable \
             --cluster $ECS_CLUSTER \
             --services borderomni-backend \
-            --region $AWS_REGION
+            --region $AWS_REGION \
+            --cli-read-timeout 900
 
       - name: Rollback em caso de falha
         if: steps.wait.outcome == 'failure'
