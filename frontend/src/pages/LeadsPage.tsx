@@ -615,16 +615,18 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     if (!lead) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
+      const preferredTypes = ['audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
+      const mimeType = preferredTypes.find(t => MediaRecorder.isTypeSupported(t)) ?? 'audio/webm';
+      const extMap: Record<string, string> = { 'audio/ogg;codecs=opus': 'ogg', 'audio/mp4': 'm4a' };
+      const ext = extMap[mimeType] ?? 'webm';
+      const uploadMime = mimeType.split(';')[0];
       const recorder = new MediaRecorder(stream, { mimeType });
       audioChunksRef.current = [];
       recorder.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(audioChunksRef.current, { type: mimeType });
-        const file = new File([blob], `audio_${Date.now()}.webm`, { type: mimeType });
+        const blob = new Blob(audioChunksRef.current, { type: uploadMime });
+        const file = new File([blob], `audio_${Date.now()}.${ext}`, { type: uploadMime });
         setSending(true);
         try {
           const msg = await leadsService.sendFile(lead.id, file, '');
@@ -2742,20 +2744,9 @@ export default function LeadsPage() {
           ) : (
             <>
               {[...leads]
-                .sort((a, b) => {
-                  const priority = (l: typeof a) => {
-                    if (l.lead_classification === 'DANGER_LEAD') return -1;
-                    if (l.awaiting_human_reply && l.status !== 'CLOSED') return 0;
-                    if (l.lead_classification === 'HOT_LEAD') return 1;
-                    if (l.lead_classification === 'WARM_LEAD') return 2;
-                    if (l.lead_classification === 'COLD_LEAD') return 3;
-                    if (l.status === 'CLOSED') return 8;
-                    return 5;
-                  };
-                  const pa = priority(a), pb = priority(b);
-                  if (pa !== pb) return pa - pb;
-                  return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-                })
+                .sort((a, b) =>
+                  new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                )
                 .map(lead => (
                 <LeadRow
                   key={lead.id}

@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# WeasyPrint system deps + curl para healthcheck
+# WeasyPrint system deps + ffmpeg (conversão de áudio webm→ogg) + curl para healthcheck
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg-dev \
     zlib1g-dev \
@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxslt1.1 \
     shared-mime-info \
     fonts-liberation \
+    ffmpeg \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

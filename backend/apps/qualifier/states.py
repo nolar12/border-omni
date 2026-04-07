@@ -20,12 +20,9 @@ MSG_MEDIA_CAPTION_IMAGE = ''
 MSG_MEDIA_CAPTION = MSG_MEDIA_CAPTION_VIDEO
 
 MSG_INTRO = (
-    "Olá! Que bom te ver por aqui!\n\n"
-    "Sou da Border Collie Sul — criamos nossos filhotes em casa, com muito amor e atenção desde o primeiro dia.\n\n"
-    "Essa ninhada é filha do Sky e da Leia, dois Border Collies de linhagem excepcional. "
-    "Cada filhote sai com pedigree, microchip, registro de canil, vermifugação e a primeira vacininha já em dia.\n\n"
-    "Alguns já foram reservados — mas ainda temos disponíveis!\n\n"
-    "São só 4 perguntas rápidas e já te mostro quais ainda estão disponíveis."
+    "Fala!\n"
+    "Aqui é o Marcello, do Border Collie Sul\n\n"
+    "Vi que você veio pelo vídeo — já já eu te respondo com mais detalhes"
 )
 
 MESSAGES = {

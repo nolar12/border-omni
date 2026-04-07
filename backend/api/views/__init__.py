@@ -436,13 +436,50 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         is_audio = mime_type.startswith('audio/')
         is_video = mime_type.startswith('video/')
 
+        file_bytes = uploaded.read()
+        file_name = uploaded.name
+
+        # WhatsApp não aceita audio/webm — converte para ogg via ffmpeg
+        if is_audio and 'webm' in mime_type:
+            import subprocess as _sp
+            import tempfile as _tf
+            import os as _os
+            tmp_in = _tf.NamedTemporaryFile(suffix='.webm', delete=False)
+            tmp_out_path = tmp_in.name.replace('.webm', '.ogg')
+            try:
+                tmp_in.write(file_bytes)
+                tmp_in.close()
+                result = _sp.run(
+                    ['ffmpeg', '-y', '-i', tmp_in.name, '-c:a', 'libopus', '-b:a', '64k', tmp_out_path],
+                    capture_output=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    with open(tmp_out_path, 'rb') as f:
+                        file_bytes = f.read()
+                    mime_type = 'audio/ogg'
+                    base = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
+                    file_name = f'{base}.ogg'
+                else:
+                    logger.warning(f'ffmpeg conversion failed: {result.stderr.decode()}')
+                    return Response({'detail': 'Não foi possível converter o áudio. Verifique se o ffmpeg está instalado no servidor.'}, status=500)
+            except FileNotFoundError:
+                return Response({'detail': 'ffmpeg não encontrado no servidor. Instale-o para enviar áudios gravados pelo navegador.'}, status=500)
+            except Exception as conv_err:
+                logger.warning(f'Audio conversion error: {conv_err}')
+                return Response({'detail': f'Erro ao converter áudio: {conv_err}'}, status=500)
+            finally:
+                try: _os.unlink(tmp_in.name)
+                except OSError: pass
+                try: _os.unlink(tmp_out_path)
+                except OSError: pass
+
         # 1. Faz upload da mídia para o Meta e obtém media_id
         upload_url = f'https://graph.facebook.com/v22.0/{channel_provider.phone_number_id}/media'
         try:
             upload_resp = http_requests.post(
                 upload_url,
                 headers={'Authorization': f'Bearer {channel_provider.access_token}'},
-                files={'file': (uploaded.name, uploaded.read(), mime_type)},
+                files={'file': (file_name, file_bytes, mime_type)},
                 data={'messaging_product': 'whatsapp'},
                 timeout=30,
             )
@@ -483,7 +520,7 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
                 'messaging_product': 'whatsapp',
                 'to': lead.phone,
                 'type': 'document',
-                'document': {'id': media_id, 'caption': caption, 'filename': uploaded.name},
+                'document': {'id': media_id, 'caption': caption, 'filename': file_name},
             }
 
         try:
@@ -508,13 +545,13 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
             defaults={'organization': org, 'state': 'active'},
         )
         if is_audio:
-            msg_text = f'🎵 {uploaded.name}'
+            msg_text = f'🎵 {file_name}'
         elif is_video:
-            msg_text = f'🎥 {uploaded.name}' + (f' — {caption}' if caption else '')
+            msg_text = f'🎥 {file_name}' + (f' — {caption}' if caption else '')
         elif is_image:
-            msg_text = f'🖼 {uploaded.name}' + (f' — {caption}' if caption else '')
+            msg_text = f'🖼 {file_name}' + (f' — {caption}' if caption else '')
         else:
-            msg_text = f'📎 {uploaded.name}' + (f' — {caption}' if caption else '')
+            msg_text = f'📎 {file_name}' + (f' — {caption}' if caption else '')
         wamid_file = send_resp.json().get('messages', [{}])[0].get('id')
         msg = Message.objects.create(
             conversation=conv,
