@@ -1236,10 +1236,25 @@ class WhatsAppWebhookView(APIView):
                             timeout=30,
                         )
                         if dl_resp.status_code == 200:
-                            # 3. Determina extensão do arquivo
-                            ext = mimetypes.guess_extension(mime_type.split(';')[0]) or ''
+                            # 3. Determina extensão — mapa explícito para tipos do WhatsApp
+                            # (mimetypes.guess_extension é instável no Debian slim)
+                            _MIME_EXT = {
+                                'audio/ogg': '.ogg', 'audio/opus': '.ogg',
+                                'audio/mpeg': '.mp3', 'audio/mp3': '.mp3',
+                                'audio/mp4': '.m4a', 'audio/aac': '.aac',
+                                'audio/amr': '.amr', 'audio/webm': '.webm',
+                                'image/jpeg': '.jpg', 'image/jpg': '.jpg',
+                                'image/png': '.png', 'image/webp': '.webp',
+                                'image/gif': '.gif', 'image/heic': '.heic',
+                                'video/mp4': '.mp4', 'video/3gpp': '.3gp',
+                                'video/quicktime': '.mov',
+                                'application/pdf': '.pdf',
+                            }
+                            base_mime = mime_type.split(';')[0].strip().lower()
+                            ext = _MIME_EXT.get(base_mime) or (mimetypes.guess_extension(base_mime) or '')
                             if ext == '.jpe': ext = '.jpg'
-                            if ext == '.oga': ext = '.ogg'   # Python retorna .oga para audio/ogg (formato WhatsApp)
+                            if ext == '.oga': ext = '.ogg'
+                            logger.info(f'Incoming media mime={mime_type!r} → ext={ext!r} filename={filename!r}')
                             safe_name = filename or f'{msg_type}_{media_id[:8]}{ext}'
                             # Evita colisão de nomes
                             unique_name = f'{uuid.uuid4().hex[:8]}_{safe_name}'
