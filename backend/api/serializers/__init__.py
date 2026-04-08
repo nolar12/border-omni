@@ -342,10 +342,26 @@ class SubscriptionSerializer(serializers.ModelSerializer):
 
 
 class GalleryMediaSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+
     class Meta:
         model = GalleryMedia
         fields = ['id', 'name', 'description', 'file_url', 'mime_type', 'media_type', 'size_bytes', 'created_at']
         read_only_fields = ['id', 'file_url', 'mime_type', 'media_type', 'size_bytes', 'created_at']
+
+    def get_file_url(self, obj):
+        """Resolve caminhos relativos (/media/...) para URL absoluta do S3 ou API."""
+        from django.conf import settings as django_settings
+        url = obj.file_url or ''
+        if url.startswith('http'):
+            return url
+        media_base = (getattr(django_settings, 'MEDIA_BASE_URL', '') or '').rstrip('/')
+        if media_base:
+            return f'{media_base}{url}'
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(url)
+        return url
 
 
 # ─── Contracts ───────────────────────────────────────────────────────────────
