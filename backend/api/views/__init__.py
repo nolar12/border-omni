@@ -149,66 +149,21 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         if lead_classification:
             qs = qs.filter(lead_classification=lead_classification)
 
-        # Ordenação inteligente:
-        # -1 → DANGER (risco — sempre no topo, sobrescreve qualquer outra)
-        #  0 → aguardando resposta HUMANA (lead IN mais recente que o último OUT humano)
-        #  1 → HOT
-        #  2 → WARM
-        #  3 → COLD
-        #  5 → sem classificação
-        #  8 → CLOSED
-        #
-        # Mensagens humanas têm provider_message_id preenchido.
-        # Mensagens de bot/template têm provider_message_id = NULL.
-
-        # Timestamp da última mensagem IN do lead
-        last_in_ts_sq = Subquery(
-            Message.objects.filter(
-                conversation__lead=OuterRef('pk'),
-                direction='IN',
-            ).order_by('-created_at').values('created_at')[:1]
-        )
-        # Timestamp do último OUT humano (com provider_message_id preenchido)
-        last_human_out_ts_sq = Subquery(
-            Message.objects.filter(
-                conversation__lead=OuterRef('pk'),
-                direction='OUT',
-            ).exclude(provider_message_id=None).exclude(provider_message_id='')
-            .order_by('-created_at').values('created_at')[:1]
+        # Ordena pela última atividade de mensagem em qualquer conversa do lead.
+        # Qualquer mensagem (IN ou OUT, humana ou bot) move o lead para o topo.
+        # Leads sem conversa ficam no final, ordenados por created_at desc.
+        last_msg_ts_sq = Subquery(
+            Conversation.objects.filter(
+                lead=OuterRef('pk'),
+            ).order_by('-last_message_at').values('last_message_at')[:1]
         )
 
         qs = qs.annotate(
-            _last_in_ts=last_in_ts_sq,
-            _last_human_out_ts=last_human_out_ts_sq,
-        ).annotate(
-            # True se o lead tem uma mensagem IN mais recente que o último OUT humano
-            _awaiting_human=Case(
-                When(
-                    Q(_last_in_ts__isnull=False) & (
-                        Q(_last_human_out_ts__isnull=True) |
-                        Q(_last_in_ts__gt=F('_last_human_out_ts'))
-                    ),
-                    then=Value(True),
-                ),
-                default=Value(False),
-                output_field=BooleanField(),
-            )
-        ).annotate(
-            _sort_priority=Case(
-                When(lead_classification='DANGER_LEAD', then=Value(-1)),
-                When(_awaiting_human=True, then=Case(
-                    When(status='CLOSED', then=Value(8)),
-                    default=Value(0),
-                    output_field=IntegerField(),
-                )),
-                When(lead_classification='HOT_LEAD', then=Value(1)),
-                When(lead_classification='WARM_LEAD', then=Value(2)),
-                When(lead_classification='COLD_LEAD', then=Value(3)),
-                When(status='CLOSED', then=Value(8)),
-                default=Value(5),
-                output_field=IntegerField(),
-            )
-        ).order_by('_sort_priority', '-updated_at')
+            _last_msg_ts=last_msg_ts_sq,
+        ).order_by(
+            F('_last_msg_ts').desc(nulls_last=True),
+            '-created_at',
+        )
 
         return qs
 

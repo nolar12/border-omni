@@ -2743,12 +2743,7 @@ export default function LeadsPage() {
             </div>
           ) : (
             <>
-              {[...leads]
-                .sort((a, b) => {
-                  const ta = new Date(a.whatsapp_last_message_at ?? a.updated_at).getTime();
-                  const tb = new Date(b.whatsapp_last_message_at ?? b.updated_at).getTime();
-                  return tb - ta;
-                })
+              {leads
                 .map(lead => (
                 <LeadRow
                   key={lead.id}
