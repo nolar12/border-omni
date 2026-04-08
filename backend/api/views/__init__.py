@@ -394,13 +394,15 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         file_bytes = uploaded.read()
         file_name = uploaded.name
 
-        # WhatsApp não aceita audio/webm — converte para ogg via ffmpeg
-        if is_audio and 'webm' in mime_type:
+        # WhatsApp voice: converte todo áudio para OGG/opus via ffmpeg
+        # (formato nativo do WhatsApp — audio/mp4 e audio/webm causam falha na entrega)
+        if is_audio and 'ogg' not in mime_type:
             import subprocess as _sp
             import tempfile as _tf
             import os as _os
-            tmp_in = _tf.NamedTemporaryFile(suffix='.webm', delete=False)
-            tmp_out_path = tmp_in.name.replace('.webm', '.ogg')
+            in_ext = os.path.splitext(file_name)[1] or '.bin'
+            tmp_in = _tf.NamedTemporaryFile(suffix=in_ext, delete=False)
+            tmp_out_path = tmp_in.name.rsplit('.', 1)[0] + '.ogg'
             try:
                 tmp_in.write(file_bytes)
                 tmp_in.close()
@@ -414,11 +416,12 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
                     mime_type = 'audio/ogg'
                     base = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
                     file_name = f'{base}.ogg'
+                    logger.info(f'Audio converted to OGG/opus: {file_name} ({len(file_bytes)} bytes)')
                 else:
-                    logger.warning(f'ffmpeg conversion failed: {result.stderr.decode()}')
-                    return Response({'detail': 'Não foi possível converter o áudio. Verifique se o ffmpeg está instalado no servidor.'}, status=500)
+                    logger.warning(f'ffmpeg conversion failed: {result.stderr.decode()[:500]}')
+                    return Response({'detail': 'Não foi possível converter o áudio.'}, status=500)
             except FileNotFoundError:
-                return Response({'detail': 'ffmpeg não encontrado no servidor. Instale-o para enviar áudios gravados pelo navegador.'}, status=500)
+                return Response({'detail': 'ffmpeg não encontrado no servidor.'}, status=500)
             except Exception as conv_err:
                 logger.warning(f'Audio conversion error: {conv_err}')
                 return Response({'detail': f'Erro ao converter áudio: {conv_err}'}, status=500)
@@ -1089,7 +1092,15 @@ class WhatsAppWebhookView(APIView):
                 direction='OUT',
             ).update(msg_status=new_status)
             if updated:
-                logger.info(f'Status atualizado: wamid={wamid} → {new_status}')
+                if new_status == 'failed':
+                    errors = status_obj.get('errors', [])
+                    err_detail = '; '.join(
+                        f"code={e.get('code')} title={e.get('title')} details={e.get('error_data',{}).get('details','')}"
+                        for e in errors
+                    ) or 'sem detalhes'
+                    logger.error(f'Message FAILED: wamid={wamid} | {err_detail}')
+                else:
+                    logger.info(f'Status atualizado: wamid={wamid} → {new_status}')
 
         return Response({'received': True}, status=200)
 

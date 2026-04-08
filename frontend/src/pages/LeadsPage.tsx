@@ -173,79 +173,116 @@ function MessageStatusIcon({ status }: { status: MsgStatus }) {
 
 // ─── Message Content renderer (texto, imagem, documento) ─────────────────────
 
+const MEDIA_EMOJI_RE = /[\u{1F5BC}\u{1F4C4}\u{1F3B5}\u{1F3A5}\u{1F3AD}\u{1F4CE}\u{1F4CE}📎]/u;
+const _isUrl = (s: string) => /^https?:\/\//.test(s) || s.startsWith('/media/');
+const _toAbs = (s: string) => s.startsWith('/media/') ? `${config.apiUrl}${s}` : s;
+const IMAGE_EXTS = new Set(['jpg','jpeg','png','gif','webp','heic','heif']);
+const VIDEO_EXTS = new Set(['mp4','mov','avi','mkv','3gp']);
+const AUDIO_EXTS = new Set(['mp3','ogg','oga','aac','m4a','opus','webm','amr']);
+
 function MessageContent({ text }: { text: string }) {
   const lines = text.split('\n');
   const firstLine = lines[0] || '';
   const secondLine = lines[1] || '';
 
-  const isMediaUrl = (s: string) => s.startsWith('https://') || s.startsWith('http://') || s.startsWith('/media/');
-  const toAbsolute = (s: string) => s.startsWith('/media/') ? `${config.apiUrl}${s}` : s;
-  const isMediaMsg = isMediaUrl(secondLine) && /[\u{1F5BC}\u{1F4C4}\u{1F3B5}\u{1F3A5}\u{1F3AD}\u{1F4CE}📎]/u.test(firstLine);
+  const hasEmoji = MEDIA_EMOJI_RE.test(firstLine);
+  const hasUrl = _isUrl(secondLine.trim());
 
-  if (isMediaMsg) {
-    const url = toAbsolute(secondLine);
-    const isImage = firstLine.startsWith('🖼');
-    const label = firstLine.replace(/^[\s\S]{1,2}/, '').trim() || (isImage ? 'Ver imagem' : 'Abrir arquivo');
+  // Caso 1: emoji + URL na segunda linha (mensagem de mídia recebida com arquivo baixado)
+  // Caso 2: emoji na primeira linha SEM URL (mensagem de mídia enviada — só tem emoji + filename)
+  const isMediaMsg = hasEmoji && (hasUrl || !secondLine);
 
-    // Detecta pelo emoji OU pela extensão da URL
-    const urlExt = url.split('?')[0].split('.').pop()?.toLowerCase() || '';
-    const imageExts = new Set(['jpg','jpeg','png','gif','webp','heic','heif']);
-    const videoExts = new Set(['mp4','mov','avi','mkv','3gp']);
-    const audioExts = new Set(['mp3','ogg','oga','aac','m4a','opus','webm','amr']);
+  if (!isMediaMsg) {
+    return <p className="text-base whitespace-pre-wrap break-words">{text}</p>;
+  }
 
-    const isVideo = firstLine.startsWith('🎥') || videoExts.has(urlExt);
-    const isAudio = firstLine.startsWith('🎵') || audioExts.has(urlExt);
-    const isImageByExt = imageExts.has(urlExt);
-    const isImageFinal = (firstLine.startsWith('🖼') || isImageByExt) && !isVideo && !isAudio;
+  const url = hasUrl ? _toAbs(secondLine.trim()) : '';
+  const labelRaw = firstLine.replace(/^.{1,2}/u, '').trim();
+  const urlExt = url ? (url.split('?')[0].split('/').pop()?.split('.').pop()?.toLowerCase() || '') : '';
 
+  const emojiAudio = /\u{1F3B5}/u.test(firstLine);
+  const emojiVideo = /\u{1F3A5}/u.test(firstLine);
+  const emojiImage = /\u{1F5BC}/u.test(firstLine);
+
+  const isAudio = emojiAudio || AUDIO_EXTS.has(urlExt);
+  const isVideo = !isAudio && (emojiVideo || VIDEO_EXTS.has(urlExt));
+  const isImage = !isAudio && !isVideo && (emojiImage || IMAGE_EXTS.has(urlExt));
+
+  if (isAudio) {
+    const label = labelRaw || 'Áudio';
     return (
       <div className="space-y-1.5">
-        {isImageFinal ? (
-          <>
-            <a href={url} target="_blank" rel="noopener noreferrer">
-              <img
-                src={url}
-                alt={label}
-                className="max-w-[220px] rounded-lg border border-white/20 cursor-pointer hover:opacity-90 transition-opacity"
-                onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
-              />
-            </a>
-            {label && <p className="text-xs opacity-70">{label}</p>}
-          </>
-        ) : isVideo ? (
-          <>
-            <video
-              src={url}
-              controls
-              className="max-w-[280px] rounded-lg border border-white/20"
-              style={{ maxHeight: 200 }}
-            />
-            {label && <p className="text-xs opacity-70">{label}</p>}
-          </>
-        ) : isAudio ? (
-          <>
-            <audio src={url} controls className="w-full max-w-[260px]" />
-            {label && <p className="text-xs opacity-70">{label}</p>}
-          </>
+        {url ? (
+          <audio src={url} controls className="w-full max-w-[260px]" />
         ) : (
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 bg-black/10 rounded-xl px-3 py-2 hover:bg-black/20 transition-colors"
-          >
-            <span className="text-xl flex-shrink-0">{firstLine.slice(0, 2)}</span>
-            <div className="min-w-0">
-              <p className="text-sm font-medium truncate">{label}</p>
-              <p className="text-xs opacity-60">Toque para abrir ↗</p>
-            </div>
-          </a>
+          <div className="flex items-center gap-2 bg-black/5 rounded-xl px-3 py-2">
+            <svg className="w-4 h-4 text-blue-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            </svg>
+            <span className="text-sm opacity-70">{label}</span>
+          </div>
         )}
+        {labelRaw && <p className="text-xs opacity-70">{label}</p>}
       </div>
     );
   }
 
-  return <p className="text-base whitespace-pre-wrap break-words">{text}</p>;
+  if (isVideo) {
+    const label = labelRaw || 'Vídeo';
+    return (
+      <div className="space-y-1.5">
+        {url ? (
+          <video src={url} controls className="max-w-[280px] rounded-lg border border-white/20" style={{ maxHeight: 200 }} />
+        ) : (
+          <p className="text-sm opacity-70">🎥 {label}</p>
+        )}
+        {labelRaw && <p className="text-xs opacity-70">{label}</p>}
+      </div>
+    );
+  }
+
+  if (isImage && url) {
+    const label = labelRaw || 'Ver imagem';
+    return (
+      <div className="space-y-1.5">
+        <a href={url} target="_blank" rel="noopener noreferrer">
+          <img
+            src={url}
+            alt={label}
+            className="max-w-[220px] rounded-lg border border-white/20 cursor-pointer hover:opacity-90 transition-opacity"
+            onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+          />
+        </a>
+        {labelRaw && <p className="text-xs opacity-70">{label}</p>}
+      </div>
+    );
+  }
+
+  // Fallback: documento genérico
+  const label = labelRaw || 'Abrir arquivo';
+  if (url) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-2 bg-black/10 rounded-xl px-3 py-2 hover:bg-black/20 transition-colors"
+      >
+        <span className="text-xl flex-shrink-0">{firstLine.slice(0, 2)}</span>
+        <div className="min-w-0">
+          <p className="text-sm font-medium truncate">{label}</p>
+          <p className="text-xs opacity-60">Toque para abrir ↗</p>
+        </div>
+      </a>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2 bg-black/5 rounded-xl px-3 py-2">
+      <span className="text-xl flex-shrink-0">{firstLine.slice(0, 2)}</span>
+      <span className="text-sm opacity-70">{label}</span>
+    </div>
+  );
 }
 
 // ─── Channel helpers ──────────────────────────────────────────────────────────
