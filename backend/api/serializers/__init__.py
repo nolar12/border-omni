@@ -655,6 +655,7 @@ class PublicPuppySerializer(serializers.ModelSerializer):
             'id', 'name', 'sex', 'sex_display',
             'birth_date', 'color',
             'status', 'status_display',
+            'notes',
             'media',
         ]
 
