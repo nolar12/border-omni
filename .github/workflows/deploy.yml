@@ -62,6 +62,7 @@ jobs:
             --cluster $ECS_CLUSTER \
             --service borderomni-backend \
             --task-definition ${{ steps.register.outputs.task_def }} \
+            --deployment-configuration minimumHealthyPercent=100,maximumPercent=200 \
             --region $AWS_REGION
 
       - name: Aguardar estabilização
@@ -136,6 +137,7 @@ jobs:
             --cluster $ECS_CLUSTER \
             --service borderomni-frontend \
             --task-definition ${{ steps.register.outputs.task_def }} \
+            --deployment-configuration minimumHealthyPercent=100,maximumPercent=200 \
             --region $AWS_REGION
 
       - name: Aguardar estabilização
