@@ -400,7 +400,7 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
             import subprocess as _sp
             import tempfile as _tf
             import os as _os
-            in_ext = os.path.splitext(file_name)[1] or '.bin'
+            in_ext = _os.path.splitext(file_name)[1] or '.bin'
             tmp_in = _tf.NamedTemporaryFile(suffix=in_ext, delete=False)
             tmp_out_path = tmp_in.name.rsplit('.', 1)[0] + '.ogg'
             try:
@@ -2608,9 +2608,12 @@ class GalleryMediaViewSet(viewsets.ModelViewSet):
         filename = f'gallery/{org.id}/{uuid_mod.uuid4().hex}{ext}'
         saved_path = default_storage.save(filename, ContentFile(uploaded.read()))
 
-        # Armazena como path relativo (/media/...) para funcionar tanto em dev
-        # (proxy Vite) quanto em produção sem depender do ngrok estar ativo.
-        file_url = f'/media/{saved_path}'
+        # URL absoluta: S3 em produção (default_storage.url) ou caminho relativo em dev.
+        raw_url = default_storage.url(saved_path)
+        if raw_url.startswith('http'):
+            file_url = raw_url
+        else:
+            file_url = f'/media/{saved_path}'
 
         item = GalleryMedia.objects.create(
             organization=org,
