@@ -388,6 +388,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const recordingShouldSendRef = useRef(false);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const user = authService.getCurrentUser();
 
@@ -659,10 +660,19 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
       const uploadMime = mimeType.split(';')[0];
       const recorder = new MediaRecorder(stream, { mimeType });
       audioChunksRef.current = [];
+      recordingShouldSendRef.current = false;
       recorder.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
+        if (!recordingShouldSendRef.current) {
+          audioChunksRef.current = [];
+          return;
+        }
         const blob = new Blob(audioChunksRef.current, { type: uploadMime });
+        if (!blob.size) {
+          audioChunksRef.current = [];
+          return;
+        }
         const file = new File([blob], `audio_${Date.now()}.${ext}`, { type: uploadMime });
         setSending(true);
         try {
@@ -673,6 +683,8 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
           setFileError(`❌ ${detail}`);
         } finally {
           setSending(false);
+          recordingShouldSendRef.current = false;
+          audioChunksRef.current = [];
         }
       };
       recorder.start();
@@ -689,13 +701,14 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     setIsRecording(false);
     setRecordingSeconds(0);
-    if (!send) {
-      mediaRecorderRef.current?.stream?.getTracks().forEach(t => t.stop());
-      audioChunksRef.current = [];
-      mediaRecorderRef.current = null;
-      return;
+    recordingShouldSendRef.current = send;
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
+    } else {
+      recorder?.stream?.getTracks().forEach(t => t.stop());
+      if (!send) audioChunksRef.current = [];
     }
-    mediaRecorderRef.current?.stop();
     mediaRecorderRef.current = null;
   }
 

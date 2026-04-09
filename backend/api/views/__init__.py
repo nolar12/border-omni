@@ -1178,6 +1178,7 @@ class WhatsAppWebhookView(APIView):
         """Baixa mídia recebida do cliente, salva localmente e registra como mensagem IN."""
         import requests as http_requests
         import logging
+        import os
         import uuid
         import mimetypes
         from django.utils import timezone
@@ -1215,6 +1216,7 @@ class WhatsAppWebhookView(APIView):
         icon  = icons.get(effective_type, '📎')
 
         local_url = ''
+        display_filename = filename or ''
         if media_id and channel_provider.access_token:
             try:
                 # 1. Obtém a URL de download temporária do Meta
@@ -1252,15 +1254,61 @@ class WhatsAppWebhookView(APIView):
                             if ext == '.jpe': ext = '.jpg'
                             if ext == '.oga': ext = '.ogg'
                             logger.info(f'Incoming media mime={mime_type!r} → ext={ext!r} filename={filename!r}')
+                            file_content = dl_resp.content
                             safe_name = filename or f'{msg_type}_{media_id[:8]}{ext}'
+
+                            # Padroniza áudio recebido para MP3 para playback consistente no chat
+                            if effective_type == 'audio':
+                                import subprocess as _sp
+                                import tempfile as _tf
+
+                                in_ext = os.path.splitext(safe_name)[1] or ext or '.bin'
+                                tmp_in = _tf.NamedTemporaryFile(suffix=in_ext, delete=False)
+                                tmp_out_path = tmp_in.name.rsplit('.', 1)[0] + '.mp3'
+                                try:
+                                    tmp_in.write(file_content)
+                                    tmp_in.close()
+                                    result = _sp.run(
+                                        [
+                                            'ffmpeg', '-y', '-i', tmp_in.name,
+                                            '-vn',
+                                            '-acodec', 'libmp3lame',
+                                            '-ar', '44100',
+                                            '-ac', '1',
+                                            '-b:a', '96k',
+                                            tmp_out_path,
+                                        ],
+                                        capture_output=True,
+                                        timeout=30,
+                                    )
+                                    if result.returncode == 0:
+                                        with open(tmp_out_path, 'rb') as f:
+                                            file_content = f.read()
+                                        ext = '.mp3'
+                                        base_name = os.path.splitext(safe_name)[0] or f'audio_{media_id[:8]}'
+                                        safe_name = f'{base_name}.mp3'
+                                        logger.info(f'Incoming audio converted to MP3: {safe_name} ({len(file_content)} bytes)')
+                                    else:
+                                        logger.warning(f'Incoming audio conversion failed: {result.stderr.decode()[:500]}')
+                                finally:
+                                    try:
+                                        os.unlink(tmp_in.name)
+                                    except OSError:
+                                        pass
+                                    try:
+                                        os.unlink(tmp_out_path)
+                                    except OSError:
+                                        pass
+
                             # Evita colisão de nomes e persiste no storage configurado
                             # (S3 em produção; evita perder arquivos em troca de container ECS)
                             unique_name = f'{uuid.uuid4().hex[:8]}_{safe_name}'
                             stored_path = default_storage.save(
                                 f'whatsapp/{unique_name}',
-                                ContentFile(dl_resp.content),
+                                ContentFile(file_content),
                             )
                             local_url = default_storage.url(stored_path)
+                            display_filename = safe_name
                             if local_url.startswith('/'):
                                 media_base = (settings.MEDIA_BASE_URL or '').rstrip('/')
                                 local_url = f'{media_base}{local_url}' if media_base else local_url
@@ -1269,7 +1317,7 @@ class WhatsAppWebhookView(APIView):
                 logger.warning(f'Could not download media {media_id}: {e}')
 
         # Monta texto da mensagem
-        label = caption or filename or ''
+        label = caption or display_filename or ''
         if local_url:
             text = f'{icon} {label}\n{local_url}' if label else f'{icon}\n{local_url}'
         else:
