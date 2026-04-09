@@ -505,6 +505,26 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         except Exception as e:
             return Response({'detail': f'Erro ao enviar arquivo: {str(e)}'}, status=500)
 
+        # 2.5 Persistir mídia enviada para playback no chat (mensagens OUT)
+        media_public_url = ''
+        try:
+            import uuid as _uuid
+            from django.conf import settings as _settings
+            from django.core.files.base import ContentFile as _ContentFile
+            from django.core.files.storage import default_storage as _storage
+
+            safe_name = (file_name or f'media_{_uuid.uuid4().hex}').replace(' ', '_')
+            stored_name = _storage.save(
+                f'whatsapp/outgoing/{_uuid.uuid4().hex}_{safe_name}',
+                _ContentFile(file_bytes),
+            )
+            media_public_url = _storage.url(stored_name)
+            if media_public_url.startswith('/'):
+                _media_base = (_settings.MEDIA_BASE_URL or '').rstrip('/')
+                media_public_url = f'{_media_base}{media_public_url}' if _media_base else request.build_absolute_uri(media_public_url)
+        except Exception as storage_err:
+            logger.warning(f'Could not persist outgoing media for chat playback: {storage_err}')
+
         # 3. Salva no banco como mensagem OUT
         conv, _ = Conversation.objects.get_or_create(
             lead=lead, channel='whatsapp',
@@ -518,6 +538,8 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
             msg_text = f'🖼 {file_name}' + (f' — {caption}' if caption else '')
         else:
             msg_text = f'📎 {file_name}' + (f' — {caption}' if caption else '')
+        if media_public_url:
+            msg_text = f'{msg_text}\n{media_public_url}'
         wamid_file = send_resp.json().get('messages', [{}])[0].get('id')
         msg = Message.objects.create(
             conversation=conv,
