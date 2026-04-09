@@ -396,7 +396,8 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
 
         # WhatsApp voice: converte todo áudio para OGG/opus via ffmpeg
         # (formato nativo do WhatsApp — audio/mp4 e audio/webm causam falha na entrega)
-        if is_audio and 'ogg' not in mime_type:
+        # Meta exige audio/ogg; codecs=opus (não aceita audio/ogg base nem audio/webm nem audio/mp4)
+        if is_audio and mime_type != 'audio/ogg; codecs=opus':
             import subprocess as _sp
             import tempfile as _tf
             import os as _os
@@ -407,13 +408,20 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
                 tmp_in.write(file_bytes)
                 tmp_in.close()
                 result = _sp.run(
-                    ['ffmpeg', '-y', '-i', tmp_in.name, '-c:a', 'libopus', '-b:a', '64k', tmp_out_path],
+                    [
+                        'ffmpeg', '-y', '-i', tmp_in.name,
+                        '-c:a', 'libopus',
+                        '-ar', '16000',  # 16kHz — sample rate nativo do WhatsApp voice
+                        '-ac', '1',      # mono
+                        '-b:a', '32k',   # bitrate adequado para voz
+                        tmp_out_path,
+                    ],
                     capture_output=True, timeout=30,
                 )
                 if result.returncode == 0:
                     with open(tmp_out_path, 'rb') as f:
                         file_bytes = f.read()
-                    mime_type = 'audio/ogg'
+                    mime_type = 'audio/ogg; codecs=opus'
                     base = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
                     file_name = f'{base}.ogg'
                     logger.info(f'Audio converted to OGG/opus: {file_name} ({len(file_bytes)} bytes)')
