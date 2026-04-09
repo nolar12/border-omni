@@ -1178,11 +1178,12 @@ class WhatsAppWebhookView(APIView):
         """Baixa mídia recebida do cliente, salva localmente e registra como mensagem IN."""
         import requests as http_requests
         import logging
-        import os
         import uuid
         import mimetypes
         from django.utils import timezone
         from django.conf import settings
+        from django.core.files.base import ContentFile
+        from django.core.files.storage import default_storage
         logger = logging.getLogger('apps')
 
         media_data = msg.get(msg_type, {})
@@ -1252,15 +1253,18 @@ class WhatsAppWebhookView(APIView):
                             if ext == '.oga': ext = '.ogg'
                             logger.info(f'Incoming media mime={mime_type!r} → ext={ext!r} filename={filename!r}')
                             safe_name = filename or f'{msg_type}_{media_id[:8]}{ext}'
-                            # Evita colisão de nomes
+                            # Evita colisão de nomes e persiste no storage configurado
+                            # (S3 em produção; evita perder arquivos em troca de container ECS)
                             unique_name = f'{uuid.uuid4().hex[:8]}_{safe_name}'
-                            save_dir = os.path.join(settings.MEDIA_ROOT, 'whatsapp')
-                            os.makedirs(save_dir, exist_ok=True)
-                            save_path = os.path.join(save_dir, unique_name)
-                            with open(save_path, 'wb') as f:
-                                f.write(dl_resp.content)
-                            local_url = f'{settings.MEDIA_URL}whatsapp/{unique_name}'
-                            logger.info(f'Media saved: {save_path}')
+                            stored_path = default_storage.save(
+                                f'whatsapp/{unique_name}',
+                                ContentFile(dl_resp.content),
+                            )
+                            local_url = default_storage.url(stored_path)
+                            if local_url.startswith('/'):
+                                media_base = (settings.MEDIA_BASE_URL or '').rstrip('/')
+                                local_url = f'{media_base}{local_url}' if media_base else local_url
+                            logger.info(f'Media saved: {stored_path}')
             except Exception as e:
                 logger.warning(f'Could not download media {media_id}: {e}')
 
