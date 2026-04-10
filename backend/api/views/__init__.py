@@ -362,6 +362,31 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         return Response({'suggestions': suggestions})
 
     @action(detail=True, methods=['post'])
+    def approve_suggestion(self, request, pk=None):
+        """Registra aprovação explícita de uma sugestão IA, armazenando o par no RAG."""
+        lead = self.get_object()
+        org = lead.organization
+        message = request.data.get('message', '').strip()
+        suggestion = request.data.get('suggestion', '').strip()
+        brief = request.data.get('brief', '').strip()
+
+        if not message or not suggestion:
+            return Response({'status': 'skipped'})
+
+        try:
+            agent_config = org.agent_config
+        except AgentConfig.DoesNotExist:
+            return Response({'status': 'skipped'})
+
+        if not agent_config.is_ready():
+            return Response({'status': 'skipped'})
+
+        from apps.rag.services.training_service import store_conversation_pair
+        message_in = f"{message}\n[Contexto do atendente: {brief}]" if brief else message
+        store_conversation_pair(agent_config, message_in, suggestion, lead)
+        return Response({'status': 'stored'})
+
+    @action(detail=True, methods=['post'])
     def send_file(self, request, pk=None):
         """Envia um arquivo (documento, imagem, PDF) via WhatsApp para o lead."""
         from rest_framework.parsers import MultiPartParser, FormParser

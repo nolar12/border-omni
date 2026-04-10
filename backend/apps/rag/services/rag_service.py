@@ -36,18 +36,6 @@ def _clean_name(name: str) -> str:
     """Remove emojis e espaços extras de um nome."""
     return _EMOJI_RE.sub('', name).strip()
 
-
-def _format_brl(value: int) -> str:
-    return f'R$ {int(value):,}'.replace(',', '.')
-
-
-def _normalized_puppy_price(dog) -> int | None:
-    """
-    Normaliza preço para manter comunicação comercial com preço único.
-    Regra vigente: todos os filhotes custam R$ 4.000, sem variação por sexo/cor.
-    """
-    return 4000
-
 # Prompt principal do agente — define personalidade e tom
 DEFAULT_SYSTEM_PROMPT = (
     "Você é um consultor especialista em Border Collies. "
@@ -325,10 +313,8 @@ class RAGService:
             )
             raw = response.choices[0].message.content.strip()
             parsed = json.loads(raw)
-            options = [str(o).strip() for o in parsed.get('options', []) if o][:3]
-            if _is_price_question(message_text):
-                options = _enforce_price_justification(options)
-            return options
+            options = parsed.get('options', [])
+            return [str(o).strip() for o in options if o][:3]
         except Exception as e:
             logger.exception(f'RAGService.suggest_three_options error: {e}')
             return []
@@ -357,8 +343,9 @@ def _build_litters_context(org) -> str:
 
             dogs_desc = []
             for dog in available_dogs:
-                normalized_price = _normalized_puppy_price(dog)
-                price_str = _format_brl(normalized_price) if normalized_price else 'sob consulta'
+                price_str = (
+                    f'R$ {int(dog.price):,}'.replace(',', '.') if dog.price else 'sob consulta'
+                )
                 sex_label = 'macho' if dog.sex == 'M' else 'fêmea'
                 color_part = f', {dog.color}' if dog.color else ''
                 dogs_desc.append(f'  - {dog.name or "filhote"} ({sex_label}{color_part}) — {price_str}')
@@ -381,74 +368,6 @@ def _build_litters_context(org) -> str:
     except Exception as e:
         logger.warning(f'_build_litters_context error: {e}')
         return 'Informações de ninhadas indisponíveis no momento.'
-
-
-def _is_price_question(text: str) -> bool:
-    text_l = (text or '').lower()
-    if not text_l:
-        return False
-    patterns = [
-        r'\bquanto custa\b',
-        r'\bqual o valor\b',
-        r'\bvalor\b',
-        r'\bpreço\b',
-        r'\bpreco\b',
-        r'\bcusta\b',
-        r'\br\$\b',
-    ]
-    return any(re.search(p, text_l) for p in patterns)
-
-
-def _theme_count(text: str) -> int:
-    text_l = (text or '').lower()
-    themes = [
-        ['pedigree', 'procedência', 'procedencia'],
-        ['genética', 'genetica', 'linhagem'],
-        ['saúde', 'saude', 'física', 'fisica', 'mental'],
-        ['comportamento', 'temperamento', 'convivência', 'convivencia'],
-    ]
-    return sum(1 for group in themes if any(token in text_l for token in group))
-
-
-def _mentions_price(text: str) -> bool:
-    text_l = (text or '').lower()
-    return ('r$' in text_l) or ('4.000' in text_l) or ('4000' in text_l) or ('valor' in text_l)
-
-
-def _enforce_price_justification(options: list[str]) -> list[str]:
-    """
-    Regra comercial híbrida para perguntas de preço:
-    pelo menos 2 sugestões devem combinar preço + justificativa técnica
-    (procedência/genética/saúde/comportamento).
-    """
-    if not options:
-        return options
-
-    good_indexes = [
-        idx for idx, opt in enumerate(options)
-        if _mentions_price(opt) and _theme_count(opt) >= 2
-    ]
-    if len(good_indexes) >= min(2, len(options)):
-        return options
-
-    target_count = min(2, len(options))
-    enrich_suffix = (
-        "\n\nOs filhotes estão em R$ 4.000."
-        " Aqui a gente trabalha com procedência: genética/linhagem comprovada,"
-        " seleção de temperamento e acompanhamento de saúde física e mental."
-        "\n\nMe conta uma coisa: você busca mais companhia/família ou um perfil mais ativo?"
-    )
-
-    updated = list(options)
-    for idx in range(len(updated)):
-        if len(good_indexes) >= target_count:
-            break
-        if idx in good_indexes:
-            continue
-        updated[idx] = f"{updated[idx].rstrip()}{enrich_suffix}"
-        good_indexes.append(idx)
-
-    return updated
 
 
 def _build_greeting_instruction(lead, conv, agent_name: str = '') -> str:
@@ -573,52 +492,8 @@ A regra é: nunca vá além do que o lead trouxe. Mas também nunca seja frio qu
 Intimidade cresce na medida em que o lead abre espaço — não antes.
 
 ESTRATÉGIA: entender o que a pessoa quer → responder com clareza → só então detalhar filhotes
-PROIBIDO: escassez falsa, pressão, linguagem genérica de vendedor, "super", "adorável", "fofo", "incrível", "perfeito", "maravilhoso"
+PROIBIDO: escassez falsa, pressão, linguagem genérica de vendedor, qualquer emoji — ZERO emojis em todas as respostas, "super", "adorável", "fofo", "incrível", "perfeito", "maravilhoso"
 FRASES PREFERIDAS: "me conta uma coisa…", "deixa eu te perguntar…", "aqui a gente costuma…"
-EMOJI: pode usar no máximo 1 emoji simples quando ficar natural (ex.: 👍 ou 👀). Nunca exagerar.
-
-CONSIDERAÇÕES DE RESPOSTA (fluxo prático):
-1) PRIMEIRA RESPOSTA (quebra de gelo):
-- "Fala! Tudo bem?"
-- "Vi aqui que você chamou por causa dos filhotes"
-- "Qual deles te chamou mais atenção?"
-- Se a conversa estiver no início, puxar para o site e ninhada completa.
-
-2) SE A PESSOA PERGUNTA "quanto custa?" direto:
-- Não travar.
-- Responder e qualificar com pergunta curta:
-  "Claro, te passo sim. Mas antes me conta… é mais pra companhia/família ou trabalho/treino específico?"
-- Reforçar posicionamento de temperamento e convivência familiar.
-
-3) DEPOIS DA RESPOSTA (perfil do cliente):
-- Entrar com valor + posicionamento:
-  "Eles estão saindo na faixa de R$ 4.000."
-- Complementar com contexto de perfil/comportamento (mais ativos x mais tranquilos).
-
-4) SE DEMONSTRA INTERESSE:
-- Aproximar com CTA leve:
-  "Se quiser, te mando mais vídeos dele(a) aqui."
-
-5) ENVIO DE VÍDEO + CONEXÃO:
-- Após enviar, puxar percepção:
-  "Dá pra ter uma ideia boa do jeito dele(a), né?"
-
-6) FECHAMENTO LEVE:
-- Sem pressão:
-  "Hoje ainda tenho disponibilidade sim. Se fizer sentido pra você, dá pra garantir com reserva."
-
-7) SE DEMORA / ESFRIA:
-- Follow-up leve:
-  "E aí, chegou a ver os vídeos?"
-
-ATALHOS IMPORTANTES:
-- Transporte: envio para todo Brasil por transportadora especializada.
-- Garantia/procedência: pedigree, pais selecionados, acompanhamento.
-- Reserva: 30% para reservar e restante antes da entrega.
-
-DICA DE OURO:
-- Nunca responder seco só com preço.
-- Sempre usar: conversa → contexto → valor.
 
 ---
 
@@ -645,8 +520,7 @@ SOBRE OS FILHOTES:
 - Todos vacinados conforme a idade, vermifugados, acompanhamento profissional
 
 PREÇOS (use somente se o cliente perguntar, de forma simples e direta):
-- Todos os filhotes: R$ 4.000 (preço único, sem variação por sexo/cor).
-- Mesmo quando falar preço, evite resposta seca; contextualize e faça 1 pergunta curta.
+- R$ 4.000 (qualquer cor e sexo)
 
 ENTREGA — REGRAS:
 - Filhotes liberados com ~60 dias de vida
@@ -687,12 +561,6 @@ Cada opção com um ângulo distinto:
 1. Direta e clara — responde o que foi perguntado sem rodeios
 2. Abre espaço — responde e faz uma pergunta simples para entender melhor o que o cliente quer; se a conversa está no início ou o lead ainda não conhece os filhotes, inclua o site nesta opção com a frase "no site tem todos os filhotes disponíveis agora" seguida do link em parágrafo separado
 3. Mais curta e simples — uma resposta enxuta, natural, como alguém digitando rápido no WhatsApp
-
-REGRA PARA PERGUNTA DE PREÇO:
-- Se a última mensagem pedir preço/valor/custo, pelo menos 2 das 3 opções DEVEM incluir:
-  1) preço (R$ 4.000) e
-  2) justificativa de procedência com genética/linhagem + saúde (física e mental) + comportamento/temperamento.
-- Evite resposta seca de preço sem contexto.
 
 EMOÇÃO — ESPELHAMENTO PROPORCIONAL:
 - Leia o tom da última mensagem do lead antes de escolher o ângulo de cada opção

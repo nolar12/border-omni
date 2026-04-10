@@ -129,6 +129,16 @@ export const leadsService = {
     }
   },
 
+  async approveSuggestion(id: number, message: string, suggestion: string, brief?: string): Promise<void> {
+    try {
+      await api.post(`/leads/${id}/approve_suggestion/`, {
+        message,
+        suggestion,
+        brief: brief ?? '',
+      });
+    } catch { /* fire-and-forget, não bloqueia UX */ }
+  },
+
   async sendTemplate(id: number, templateId: number, variables: string[], headerMediaUrl?: string): Promise<Message> {
     const { data } = await api.post<Message>(`/leads/${id}/send_template/`, {
       template_id: templateId,

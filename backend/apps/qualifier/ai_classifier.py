@@ -71,7 +71,7 @@ SINAIS NEGATIVOS QUE DIMINUEM probabilidade_conversao:
 - Longo silêncio do lead após apresentação de informações importantes → perda de interesse
 
 PADRÃO DE ESCRITA — INDICADOR DE CAPACIDADE DE COMPRA:
-O produto tem valor de R$ 4.000. A escrita do lead é um sinal indireto de perfil socioeconômico e portanto de capacidade de compra.
+O produto tem valor alto (R$ 4.000). A escrita do lead é um sinal indireto de perfil socioeconômico e portanto de capacidade de compra.
 
 Use esta escala:
 - Erros leves ou pontuais (1-2 por conversa, palavras parecidas, autocorrect) → normal, ignore completamente

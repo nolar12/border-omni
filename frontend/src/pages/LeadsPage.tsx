@@ -324,7 +324,6 @@ function ChannelIcon({ channel, size = 'sm' }: { channel: ChannelType; size?: 'x
 // ─── Chat Panel (right column) ───────────────────────────────────────────────
 
 function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () => void; onDeleted: () => void }) {
-  const BRIEF_PRESET_PRICE_GENETICS = 'Quando o lead perguntar preço, responder em formato conversa -> contexto -> valor. Informar preço único de R$ 4.000 e justificar procedência com genética/linhagem comprovada, criação especializada, foco em temperamento/comportamento e saúde física e mental. Fechar com 1 pergunta curta para qualificação (companhia/família ou perfil mais ativo).';
   const navigate = useNavigate();
   const [lead, setLead] = useState<Lead | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -1216,7 +1215,14 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                         <span className="text-[10px] font-bold text-violet-400 mt-0.5 flex-shrink-0 w-4">{idx + 1}</span>
                         <p className="text-xs text-gray-700 flex-1 leading-relaxed whitespace-pre-wrap">{option}</p>
                         <button
-                          onClick={() => { setMsgText(option); setRagSuggestions([]); }}
+                          onClick={() => {
+                            const lastIn = [...messages].reverse().find(m => m.direction === 'IN');
+                            if (lastIn && lead) {
+                              leadsService.approveSuggestion(lead.id, lastIn.text, option, briefText);
+                            }
+                            setMsgText(option);
+                            setRagSuggestions([]);
+                          }}
                           className="flex-shrink-0 text-xs px-2 py-1 rounded-lg bg-violet-500 text-white hover:bg-violet-600 transition-colors font-medium"
                           title="Usar esta resposta"
                         >
@@ -1348,18 +1354,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
 
                 {/* Painel de briefing manual IA */}
                 {showBriefPanel && (
-                  <div className="py-1.5 border-t border-violet-100">
-                    <div className="flex items-center gap-2 pb-1.5">
-                      <span className="text-[11px] text-violet-500 font-medium">Preset</span>
-                      <button
-                        onClick={() => setBriefText(BRIEF_PRESET_PRICE_GENETICS)}
-                        className="px-2 py-1 rounded-md text-[11px] border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 transition-colors"
-                        title="Aplicar preset de preço + genética + saúde"
-                      >
-                        Preço + genética + saúde
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 py-1.5 border-t border-violet-100">
                     <input
                       type="text"
                       value={briefText}
@@ -1402,7 +1397,6 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                       </svg>
                     </button>
-                    </div>
                   </div>
                 )}
 

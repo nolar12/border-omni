@@ -93,7 +93,8 @@ class SaleContract(models.Model):
                 self.puppy_father = dog.father.name
             if dog.mother:
                 self.puppy_mother = dog.mother.name
-            self.price = 4000.00
+            if dog.price:
+                self.price = dog.price
         if not self.price:
             self.price = 4000.00
         if self.price:

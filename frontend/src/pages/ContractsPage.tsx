@@ -111,7 +111,7 @@ function ContractDrawer({ initial, prefilledLead, prefilledDog, onClose, onSaved
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const price = form.puppy_sex === 'M' ? 5000 : 6000;
+  const price = 4000;
   const deposit = price * 0.3;
 
   function fmtBRL(v: number) {
