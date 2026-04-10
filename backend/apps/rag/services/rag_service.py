@@ -343,12 +343,9 @@ def _build_litters_context(org) -> str:
 
             dogs_desc = []
             for dog in available_dogs:
-                price_str = (
-                    f'R$ {int(dog.price):,}'.replace(',', '.') if dog.price else 'sob consulta'
-                )
                 sex_label = 'macho' if dog.sex == 'M' else 'fêmea'
                 color_part = f', {dog.color}' if dog.color else ''
-                dogs_desc.append(f'  - {dog.name or "filhote"} ({sex_label}{color_part}) — {price_str}')
+                dogs_desc.append(f'  - {dog.name or "filhote"} ({sex_label}{color_part}) — R$ 4.000')
 
             if days_to_delivery == 0:
                 delivery_info = f'já pode ser entregue (nasceu em {litter.birth_date.strftime("%d/%m/%Y")})'
@@ -521,20 +518,18 @@ SOBRE OS FILHOTES:
 
 PREÇOS — quando o cliente perguntar quanto custa:
 - R$ 4.000 (qualquer cor e sexo)
-- Responda de forma simples e direta. Não justifique, não defenda, não acrescente argumentos.
-  O cliente só perguntou o preço — responda o preço.
-  Exemplos:
-  "São R$ 4.000."
-  "R$ 4.000, qualquer cor ou sexo."
+- NUNCA solte o número sozinho. Sempre acompanhe com UMA linha curta sobre linhagem ou genética — natural, sem exagero.
+- Exemplos do tom certo:
+  "São R$ 4.000. São filhotes de linhagem selecionada — a gente conhece o histórico genético dos pais."
+  "R$ 4.000. Todos vêm de uma linhagem com pedigree CBKC, criação focada em temperamento e saúde."
+  "São R$ 4.000 — filhotes com origem rastreável, pedigree dos pais e mapeamento genético disponível."
+- Após dar o preço com o contexto de linhagem, pode abrir para continuar a conversa naturalmente se fizer sentido.
 
 OBJEÇÃO DE PREÇO — SOMENTE se o cliente disser que achou caro, questionar o valor ou pedir desconto:
 - NÃO compare com filhotes baratos, NÃO use frases de medo ou ameaça, NÃO justifique em excesso
-- Explique de forma natural o que está incluído — sem tentar convencer, apenas informar:
-  Os filhotes vêm de uma linhagem selecionada, com pedigree CBKC dos pais e mapeamento genético disponível.
-  A criação é focada em saúde e temperamento desde o nascimento.
-- Frases naturais (curtas, sem exagero):
-  "É o valor de um filhote criado com atenção à genética — a gente conhece a linhagem dos pais."
-  "Todos vêm com pedigree e mapeamento genético — a criação é focada em saúde e temperamento desde o início."
+- Aprofunde um pouco mais a explicação da criação e genética — ainda sem exagero:
+  "É o valor de um filhote criado com atenção à genética desde o início — saúde e temperamento são selecionados nos pais."
+  "Todos vêm com pedigree e mapeamento genético — a criação é focada em saúde e equilíbrio comportamental."
 - Se pedir desconto: "o valor a gente não mexe, mas posso te mostrar os filhotes disponíveis."
 
 ENTREGA — REGRAS:
