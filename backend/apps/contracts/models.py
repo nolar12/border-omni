@@ -93,13 +93,9 @@ class SaleContract(models.Model):
                 self.puppy_father = dog.father.name
             if dog.mother:
                 self.puppy_mother = dog.mother.name
-            if dog.price:
-                self.price = dog.price
+            self.price = 4000.00
         if not self.price:
-            if self.puppy_sex == self.SEX_MALE:
-                self.price = 5000.00
-            elif self.puppy_sex == self.SEX_FEMALE:
-                self.price = 6000.00
+            self.price = 4000.00
         if self.price:
             self.deposit_amount = round(float(self.price) * 0.30, 2)
         super().save(*args, **kwargs)
