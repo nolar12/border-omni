@@ -200,6 +200,7 @@ export interface OrgSettings {
   bot_enabled: boolean;
   initial_message: string;
   sequence_message: string;
+  link_message: string;
   [key: string]: unknown;
 }
 

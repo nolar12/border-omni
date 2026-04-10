@@ -26,6 +26,7 @@ class AgentConfig(models.Model):
     bot_enabled = models.BooleanField(default=True)
     initial_message = models.TextField(blank=True, default='')
     sequence_message = models.TextField(blank=True, default='')
+    link_message = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

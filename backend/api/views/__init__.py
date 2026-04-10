@@ -1873,6 +1873,11 @@ def _send_welcome_sequence(org, lead, conv, channel, channel_provider):
             time.sleep(1)
             _save_and_send(cfg.sequence_message.strip())
 
+        # 4. Mensagem de link (terceira mensagem — ex: link do site)
+        if cfg.link_message and cfg.link_message.strip():
+            time.sleep(1)
+            _save_and_send(cfg.link_message.strip())
+
     except Exception as e:
         logger.warning(f'_send_welcome_sequence error: {e}')
 

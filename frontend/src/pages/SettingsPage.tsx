@@ -39,6 +39,7 @@ export default function SettingsPage() {
   const [botEnabled, setBotEnabled] = useState(false);
   const [initialMessage, setInitialMessage] = useState('');
   const [sequenceMessage, setSequenceMessage] = useState('');
+  const [linkMessage, setLinkMessage] = useState('');
   const [media, setMedia] = useState<InitialMessageMedia[]>([]);
 
   const [savingBot, setSavingBot] = useState(false);
@@ -47,6 +48,8 @@ export default function SettingsPage() {
   const [savedBot, setSavedBot] = useState(false);
   const [savingSeq, setSavingSeq] = useState(false);
   const [savedSeq, setSavedSeq] = useState(false);
+  const [savingLink, setSavingLink] = useState(false);
+  const [savedLink, setSavedLink] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [deletingMediaId, setDeletingMediaId] = useState<number | null>(null);
 
@@ -63,6 +66,7 @@ export default function SettingsPage() {
         setBotEnabled(cfg.bot_enabled);
         setInitialMessage(cfg.initial_message ?? '');
         setSequenceMessage(cfg.sequence_message ?? '');
+        setLinkMessage(cfg.link_message ?? '');
         setMedia(med);
       })
       .catch(() => setError('Não foi possível carregar as configurações.'))
@@ -111,6 +115,20 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleSaveLink() {
+    setSavingLink(true);
+    setSavedLink(false);
+    try {
+      const updated = await settingsService.updateSettings({ link_message: linkMessage.trim() });
+      setSettings(updated);
+      setLinkMessage(updated.link_message ?? '');
+      setSavedLink(true);
+      setTimeout(() => setSavedLink(false), 2500);
+    } finally {
+      setSavingLink(false);
+    }
+  }
+
   async function handleMediaUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -155,6 +173,7 @@ export default function SettingsPage() {
 
   const msgChanged = initialMessage !== (settings?.initial_message ?? '');
   const seqChanged = sequenceMessage !== (settings?.sequence_message ?? '');
+  const linkChanged = linkMessage !== (settings?.link_message ?? '');
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
@@ -406,6 +425,66 @@ export default function SettingsPage() {
                 className="btn btn-sm min-w-[80px] bg-purple-600 hover:bg-purple-700 text-white border-0 disabled:opacity-40"
               >
                 {savingSeq ? <span className="loading loading-spinner loading-xs" /> : 'Salvar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Terceira mensagem — link ── */}
+      <section className="rounded-2xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+          <div className="w-9 h-9 rounded-xl bg-sky-50 flex items-center justify-center flex-shrink-0">
+            <svg className="w-5 h-5 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+          </div>
+          <div>
+            <p className="text-base font-semibold text-gray-800">Mensagem de link</p>
+            <p className="text-sm text-gray-400">Terceira mensagem — enviada após a de sequência.</p>
+          </div>
+        </div>
+
+        <div className="px-5 py-5 space-y-4">
+          <p className="text-sm text-gray-400 leading-relaxed">
+            Use para enviar o link do site ou qualquer mensagem final. Deixe em branco para não enviar.
+          </p>
+
+          <textarea
+            rows={3}
+            placeholder={"Ex: Veja todos os filhotes disponíveis agora:\n\nhttps://bordercolliesul.com.br"}
+            className="w-full text-base border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-sky-400 transition-colors resize-none bg-white leading-relaxed"
+            value={linkMessage}
+            onChange={e => setLinkMessage(e.target.value)}
+          />
+
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5">
+              {savedLink && !savingLink && (
+                <span className="flex items-center gap-1 text-xs font-medium text-green-600">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                  Salvo com sucesso
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {linkMessage && (
+                <button
+                  onClick={() => setLinkMessage('')}
+                  className="text-xs text-gray-400 hover:text-red-500 transition-colors px-2 py-1"
+                >
+                  Limpar
+                </button>
+              )}
+              <button
+                onClick={handleSaveLink}
+                disabled={savingLink || !linkChanged}
+                className="btn btn-sm min-w-[80px] bg-sky-500 hover:bg-sky-600 text-white border-0 disabled:opacity-40"
+              >
+                {savingLink ? <span className="loading loading-spinner loading-xs" /> : 'Salvar'}
               </button>
             </div>
           </div>

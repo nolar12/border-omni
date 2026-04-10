@@ -252,7 +252,7 @@ class AgentConfigSerializer(serializers.ModelSerializer):
             'rag_enabled', 'match_threshold', 'match_count',
             'max_history_messages', 'openai_api_key', 'openai_api_key_masked',
             'cordiality_enabled', 'cordiality_use_ai',
-            'bot_enabled', 'initial_message', 'sequence_message',
+            'bot_enabled', 'initial_message', 'sequence_message', 'link_message',
             'updated_at',
         ]
         extra_kwargs = {
