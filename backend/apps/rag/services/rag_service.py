@@ -325,8 +325,10 @@ class RAGService:
             )
             raw = response.choices[0].message.content.strip()
             parsed = json.loads(raw)
-            options = parsed.get('options', [])
-            return [str(o).strip() for o in options if o][:3]
+            options = [str(o).strip() for o in parsed.get('options', []) if o][:3]
+            if _is_price_question(message_text):
+                options = _enforce_price_justification(options)
+            return options
         except Exception as e:
             logger.exception(f'RAGService.suggest_three_options error: {e}')
             return []
@@ -379,6 +381,74 @@ def _build_litters_context(org) -> str:
     except Exception as e:
         logger.warning(f'_build_litters_context error: {e}')
         return 'Informações de ninhadas indisponíveis no momento.'
+
+
+def _is_price_question(text: str) -> bool:
+    text_l = (text or '').lower()
+    if not text_l:
+        return False
+    patterns = [
+        r'\bquanto custa\b',
+        r'\bqual o valor\b',
+        r'\bvalor\b',
+        r'\bpreço\b',
+        r'\bpreco\b',
+        r'\bcusta\b',
+        r'\br\$\b',
+    ]
+    return any(re.search(p, text_l) for p in patterns)
+
+
+def _theme_count(text: str) -> int:
+    text_l = (text or '').lower()
+    themes = [
+        ['pedigree', 'procedência', 'procedencia'],
+        ['genética', 'genetica', 'linhagem'],
+        ['saúde', 'saude', 'física', 'fisica', 'mental'],
+        ['comportamento', 'temperamento', 'convivência', 'convivencia'],
+    ]
+    return sum(1 for group in themes if any(token in text_l for token in group))
+
+
+def _mentions_price(text: str) -> bool:
+    text_l = (text or '').lower()
+    return ('r$' in text_l) or ('4.000' in text_l) or ('4000' in text_l) or ('valor' in text_l)
+
+
+def _enforce_price_justification(options: list[str]) -> list[str]:
+    """
+    Regra comercial híbrida para perguntas de preço:
+    pelo menos 2 sugestões devem combinar preço + justificativa técnica
+    (procedência/genética/saúde/comportamento).
+    """
+    if not options:
+        return options
+
+    good_indexes = [
+        idx for idx, opt in enumerate(options)
+        if _mentions_price(opt) and _theme_count(opt) >= 2
+    ]
+    if len(good_indexes) >= min(2, len(options)):
+        return options
+
+    target_count = min(2, len(options))
+    enrich_suffix = (
+        "\n\nOs filhotes estão em R$ 4.000."
+        " Aqui a gente trabalha com procedência: genética/linhagem comprovada,"
+        " seleção de temperamento e acompanhamento de saúde física e mental."
+        "\n\nMe conta uma coisa: você busca mais companhia/família ou um perfil mais ativo?"
+    )
+
+    updated = list(options)
+    for idx in range(len(updated)):
+        if len(good_indexes) >= target_count:
+            break
+        if idx in good_indexes:
+            continue
+        updated[idx] = f"{updated[idx].rstrip()}{enrich_suffix}"
+        good_indexes.append(idx)
+
+    return updated
 
 
 def _build_greeting_instruction(lead, conv, agent_name: str = '') -> str:
@@ -617,6 +687,12 @@ Cada opção com um ângulo distinto:
 1. Direta e clara — responde o que foi perguntado sem rodeios
 2. Abre espaço — responde e faz uma pergunta simples para entender melhor o que o cliente quer; se a conversa está no início ou o lead ainda não conhece os filhotes, inclua o site nesta opção com a frase "no site tem todos os filhotes disponíveis agora" seguida do link em parágrafo separado
 3. Mais curta e simples — uma resposta enxuta, natural, como alguém digitando rápido no WhatsApp
+
+REGRA PARA PERGUNTA DE PREÇO:
+- Se a última mensagem pedir preço/valor/custo, pelo menos 2 das 3 opções DEVEM incluir:
+  1) preço (R$ 4.000) e
+  2) justificativa de procedência com genética/linhagem + saúde (física e mental) + comportamento/temperamento.
+- Evite resposta seca de preço sem contexto.
 
 EMOÇÃO — ESPELHAMENTO PROPORCIONAL:
 - Leia o tom da última mensagem do lead antes de escolher o ângulo de cada opção

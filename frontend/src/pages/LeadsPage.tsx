@@ -324,6 +324,7 @@ function ChannelIcon({ channel, size = 'sm' }: { channel: ChannelType; size?: 'x
 // ─── Chat Panel (right column) ───────────────────────────────────────────────
 
 function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () => void; onDeleted: () => void }) {
+  const BRIEF_PRESET_PRICE_GENETICS = 'Quando o lead perguntar preço, responder em formato conversa -> contexto -> valor. Informar preço único de R$ 4.000 e justificar procedência com genética/linhagem comprovada, criação especializada, foco em temperamento/comportamento e saúde física e mental. Fechar com 1 pergunta curta para qualificação (companhia/família ou perfil mais ativo).';
   const navigate = useNavigate();
   const [lead, setLead] = useState<Lead | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -1328,7 +1329,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                     ? 'Janela de 24h expirada — use um template'
                     : 'Digite sua mensagem...'}
                   disabled={!isWhatsappWindowOpen && selectedChannel === 'whatsapp'}
-                  className="w-full text-lg border border-gray-200 rounded-xl px-3 py-2.5 outline-none focus:border-blue-400 transition-colors resize-none overflow-hidden disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
+                  className="w-full text-lg border border-gray-200 rounded-xl px-3 py-2.5 outline-none focus:border-blue-400 transition-colors resize-none overflow-y-auto disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed"
                   style={{ minHeight: '4.5rem' }}
                   value={msgText}
                   onChange={e => {
@@ -1347,7 +1348,18 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
 
                 {/* Painel de briefing manual IA */}
                 {showBriefPanel && (
-                  <div className="flex items-center gap-2 py-1.5 border-t border-violet-100">
+                  <div className="py-1.5 border-t border-violet-100">
+                    <div className="flex items-center gap-2 pb-1.5">
+                      <span className="text-[11px] text-violet-500 font-medium">Preset</span>
+                      <button
+                        onClick={() => setBriefText(BRIEF_PRESET_PRICE_GENETICS)}
+                        className="px-2 py-1 rounded-md text-[11px] border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 transition-colors"
+                        title="Aplicar preset de preço + genética + saúde"
+                      >
+                        Preço + genética + saúde
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
                     <input
                       type="text"
                       value={briefText}
@@ -1390,6 +1402,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                       </svg>
                     </button>
+                    </div>
                   </div>
                 )}
 
