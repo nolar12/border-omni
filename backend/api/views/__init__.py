@@ -16,6 +16,7 @@ from apps.conversations.models import Conversation, Message, MessageTemplate
 from apps.quick_replies.models import QuickReply, QuickReplyCategory
 from apps.channels.models import ChannelProvider
 from apps.qualifier.engine import QualifierEngine
+from apps.qualifier.states import is_from_website, STATE_COMPLETE
 
 from api.serializers import (
     UserSerializer, LeadListSerializer, LeadDetailSerializer,
@@ -1438,15 +1439,25 @@ class WhatsAppWebhookView(APIView):
                 }
             )
         else:  # whatsapp
+            from_site = is_from_website(text)
             lead, created = Lead.objects.get_or_create(
                 organization=org,
                 phone=sender_id,
                 defaults={
-                    'status': 'NEW', 'source': 'OTHER', 'channels_used': channel,
-                    'conversation_state': 'initial', 'full_name': contact_name or '',
-                    'is_ai_active': bot_active,
+                    'status': 'NEW',
+                    'source': 'WEBSITE' if from_site else 'OTHER',
+                    'channels_used': channel,
+                    'conversation_state': STATE_COMPLETE if from_site else 'initial',
+                    'full_name': contact_name or '',
+                    'is_ai_active': False if from_site else bot_active,
                 }
             )
+            # Lead novo vindo do site → classificar como HOT imediatamente
+            if created and from_site:
+                Lead.objects.filter(pk=lead.pk).update(
+                    lead_classification='HOT_LEAD',
+                    score=85,
+                )
 
         # Se o bot foi desativado globalmente depois que o lead já existia,
         # respeita o is_ai_active individual do lead (não força para False).
@@ -1480,8 +1491,8 @@ class WhatsAppWebhookView(APIView):
 
         _notify_users_via_whatsapp(org=org, lead=lead, text=text, channel_provider=channel_provider)
 
-        # ── Mensagem inicial + mídia + sequência (somente no primeiro contato) ──
-        if created:
+        # ── Mensagem inicial + mídia + sequência (somente no primeiro contato, não para leads do site) ──
+        if created and lead.source != 'WEBSITE':
             _send_welcome_sequence(
                 org=org, lead=lead, conv=conv,
                 channel=channel, channel_provider=channel_provider,

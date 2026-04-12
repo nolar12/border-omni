@@ -74,3 +74,16 @@ NEXT_STATE = {
     STATE_Q4_PURPOSE:  STATE_COMPLETE,
     STATE_COMPLETE:    STATE_COMPLETE,
 }
+
+# Prefixos das mensagens pré-preenchidas dos botões do site (whatsapp.ts)
+WEBSITE_MESSAGE_PATTERNS = [
+    "Olá! Gostaria de saber mais sobre os filhotes do Border Collie Sul",
+    "Olá! Quero saber mais sobre a ninhada",
+    "Olá! Quero saber mais sobre o filhote",
+]
+
+
+def is_from_website(text: str) -> bool:
+    """Retorna True se a mensagem veio de um botão de contato do site."""
+    clean = (text or '').strip()
+    return any(clean.startswith(p) for p in WEBSITE_MESSAGE_PATTERNS)

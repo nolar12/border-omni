@@ -57,6 +57,7 @@ class Lead(models.Model):
     SOURCE_CHOICES = [
         ('INSTAGRAM_AD', 'Anúncio Instagram'),
         ('ORGANIC', 'Orgânico'),
+        ('WEBSITE', 'Site'),
         ('OTHER', 'Outro'),
     ]
     TIER_CHOICES = [('A', 'A'), ('B', 'B'), ('C', 'C')]

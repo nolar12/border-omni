@@ -40,6 +40,8 @@ ANALISE O HISTÓRICO E RETORNE:
 SINAIS POSITIVOS QUE AUMENTAM probabilidade_conversao:
 - Futuro do indicativo ("quando eu buscar", "vou preparar") — sinal forte de decisão mental já tomada
 - Lead continua engajado após saber o preço — o preço não é objeção
+- Lead enviou 2+ mensagens após o preço ser mencionado sem levantar objeção → aceitação implícita do valor → quente (não exige que o lead diga "aceito" — a ausência de objeção e a continuidade da conversa já confirmam)
+- Lead enviou 1 mensagem após o preço sem objeção → sem resistência ao valor, tendência quente
 - Perguntas sobre LOGÍSTICA DE COMPRA (frete, entrega na cidade X, valor do transporte) → quente
 - Perguntas sobre FORMA DE PAGAMENTO (cartão, parcelamento, entrada, PIX, restante) → quente
 - Perguntas sobre vacinas, chip, documentação → pensamento de implementação → quente
@@ -320,11 +322,12 @@ class AILeadClassifier:
         engaged_after_price = False
         price_keywords = ['r$', 'reais', 'preço', 'valor', 'custa', 'custo']
         last_out_time = None
-        last_out_had_price = False
         lead_replied_after_attendant = False
         unanswered_tail = 0
         lead_messages_beyond_first = 0
         first_in_seen = False
+        price_mentioned_in_conversation = False
+        messages_after_price_mention = 0
 
         for msg in messages:
             ts = msg['created_at']
@@ -333,8 +336,9 @@ class AILeadClassifier:
 
             if direction == 'OUT':
                 last_out_time = ts
-                last_out_had_price = any(kw in text for kw in price_keywords)
                 unanswered_tail += 1
+                if any(kw in text for kw in price_keywords):
+                    price_mentioned_in_conversation = True
             elif direction == 'IN':
                 unanswered_tail = 0  # Reset: lead respondeu
                 msg_lengths_in.append(len(msg['text'] or ''))
@@ -349,10 +353,13 @@ class AILeadClassifier:
                     delta = (ts - last_out_time).total_seconds() / 60
                     response_times.append(delta)
 
-                # engaged_after_price: lead respondeu com substância (>10 chars) após preço
-                if last_out_had_price and len(msg['text'] or '') > 10:
-                    engaged_after_price = True
-                    last_out_had_price = False
+                # Conta mensagens do lead após o preço ter sido mencionado em qualquer OUT
+                if price_mentioned_in_conversation:
+                    messages_after_price_mention += 1
+
+        # Engajamento real após preço: 2+ mensagens sem objeção = aceitação implícita
+        if price_mentioned_in_conversation and messages_after_price_mention >= 2:
+            engaged_after_price = True
 
         avg_response_min = round(sum(response_times) / len(response_times), 1) if response_times else None
         avg_msg_length = round(sum(msg_lengths_in) / len(msg_lengths_in), 0) if msg_lengths_in else 0
@@ -366,6 +373,8 @@ class AILeadClassifier:
             'lead_replied_after_attendant': lead_replied_after_attendant,
             'unanswered_tail': unanswered_tail,
             'lead_messages_beyond_first': lead_messages_beyond_first,
+            'price_mentioned_in_conversation': price_mentioned_in_conversation,
+            'messages_after_price_mention': messages_after_price_mention,
         }
 
     def _format_metrics(self, metrics: dict) -> str:
@@ -382,8 +391,26 @@ class AILeadClassifier:
         tail = metrics.get('unanswered_tail', 0)
         if tail > 0:
             lines.append(f"- Mensagens do atendente sem resposta no final da conversa: {tail} — conversa esfriou")
+        price_mentioned = metrics.get('price_mentioned_in_conversation', False)
+        n_after = metrics.get('messages_after_price_mention', 0)
         engaged = metrics.get('engaged_after_price', False)
-        lines.append(f"- Engajamento substantivo após mensagem com preço: {'sim — sinal forte de intenção' if engaged else 'não detectado'}")
+        if price_mentioned:
+            if n_after >= 2:
+                lines.append(
+                    f"- Lead enviou {n_after} mensagens após o preço ser mencionado sem levantar objeção"
+                    " — aceitação implícita do valor, sinal forte de intenção"
+                )
+            elif n_after == 1:
+                lines.append(
+                    "- Lead enviou 1 mensagem após o preço ser mencionado sem levantar objeção"
+                    " — sem resistência ao valor, mas ainda inconclusivo"
+                )
+            else:
+                lines.append("- Preço foi mencionado na conversa mas lead ainda não respondeu após isso")
+        else:
+            lines.append("- Preço não foi mencionado na conversa ainda")
+        if engaged:
+            lines.append("- Engajamento confirmado após preço: sim — sinal forte de intenção de compra")
         return '\n'.join(lines)
 
     def _map_to_db(self, result: dict):
