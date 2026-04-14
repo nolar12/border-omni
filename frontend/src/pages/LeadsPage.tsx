@@ -349,6 +349,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [showClassMenu, setShowClassMenu] = useState(false);
   const [ragSuggestions, setRagSuggestions] = useState<string[]>([]);
   const [loadingSuggestion, setLoadingSuggestion] = useState(false);
+  const [suggestionsPanelCollapsed, setSuggestionsPanelCollapsed] = useState(false);
   const lastSuggestedMsgId = useRef<number | null>(null);
   const isSendingRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -470,6 +471,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     if (lastSuggestedMsgId.current === lastIn.id) return;
     lastSuggestedMsgId.current = lastIn.id;
     setRagSuggestions([]);
+    setSuggestionsPanelCollapsed(false);
     setLoadingSuggestion(true);
     leadsService.suggestResponse(lead.id, lastIn.text, selectedChannel ?? 'whatsapp').then(suggestions => {
       if (suggestions.length > 0) setRagSuggestions(suggestions);
@@ -1179,57 +1181,82 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
               {(loadingSuggestion || ragSuggestions.length > 0) && (
                 <div className="px-3 pt-2 pb-1">
                   <div className="bg-violet-50 border border-violet-200 rounded-xl overflow-hidden">
-                    {/* Cabeçalho */}
-                    <div className="flex items-center justify-between px-3 py-1.5 border-b border-violet-100">
+                    {/* Cabeçalho — clicável para colapsar/expandir */}
+                    <div
+                      className="flex items-center justify-between px-3 py-1.5 border-b border-violet-100 cursor-pointer select-none"
+                      onClick={() => setSuggestionsPanelCollapsed(v => !v)}
+                    >
                       <span className="text-xs font-semibold text-violet-700 flex items-center gap-1">
                         ✨ Sugestões IA
+                        {suggestionsPanelCollapsed && ragSuggestions.length > 0 && (
+                          <span className="ml-1 bg-violet-200 text-violet-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                            {ragSuggestions.length}
+                          </span>
+                        )}
                       </span>
-                      {ragSuggestions.length > 0 && (
+                      <div className="flex items-center gap-1">
+                        {/* Botão colapsar/expandir */}
                         <button
-                          onClick={() => setRagSuggestions([])}
+                          onClick={e => { e.stopPropagation(); setSuggestionsPanelCollapsed(v => !v); }}
                           className="text-violet-400 hover:text-violet-600 transition-colors p-0.5"
-                          title="Ignorar sugestões"
+                          title={suggestionsPanelCollapsed ? 'Expandir sugestões' : 'Recolher sugestões'}
                         >
-                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                          <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${suggestionsPanelCollapsed ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                            <polyline points="18 15 12 9 6 15"/>
                           </svg>
                         </button>
-                      )}
+                        {ragSuggestions.length > 0 && (
+                          <button
+                            onClick={e => { e.stopPropagation(); setRagSuggestions([]); }}
+                            className="text-violet-400 hover:text-violet-600 transition-colors p-0.5"
+                            title="Ignorar sugestões"
+                          >
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    {/* Loading */}
-                    {loadingSuggestion && ragSuggestions.length === 0 && (
-                      <div className="px-3 py-2.5 flex items-center gap-2">
-                        <svg className="w-3.5 h-3.5 text-violet-500 animate-spin" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                        </svg>
-                        <span className="text-xs text-violet-600 italic">Gerando sugestões...</span>
-                      </div>
+                    {/* Conteúdo — oculto quando colapsado */}
+                    {!suggestionsPanelCollapsed && (
+                      <>
+                        {/* Loading */}
+                        {loadingSuggestion && ragSuggestions.length === 0 && (
+                          <div className="px-3 py-2.5 flex items-center gap-2">
+                            <svg className="w-3.5 h-3.5 text-violet-500 animate-spin" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                            </svg>
+                            <span className="text-xs text-violet-600 italic">Gerando sugestões...</span>
+                          </div>
+                        )}
+                        {/* Opções */}
+                        {ragSuggestions.map((option, idx) => (
+                          <div
+                            key={idx}
+                            className={`flex items-start gap-2 px-3 py-2${idx < ragSuggestions.length - 1 ? ' border-b border-violet-100' : ''}`}
+                          >
+                            <span className="text-[10px] font-bold text-violet-400 mt-0.5 flex-shrink-0 w-4">{idx + 1}</span>
+                            <p className="text-xs text-gray-700 flex-1 leading-relaxed whitespace-pre-wrap">{option}</p>
+                            <button
+                              onClick={() => {
+                                const lastIn = [...messages].reverse().find(m => m.direction === 'IN');
+                                if (lastIn && lead) {
+                                  leadsService.approveSuggestion(lead.id, lastIn.text, option, briefText);
+                                }
+                                setMsgText(option);
+                                setRagSuggestions([]);
+                              }}
+                              className="flex-shrink-0 text-xs px-2 py-1 rounded-lg bg-violet-500 text-white hover:bg-violet-600 transition-colors font-medium"
+                              title="Usar esta resposta"
+                            >
+                              Usar
+                            </button>
+                          </div>
+                        ))}
+                      </>
                     )}
-                    {/* Opções */}
-                    {ragSuggestions.map((option, idx) => (
-                      <div
-                        key={idx}
-                        className={`flex items-start gap-2 px-3 py-2${idx < ragSuggestions.length - 1 ? ' border-b border-violet-100' : ''}`}
-                      >
-                        <span className="text-[10px] font-bold text-violet-400 mt-0.5 flex-shrink-0 w-4">{idx + 1}</span>
-                        <p className="text-xs text-gray-700 flex-1 leading-relaxed whitespace-pre-wrap">{option}</p>
-                        <button
-                          onClick={() => {
-                            const lastIn = [...messages].reverse().find(m => m.direction === 'IN');
-                            if (lastIn && lead) {
-                              leadsService.approveSuggestion(lead.id, lastIn.text, option, briefText);
-                            }
-                            setMsgText(option);
-                            setRagSuggestions([]);
-                          }}
-                          className="flex-shrink-0 text-xs px-2 py-1 rounded-lg bg-violet-500 text-white hover:bg-violet-600 transition-colors font-medium"
-                          title="Usar esta resposta"
-                        >
-                          Usar
-                        </button>
-                      </div>
-                    ))}
                   </div>
                 </div>
               )}
