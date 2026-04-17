@@ -405,6 +405,10 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   useEffect(() => {
     setLoading(true);
     setTab('chat');
+    setRagSuggestions([]);
+    setLoadingSuggestion(false);
+    setSuggestionsPanelCollapsed(false);
+    lastSuggestedMsgId.current = null;
     leadsService.getLead(leadId).then(async (l) => {
       setLead(l);
       // Seleciona o canal da conversa mais recente como padrão
