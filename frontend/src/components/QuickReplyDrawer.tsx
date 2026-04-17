@@ -48,6 +48,9 @@ export default function QuickReplyDrawer({
   const [loadingBrief, setLoadingBrief] = useState(false);
   const briefInputRef = useRef<HTMLInputElement>(null);
 
+  // Controla se o painel de sugestões está expandido — sempre inicia colapsado
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+
   const hasSuggestions = suggestions.length > 0 || loadingSuggestion;
 
   useEffect(() => {
@@ -71,6 +74,7 @@ export default function QuickReplyDrawer({
       setShowBrief(false);
       setBriefText('');
       setLoadingBrief(false);
+      setSuggestionsOpen(false);
     }
   }, [isOpen]);
 
@@ -256,86 +260,109 @@ export default function QuickReplyDrawer({
         <div className="flex-1 overflow-y-auto">
 
           {/* ── Painel de Sugestões IA ─────────────────────────────── */}
-          {(hasSuggestions || showBrief) && !showForm && (
+          {hasSuggestions && !showForm && (
             <div className="border-b border-violet-100 bg-violet-50/60">
-              {/* Cabeçalho da seção IA */}
-              <div className="flex items-center justify-between px-4 py-2">
+              {/* Cabeçalho clicável — sempre visível, abre/fecha o conteúdo */}
+              <button
+                onClick={() => setSuggestionsOpen(v => !v)}
+                className="w-full flex items-center justify-between px-4 py-2 hover:bg-violet-100/50 transition-colors"
+              >
                 <span className="text-xs font-semibold text-violet-700 flex items-center gap-1.5">
                   <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
                   </svg>
                   Sugestões IA
+                  {suggestions.length > 0 && (
+                    <span className="ml-1 text-[10px] font-bold bg-violet-200 text-violet-700 rounded-full px-1.5 py-0.5">
+                      {suggestions.length}
+                    </span>
+                  )}
                 </span>
-                <button
-                  onClick={() => setShowBrief(v => !v)}
-                  title="Modificar sugestões"
-                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg transition-colors font-medium ${
-                    showBrief
-                      ? 'bg-violet-200 text-violet-800'
-                      : 'text-violet-500 hover:bg-violet-100 hover:text-violet-700'
-                  }`}
+                <svg
+                  className={`w-3.5 h-3.5 text-violet-500 transition-transform duration-200 ${suggestionsOpen ? 'rotate-180' : ''}`}
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}
                 >
-                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
-                  </svg>
-                  Modificar
-                </button>
-              </div>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
 
-              {/* Campo de briefing — visível quando showBrief */}
-              {showBrief && (
-                <div className="flex items-center gap-2 px-4 pb-2.5">
-                  <input
-                    ref={briefInputRef}
-                    type="text"
-                    value={briefText}
-                    onChange={e => setBriefText(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSuggest(); }
-                      if (e.key === 'Escape') { setShowBrief(false); setBriefText(''); }
-                    }}
-                    placeholder="Ex: focar em disponibilidade de filhotes…"
-                    className="flex-1 text-xs border border-violet-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-violet-400 bg-white placeholder:text-violet-300"
-                  />
-                  <button
-                    onClick={handleSuggest}
-                    disabled={loadingBrief || loadingSuggestion}
-                    className="flex items-center gap-1 px-3 h-8 rounded-lg bg-violet-500 text-white text-xs font-medium hover:bg-violet-600 disabled:opacity-40 transition-colors flex-shrink-0"
-                  >
-                    {loadingBrief || loadingSuggestion
-                      ? <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
-                      : '✨ Sugerir'}
-                  </button>
-                </div>
+              {/* Conteúdo — só renderiza quando expandido */}
+              {suggestionsOpen && (
+                <>
+                  {/* Botão Modificar */}
+                  <div className="flex justify-end px-4 pb-1">
+                    <button
+                      onClick={e => { e.stopPropagation(); setShowBrief(v => !v); }}
+                      title="Modificar sugestões"
+                      className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg transition-colors font-medium ${
+                        showBrief
+                          ? 'bg-violet-200 text-violet-800'
+                          : 'text-violet-500 hover:bg-violet-100 hover:text-violet-700'
+                      }`}
+                    >
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                      </svg>
+                      Modificar
+                    </button>
+                  </div>
+
+                  {/* Campo de briefing — visível quando showBrief */}
+                  {showBrief && (
+                    <div className="flex items-center gap-2 px-4 pb-2.5">
+                      <input
+                        ref={briefInputRef}
+                        type="text"
+                        value={briefText}
+                        onChange={e => setBriefText(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSuggest(); }
+                          if (e.key === 'Escape') { setShowBrief(false); setBriefText(''); }
+                        }}
+                        placeholder="Ex: focar em disponibilidade de filhotes…"
+                        className="flex-1 text-xs border border-violet-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-violet-400 bg-white placeholder:text-violet-300"
+                      />
+                      <button
+                        onClick={handleSuggest}
+                        disabled={loadingBrief || loadingSuggestion}
+                        className="flex items-center gap-1 px-3 h-8 rounded-lg bg-violet-500 text-white text-xs font-medium hover:bg-violet-600 disabled:opacity-40 transition-colors flex-shrink-0"
+                      >
+                        {loadingBrief || loadingSuggestion
+                          ? <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+                          : '✨ Sugerir'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Loading das sugestões */}
+                  {loadingSuggestion && suggestions.length === 0 && (
+                    <div className="px-4 pb-3 flex items-center gap-2">
+                      <svg className="w-3.5 h-3.5 text-violet-500 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                      </svg>
+                      <span className="text-xs text-violet-600 italic">Gerando sugestões…</span>
+                    </div>
+                  )}
+
+                  {/* Lista de sugestões */}
+                  {suggestions.map((option, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex items-start gap-2 px-4 py-2.5${idx < suggestions.length - 1 ? ' border-b border-violet-100' : ''}`}
+                    >
+                      <span className="text-[10px] font-bold text-violet-400 mt-0.5 flex-shrink-0 w-4">{idx + 1}</span>
+                      <p className="text-xs text-gray-700 flex-1 leading-relaxed whitespace-pre-wrap">{option}</p>
+                      <button
+                        onClick={() => { onSelect(option); onClose(); }}
+                        className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg bg-violet-500 text-white hover:bg-violet-600 transition-colors font-medium"
+                      >
+                        Usar
+                      </button>
+                    </div>
+                  ))}
+                </>
               )}
-
-              {/* Loading das sugestões */}
-              {loadingSuggestion && suggestions.length === 0 && (
-                <div className="px-4 pb-3 flex items-center gap-2">
-                  <svg className="w-3.5 h-3.5 text-violet-500 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                  </svg>
-                  <span className="text-xs text-violet-600 italic">Gerando sugestões…</span>
-                </div>
-              )}
-
-              {/* Lista de sugestões */}
-              {suggestions.map((option, idx) => (
-                <div
-                  key={idx}
-                  className={`flex items-start gap-2 px-4 py-2.5${idx < suggestions.length - 1 ? ' border-b border-violet-100' : ''}`}
-                >
-                  <span className="text-[10px] font-bold text-violet-400 mt-0.5 flex-shrink-0 w-4">{idx + 1}</span>
-                  <p className="text-xs text-gray-700 flex-1 leading-relaxed whitespace-pre-wrap">{option}</p>
-                  <button
-                    onClick={() => { onSelect(option); onClose(); }}
-                    className="flex-shrink-0 text-xs px-2.5 py-1 rounded-lg bg-violet-500 text-white hover:bg-violet-600 transition-colors font-medium"
-                  >
-                    Usar
-                  </button>
-                </div>
-              ))}
             </div>
           )}
 

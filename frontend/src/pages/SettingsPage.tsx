@@ -42,6 +42,15 @@ export default function SettingsPage() {
   const [linkMessage, setLinkMessage] = useState('');
   const [media, setMedia] = useState<InitialMessageMedia[]>([]);
 
+  const [useConversationTemplate, setUseConversationTemplate] = useState(true);
+  const [conversationTemplate, setConversationTemplate] = useState('');
+
+  const [offHoursEnabled, setOffHoursEnabled] = useState(false);
+  const [offHoursStart, setOffHoursStart] = useState('21:00');
+  const [offHoursEnd, setOffHoursEnd] = useState('06:00');
+  const [offHoursMessage, setOffHoursMessage] = useState('');
+  const [offHoursTimezone, setOffHoursTimezone] = useState('America/Sao_Paulo');
+
   const [savingBot, setSavingBot] = useState(false);
   const [savingMsg, setSavingMsg] = useState(false);
   const [savedMsg, setSavedMsg] = useState(false);
@@ -50,6 +59,10 @@ export default function SettingsPage() {
   const [savedSeq, setSavedSeq] = useState(false);
   const [savingLink, setSavingLink] = useState(false);
   const [savedLink, setSavedLink] = useState(false);
+  const [savingAI, setSavingAI] = useState(false);
+  const [savedAI, setSavedAI] = useState(false);
+  const [savingOffHours, setSavingOffHours] = useState(false);
+  const [savedOffHours, setSavedOffHours] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [deletingMediaId, setDeletingMediaId] = useState<number | null>(null);
 
@@ -67,6 +80,13 @@ export default function SettingsPage() {
         setInitialMessage(cfg.initial_message ?? '');
         setSequenceMessage(cfg.sequence_message ?? '');
         setLinkMessage(cfg.link_message ?? '');
+        setUseConversationTemplate(cfg.use_conversation_template ?? true);
+        setConversationTemplate(cfg.conversation_template ?? '');
+        setOffHoursEnabled(cfg.off_hours_enabled ?? false);
+        setOffHoursStart(cfg.off_hours_start ?? '21:00');
+        setOffHoursEnd(cfg.off_hours_end ?? '06:00');
+        setOffHoursMessage(cfg.off_hours_message ?? '');
+        setOffHoursTimezone(cfg.off_hours_timezone ?? 'America/Sao_Paulo');
         setMedia(med);
       })
       .catch(() => setError('Não foi possível carregar as configurações.'))
@@ -129,6 +149,62 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleSaveAI() {
+    setSavingAI(true);
+    setSavedAI(false);
+    try {
+      const updated = await settingsService.updateSettings({
+        use_conversation_template: useConversationTemplate,
+        conversation_template: conversationTemplate,
+      });
+      setSettings(updated);
+      setUseConversationTemplate(updated.use_conversation_template ?? true);
+      setConversationTemplate(updated.conversation_template ?? '');
+      setSavedAI(true);
+      setTimeout(() => setSavedAI(false), 2500);
+    } finally {
+      setSavingAI(false);
+    }
+  }
+
+  async function handleToggleOffHours(val: boolean) {
+    setSavingOffHours(true);
+    setSavedOffHours(false);
+    try {
+      const updated = await settingsService.updateSettings({ off_hours_enabled: val });
+      setSettings(updated);
+      setOffHoursEnabled(updated.off_hours_enabled ?? val);
+      setSavedOffHours(true);
+      setTimeout(() => setSavedOffHours(false), 2500);
+    } finally {
+      setSavingOffHours(false);
+    }
+  }
+
+  async function handleSaveOffHours() {
+    setSavingOffHours(true);
+    setSavedOffHours(false);
+    try {
+      const updated = await settingsService.updateSettings({
+        off_hours_enabled: offHoursEnabled,
+        off_hours_start: offHoursStart || null,
+        off_hours_end: offHoursEnd || null,
+        off_hours_message: offHoursMessage.trim(),
+        off_hours_timezone: offHoursTimezone || 'America/Sao_Paulo',
+      });
+      setSettings(updated);
+      setOffHoursEnabled(updated.off_hours_enabled ?? false);
+      setOffHoursStart(updated.off_hours_start ?? '21:00');
+      setOffHoursEnd(updated.off_hours_end ?? '06:00');
+      setOffHoursMessage(updated.off_hours_message ?? '');
+      setOffHoursTimezone(updated.off_hours_timezone ?? 'America/Sao_Paulo');
+      setSavedOffHours(true);
+      setTimeout(() => setSavedOffHours(false), 2500);
+    } finally {
+      setSavingOffHours(false);
+    }
+  }
+
   async function handleMediaUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -174,6 +250,16 @@ export default function SettingsPage() {
   const msgChanged = initialMessage !== (settings?.initial_message ?? '');
   const seqChanged = sequenceMessage !== (settings?.sequence_message ?? '');
   const linkChanged = linkMessage !== (settings?.link_message ?? '');
+  const aiChanged =
+    useConversationTemplate !== (settings?.use_conversation_template ?? true) ||
+    conversationTemplate !== (settings?.conversation_template ?? '');
+
+  const offHoursChanged =
+    offHoursEnabled !== (settings?.off_hours_enabled ?? false) ||
+    offHoursStart !== (settings?.off_hours_start ?? '21:00') ||
+    offHoursEnd !== (settings?.off_hours_end ?? '06:00') ||
+    offHoursMessage !== (settings?.off_hours_message ?? '') ||
+    offHoursTimezone !== (settings?.off_hours_timezone ?? 'America/Sao_Paulo');
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
@@ -221,6 +307,141 @@ export default function SettingsPage() {
               ? 'Bot ativo — IA responde automaticamente aos novos leads'
               : 'Bot desativado — atendimento manual para novos leads'}
           </p>
+        </div>
+      </section>
+
+      {/* ── Horário de atendimento ── */}
+      <section className="rounded-2xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-orange-50 flex items-center justify-center flex-shrink-0">
+            <svg className="w-4 h-4 text-orange-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+          <div>
+            <p className="text-base font-semibold text-gray-800">Horário de atendimento</p>
+            <p className="text-sm text-gray-400">Defina o período sem atendimento e a mensagem automática.</p>
+          </div>
+        </div>
+
+        <div className="px-5 py-5 space-y-5">
+
+          {/* Toggle: habilitar fora de horário */}
+          <div className="flex items-start justify-between gap-6">
+            <div className="flex-1">
+              <p className="text-base font-medium text-gray-800">Ativar mensagem fora do horário</p>
+              <p className="text-sm text-gray-400 mt-1 leading-relaxed">
+                Quando ativado, o bot responde automaticamente com a mensagem abaixo em vez de acionar a IA
+                durante o período configurado.
+              </p>
+            </div>
+            <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
+              <ToggleSwitch checked={offHoursEnabled} onChange={handleToggleOffHours} disabled={savingOffHours} />
+              {savingOffHours && <span className="loading loading-spinner loading-xs text-orange-500" />}
+            </div>
+          </div>
+
+          {/* Período */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">Início do período sem atendimento</label>
+              <input
+                type="time"
+                value={offHoursStart}
+                onChange={e => setOffHoursStart(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-base outline-none focus:border-orange-400 transition-colors bg-white"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-700">Fim do período sem atendimento</label>
+              <input
+                type="time"
+                value={offHoursEnd}
+                onChange={e => setOffHoursEnd(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-base outline-none focus:border-orange-400 transition-colors bg-white"
+              />
+            </div>
+          </div>
+
+          {offHoursStart > offHoursEnd && offHoursStart && offHoursEnd && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-orange-50 text-orange-700 text-sm">
+              <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              Período cruza a meia-noite — ex: das {offHoursStart} até as {offHoursEnd} do dia seguinte.
+            </div>
+          )}
+
+          {/* Fuso horário */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">Fuso horário</label>
+            <select
+              value={offHoursTimezone}
+              onChange={e => setOffHoursTimezone(e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-base outline-none focus:border-orange-400 transition-colors bg-white"
+            >
+              <option value="America/Sao_Paulo">America/Sao_Paulo (GMT-3)</option>
+              <option value="America/Manaus">America/Manaus (GMT-4)</option>
+              <option value="America/Belem">America/Belem (GMT-3)</option>
+              <option value="America/Fortaleza">America/Fortaleza (GMT-3)</option>
+              <option value="America/Recife">America/Recife (GMT-3)</option>
+              <option value="America/Noronha">America/Noronha (GMT-2)</option>
+              <option value="America/Porto_Velho">America/Porto_Velho (GMT-4)</option>
+              <option value="America/Boa_Vista">America/Boa_Vista (GMT-4)</option>
+              <option value="America/Cuiaba">America/Cuiaba (GMT-4)</option>
+              <option value="America/Rio_Branco">America/Rio_Branco (GMT-5)</option>
+              <option value="UTC">UTC</option>
+            </select>
+          </div>
+
+          {/* Mensagem fora do horário */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">Mensagem fora do horário</label>
+            <textarea
+              rows={4}
+              placeholder={"Ex: Olá! No momento estamos fora do horário de atendimento.\nRetornaremos a partir das 9h. Deixe sua mensagem que entraremos em contato!"}
+              className="w-full text-base border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-orange-400 transition-colors resize-none bg-white leading-relaxed"
+              value={offHoursMessage}
+              onChange={e => setOffHoursMessage(e.target.value)}
+            />
+            <p className="text-xs text-gray-400">
+              Essa mensagem é enviada automaticamente quando o contato envia uma mensagem fora do horário configurado.
+            </p>
+          </div>
+
+          {/* Status visual */}
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium ${
+            offHoursEnabled ? 'bg-orange-50 text-orange-700' : 'bg-gray-50 text-gray-500'
+          }`}>
+            <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+            {offHoursEnabled
+              ? `Ativo — fora do horário (${offHoursStart || '--:--'} às ${offHoursEnd || '--:--'}) o bot responde com mensagem personalizada`
+              : 'Desativado — o bot responde normalmente em qualquer horário'}
+          </div>
+
+          <div className="flex items-center justify-between gap-3 pt-1">
+            <div className="flex items-center gap-1.5">
+              {savedOffHours && !savingOffHours && (
+                <span className="flex items-center gap-1 text-xs font-medium text-green-600">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                  Salvo com sucesso
+                </span>
+              )}
+            </div>
+            <button
+              onClick={handleSaveOffHours}
+              disabled={savingOffHours || !offHoursChanged}
+              className="btn btn-sm min-w-[80px] bg-orange-500 hover:bg-orange-600 text-white border-0 disabled:opacity-40"
+            >
+              {savingOffHours ? <span className="loading loading-spinner loading-xs" /> : 'Salvar'}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -487,6 +708,103 @@ export default function SettingsPage() {
                 {savingLink ? <span className="loading loading-spinner loading-xs" /> : 'Salvar'}
               </button>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Comportamento das sugestões de IA ── */}
+      <section className="rounded-2xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-violet-50 flex items-center justify-center flex-shrink-0">
+            <svg className="w-4 h-4 text-violet-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-base font-semibold text-gray-800">Sugestões de IA</p>
+            <p className="text-sm text-gray-400">Controle como o modelo gera as 3 opções de resposta.</p>
+          </div>
+        </div>
+
+        <div className="px-5 py-5 space-y-5">
+
+          {/* Toggle: usar template de conversa */}
+          <div className="flex items-start justify-between gap-6">
+            <div className="flex-1">
+              <p className="text-base font-medium text-gray-800">Usar template de conversa</p>
+              <p className="text-sm text-gray-400 mt-1 leading-relaxed">
+                Quando ativado, o template abaixo é usado para dar personalidade e contexto ao modelo.
+                A base de conhecimento vetorial (Supabase) sempre tem prioridade, independente desta opção.
+              </p>
+              <p className="text-sm text-gray-400 mt-1 leading-relaxed">
+                Quando desativado, o modelo responde exclusivamente com base nos registros vetoriais.
+                Se não houver resultado na base, o template ainda entra como fallback.
+              </p>
+            </div>
+            <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
+              <ToggleSwitch
+                checked={useConversationTemplate}
+                onChange={setUseConversationTemplate}
+                disabled={savingAI}
+              />
+            </div>
+          </div>
+
+          {/* Status visual do modo */}
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium ${
+            useConversationTemplate
+              ? 'bg-violet-50 text-violet-700'
+              : 'bg-amber-50 text-amber-700'
+          }`}>
+            <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              {useConversationTemplate ? (
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375" />
+              )}
+            </svg>
+            {useConversationTemplate
+              ? 'Modo padrão: base vetorial (prioridade) + template de conversa'
+              : 'Modo RAG puro: sugestões baseadas exclusivamente na base vetorial'}
+          </div>
+
+          {/* Editor do template */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-gray-700">Template de conversa</p>
+              <span className="text-xs text-gray-400">Variáveis disponíveis: {'{litters_context}'}, {'{greeting_instruction}'}, {'{profile_section}'}, {'{kb_section}'}</span>
+            </div>
+            <textarea
+              rows={18}
+              className="w-full text-xs font-mono border border-gray-200 rounded-xl px-4 py-3 outline-none focus:border-violet-400 transition-colors resize-y bg-gray-50 leading-relaxed"
+              value={conversationTemplate}
+              onChange={e => setConversationTemplate(e.target.value)}
+              placeholder="Deixe em branco para usar o template padrão do sistema..."
+              spellCheck={false}
+            />
+            <p className="text-xs text-gray-400">
+              Deixe em branco para usar o template padrão do sistema (hard-coded). Edite aqui para personalizar por organização.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 pt-1">
+            <div className="flex items-center gap-1.5">
+              {savedAI && !savingAI && (
+                <span className="flex items-center gap-1 text-xs font-medium text-green-600">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                  Salvo com sucesso
+                </span>
+              )}
+            </div>
+            <button
+              onClick={handleSaveAI}
+              disabled={savingAI || !aiChanged}
+              className="btn btn-sm min-w-[80px] bg-violet-600 hover:bg-violet-700 text-white border-0 disabled:opacity-40"
+            >
+              {savingAI ? <span className="loading loading-spinner loading-xs" /> : 'Salvar'}
+            </button>
           </div>
         </div>
       </section>

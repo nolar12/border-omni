@@ -1501,6 +1501,52 @@ class WhatsAppWebhookView(APIView):
         if not lead.is_ai_active or not bot_active:
             return Response({'received': True, 'replies': [], 'lead': _lead_summary(lead)})
 
+        # ── Verificação de horário de atendimento (off hours) ──────────────────
+        try:
+            cfg = org.agent_config
+        except AgentConfig.DoesNotExist:
+            cfg = None
+        if (cfg and cfg.off_hours_enabled and cfg.off_hours_start and
+                cfg.off_hours_end and cfg.off_hours_message):
+            import pytz as _pytz
+            _tz = _pytz.timezone(cfg.off_hours_timezone or 'America/Sao_Paulo')
+            _now_local = timezone.now().astimezone(_tz).time()
+            _s, _e = cfg.off_hours_start, cfg.off_hours_end
+            # Suporte a períodos que cruzam meia-noite (ex: 21:00 → 06:00)
+            _in_off = (_now_local >= _s or _now_local < _e) if _s > _e else (_s <= _now_local < _e)
+            if _in_off:
+                _off_msg = cfg.off_hours_message
+                Message.objects.create(
+                    conversation=conv, organization=org, direction='OUT', text=_off_msg,
+                )
+                if channel_provider is None:
+                    channel_provider = ChannelProvider.objects.filter(
+                        organization=org, provider=channel, is_active=True,
+                    ).first()
+                if channel_provider and channel_provider.access_token:
+                    if channel in ('messenger', 'facebook'):
+                        _send_facebook_message(
+                            page_id=channel_provider.page_id,
+                            access_token=channel_provider.access_token,
+                            recipient_id=sender_id,
+                            text=_off_msg,
+                        )
+                    elif channel == 'instagram':
+                        _send_instagram_message(
+                            instagram_account_id=channel_provider.instagram_account_id,
+                            access_token=channel_provider.access_token,
+                            recipient_id=sender_id,
+                            text=_off_msg,
+                        )
+                    elif channel_provider.phone_number_id:
+                        _send_whatsapp_message(
+                            phone_number_id=channel_provider.phone_number_id,
+                            access_token=channel_provider.access_token,
+                            to=sender_id,
+                            text=_off_msg,
+                        )
+                return Response({'received': True, 'off_hours': True, 'lead': _lead_summary(lead)})
+
         engine = QualifierEngine(lead)
         replies = engine.process_message(text)
 

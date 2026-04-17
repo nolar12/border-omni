@@ -253,6 +253,9 @@ class AgentConfigSerializer(serializers.ModelSerializer):
             'max_history_messages', 'openai_api_key', 'openai_api_key_masked',
             'cordiality_enabled', 'cordiality_use_ai',
             'bot_enabled', 'initial_message', 'sequence_message', 'link_message',
+            'conversation_template', 'use_conversation_template',
+            'off_hours_enabled', 'off_hours_start', 'off_hours_end',
+            'off_hours_message', 'off_hours_timezone',
             'updated_at',
         ]
         extra_kwargs = {

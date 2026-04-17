@@ -247,55 +247,52 @@ class RAGService:
 
     def suggest_three_options(self, lead, message_text: str, conv=None, brief: str = '', agent_name: str = '') -> list[str]:
         """
-        Gera 3 opções de resposta para o atendente usando a persona Border Collie Sul.
-        Não requer rag_enabled — funciona apenas com openai_api_key.
-        brief: contexto adicional digitado pelo atendente para guiar as sugestões.
-        agent_name: nome do atendente humano (usado na saudação inicial).
+        Gera 3 opções de resposta para o atendente.
+
+        Prioridade:
+          1. RAG (Supabase) — knowledge_base + conversation_embeddings — entra PRIMEIRO no system prompt.
+          2. Template de conversa (AgentConfig.conversation_template ou hard-coded como fallback):
+             - use_conversation_template=True  → template sempre usado após o RAG.
+             - use_conversation_template=False → template usado SÓ como fallback quando RAG não retorna resultado.
+          3. Se RAG vazio e sem template → modelo responde com conhecimento geral com aviso.
         """
         if not self.agent_config.openai_api_key:
             return []
 
         try:
-            org = self.agent_config.organization
+            cfg = self.agent_config
+            org = cfg.organization
             litters_ctx = _build_litters_context(org)
             greeting_instruction = _build_greeting_instruction(lead, conv, agent_name=agent_name)
             ai_profile = getattr(lead, 'ai_profile', None) or {}
-
             history = self._get_history(lead)
 
-            kb_context = ''
-            if self.agent_config.is_ready():
-                embedding_svc = EmbeddingService(self.agent_config)
+            # ── Busca RAG no Supabase ──────────────────────────────────────
+            kb_results: list[dict] = []
+            conv_results: list[dict] = []
+            if cfg.is_ready():
+                embedding_svc = EmbeddingService(cfg)
                 query_embedding = embedding_svc.embed(message_text)
                 if query_embedding:
                     kb_results = self._search_knowledge_base(query_embedding, org.id)
                     conv_results = self._search_conversations(query_embedding, org.id)
-                    parts = []
-                    if kb_results:
-                        parts.append('=== Exemplos da base de conhecimento ===')
-                        for item in kb_results:
-                            parts.append(f"[{item.get('title', '')}]\n{item.get('content', '')}")
-                    if conv_results:
-                        parts.append('=== Respostas anteriores similares (use como referência de tom) ===')
-                        for item in conv_results:
-                            parts.append(
-                                f"Cliente: {item.get('message_in', '')}\n"
-                                f"Resposta: {item.get('message_out', '')}"
-                            )
-                    if parts:
-                        kb_context = '\n\n'.join(parts)
+
+            has_rag = bool(kb_results or conv_results)
 
             system_prompt = _build_conversation_system_prompt(
                 litters_ctx=litters_ctx,
                 greeting_instruction=greeting_instruction,
                 ai_profile=ai_profile,
-                kb_context=kb_context,
+                kb_results=kb_results,
+                conv_results=conv_results,
+                has_rag=has_rag,
+                use_conversation_template=cfg.use_conversation_template,
+                conversation_template=cfg.conversation_template or '',
             )
 
             messages_list = [{'role': 'system', 'content': system_prompt}]
             messages_list.extend(history)
 
-            # Monta a mensagem do usuário, incluindo o brief do atendente se houver
             user_content = message_text
             if brief:
                 user_content = (
@@ -615,50 +612,150 @@ _INTERESSE_TONE = {
 }
 
 
+def _build_profile_section(ai_profile: dict) -> str:
+    """Monta o bloco de perfil do lead a partir do ai_profile."""
+    if not ai_profile:
+        return ''
+    nivel = ai_profile.get('nivel_maturidade', '')
+    tipo = ai_profile.get('tipo_interesse', '')
+    sinais = ai_profile.get('sinais_emocionais', [])
+    urgencia = ai_profile.get('urgencia', '')
+    perfil = ai_profile.get('perfil_cliente', '')
+    resumo = ai_profile.get('resumo_intencao', '')
+
+    tone_maturidade = _MATURIDADE_TONE.get(nivel, '')
+    tone_interesse = _INTERESSE_TONE.get(tipo, '')
+
+    lines = ['PERFIL DO LEAD (use para adaptar tom e abordagem):']
+    if nivel:
+        lines.append(f'- Maturidade: {nivel}')
+        if tone_maturidade:
+            lines.append(f'  → Tom: {tone_maturidade}')
+    if tipo:
+        lines.append(f'- Tipo de interesse: {tipo}')
+        if tone_interesse:
+            lines.append(f'  → {tone_interesse}')
+    if sinais:
+        lines.append(f'- Sinais emocionais detectados: {", ".join(sinais)}')
+    if urgencia:
+        lines.append(f'- Urgência: {urgencia}')
+    if perfil:
+        lines.append(f'- Perfil: {perfil}')
+    if resumo:
+        lines.append(f'- Resumo: {resumo}')
+    return '\n'.join(lines) + '\n\n---\n\n'
+
+
+def _build_rag_priority_block(kb_results: list[dict], conv_results: list[dict]) -> str:
+    """
+    Monta o bloco de contexto RAG que vai no TOPO do system prompt.
+    knowledge_base tem prioridade máxima; conversation_embeddings são referência de tom.
+    """
+    parts = []
+    if kb_results:
+        parts.append(
+            '=== BASE DE CONHECIMENTO (PRIORIDADE MÁXIMA) ===\n'
+            'As respostas abaixo foram registradas manualmente e têm prioridade '
+            'absoluta sobre qualquer instrução de personalidade. Use-as como base principal.'
+        )
+        for item in kb_results:
+            parts.append(f"[{item.get('title', '')}]\n{item.get('content', '')}")
+    if conv_results:
+        parts.append('=== RESPOSTAS ANTERIORES APROVADAS (referência de tom e abordagem) ===')
+        for item in conv_results:
+            parts.append(
+                f"Cliente: {item.get('message_in', '')}\n"
+                f"Resposta: {item.get('message_out', '')}"
+            )
+    if not parts:
+        return ''
+    return '\n\n'.join(parts) + '\n\n---\n\n'
+
+
+# Instruções mínimas usadas no modo RAG puro (sem template de conversa)
+_RAG_ONLY_INSTRUCTIONS = """\
+Gere EXATAMENTE 3 opções diferentes para responder à última mensagem do cliente.
+Baseie as respostas exclusivamente nas informações da base de conhecimento acima.
+Tom: informal, direto, como WhatsApp. Sem emojis.
+
+Cada opção com ângulo distinto:
+1. Direta — responde o que foi perguntado
+2. Abre espaço — responde e faz uma pergunta simples para entender melhor
+3. Curta — resposta enxuta, como alguém digitando rápido
+
+Responda APENAS com JSON válido:
+{"options": ["opção1", "opção2", "opção3"]}"""
+
+# Instruções mínimas usadas quando RAG está vazio e template também está desativado
+_NO_KB_INSTRUCTIONS = """\
+AVISO: A base de conhecimento vetorial não retornou resultados para esta mensagem.
+Responda com base no conhecimento geral do modelo, mas deixe claro (de forma natural,
+sem mencionar "IA" ou "sistema") que não tem detalhes específicos disponíveis no momento.
+
+Gere EXATAMENTE 3 opções:
+1. Direta — responde o que foi perguntado
+2. Abre espaço — pergunta para entender melhor
+3. Curta — resposta enxuta
+
+Responda APENAS com JSON válido:
+{"options": ["opção1", "opção2", "opção3"]}"""
+
+
 def _build_conversation_system_prompt(
     litters_ctx: str,
     greeting_instruction: str,
     ai_profile: dict,
-    kb_context: str,
+    kb_results: list[dict],
+    conv_results: list[dict],
+    has_rag: bool,
+    use_conversation_template: bool,
+    conversation_template: str,
 ) -> str:
-    profile_section = ''
-    if ai_profile:
-        nivel = ai_profile.get('nivel_maturidade', '')
-        tipo = ai_profile.get('tipo_interesse', '')
-        sinais = ai_profile.get('sinais_emocionais', [])
-        urgencia = ai_profile.get('urgencia', '')
-        perfil = ai_profile.get('perfil_cliente', '')
-        resumo = ai_profile.get('resumo_intencao', '')
+    """
+    Monta o system prompt completo seguindo a ordem de prioridade:
 
-        tone_maturidade = _MATURIDADE_TONE.get(nivel, '')
-        tone_interesse = _INTERESSE_TONE.get(tipo, '')
+    1. RAG (Supabase) — sempre primeiro quando disponível.
+    2. Template de conversa:
+       - use_conversation_template=True  → template sempre aparece após o RAG.
+       - use_conversation_template=False → template só como fallback quando RAG vazio.
+    3. Sem RAG e sem template → instruções mínimas com aviso de KB vazia.
+    """
+    rag_block = _build_rag_priority_block(kb_results, conv_results) if has_rag else ''
+    profile_section = _build_profile_section(ai_profile)
 
-        lines = ['PERFIL DO LEAD (use para adaptar tom e abordagem):']
-        if nivel:
-            lines.append(f'- Maturidade: {nivel}')
-            if tone_maturidade:
-                lines.append(f'  → Tom: {tone_maturidade}')
-        if tipo:
-            lines.append(f'- Tipo de interesse: {tipo}')
-            if tone_interesse:
-                lines.append(f'  → {tone_interesse}')
-        if sinais:
-            lines.append(f'- Sinais emocionais detectados: {", ".join(sinais)}')
-        if urgencia:
-            lines.append(f'- Urgência: {urgencia}')
-        if perfil:
-            lines.append(f'- Perfil: {perfil}')
-        if resumo:
-            lines.append(f'- Resumo: {resumo}')
-        profile_section = '\n'.join(lines) + '\n\n---\n\n'
+    # Resolve qual template usar: banco (por org) ou hard-coded
+    effective_template = conversation_template.strip() or CONVERSATION_SYSTEM_PROMPT_TEMPLATE
 
-    kb_section = ''
-    if kb_context:
-        kb_section = kb_context + '\n\n---\n\n'
+    if use_conversation_template:
+        # Modo padrão: RAG primeiro, template completo em seguida
+        return rag_block + effective_template.format(
+            litters_context=litters_ctx,
+            greeting_instruction=greeting_instruction,
+            profile_section=profile_section,
+            kb_section='',  # RAG já injetado no topo com framing de prioridade
+        )
 
-    return CONVERSATION_SYSTEM_PROMPT_TEMPLATE.format(
+    # Modo RAG puro
+    if has_rag:
+        return (
+            rag_block
+            + profile_section
+            + f'INSTRUÇÃO DE SAUDAÇÃO:\n{greeting_instruction}\n\n---\n\n'
+            + f'FILHOTES E NINHADAS DISPONÍVEIS AGORA:\n{litters_ctx}\n\n---\n\n'
+            + _RAG_ONLY_INSTRUCTIONS
+        )
+
+    # Fallback: sem RAG → usa o template armazenado (ou hard-coded)
+    template_with_fallback = effective_template.format(
         litters_context=litters_ctx,
         greeting_instruction=greeting_instruction,
         profile_section=profile_section,
-        kb_section=kb_section,
+        kb_section='',
     )
+    no_kb_note = (
+        '\n\n---\n\n'
+        'AVISO INTERNO: A base de conhecimento vetorial não retornou resultados. '
+        'Responda com base nas instruções acima e, se necessário, com conhecimento geral. '
+        'Não mencione "base de dados" ou "sistema" para o cliente.'
+    )
+    return template_with_fallback + no_kb_note

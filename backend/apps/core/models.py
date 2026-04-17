@@ -27,6 +27,19 @@ class AgentConfig(models.Model):
     initial_message = models.TextField(blank=True, default='')
     sequence_message = models.TextField(blank=True, default='')
     link_message = models.TextField(blank=True, default='')
+    # Template de conversa editável por tenant.
+    # Quando vazio, o sistema usa o CONVERSATION_SYSTEM_PROMPT_TEMPLATE hard-coded como fallback.
+    conversation_template = models.TextField(blank=True, default='')
+    # Quando False, as sugestões são geradas com base exclusivamente no RAG (Supabase).
+    # O template só entra como fallback se o RAG não retornar resultados.
+    use_conversation_template = models.BooleanField(default=True)
+    # Horário de atendimento: quando habilitado, mensagens fora do range recebem off_hours_message.
+    # off_hours_start > off_hours_end indica período que cruza a meia-noite (ex: 21:00 → 06:00).
+    off_hours_enabled = models.BooleanField(default=False)
+    off_hours_start = models.TimeField(null=True, blank=True)
+    off_hours_end = models.TimeField(null=True, blank=True)
+    off_hours_message = models.TextField(blank=True, default='')
+    off_hours_timezone = models.CharField(max_length=60, blank=True, default='America/Sao_Paulo')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -201,6 +201,13 @@ export interface OrgSettings {
   initial_message: string;
   sequence_message: string;
   link_message: string;
+  conversation_template: string;
+  use_conversation_template: boolean;
+  off_hours_enabled: boolean;
+  off_hours_start: string;
+  off_hours_end: string;
+  off_hours_message: string;
+  off_hours_timezone: string;
   [key: string]: unknown;
 }
 
