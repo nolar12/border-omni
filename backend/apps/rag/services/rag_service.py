@@ -493,7 +493,7 @@ FRASES PREFERIDAS: "me conta uma coisa…", "deixa eu te perguntar…", "aqui a 
 
 BASE DE CONHECIMENTO DO CANIL:
 
-LOCALIZAÇÃO: Santa Catarina — atendimento e entrega para todo o Brasil
+LOCALIZAÇÃO: Imbituba, Santa Catarina — atendimento e entrega para todo o Brasil
 
 SITE OFICIAL (USE COM PRIORIDADE quando a conversa está no início ou o lead não viu os filhotes ainda):
 - Site oficial (lá estão todos os filhotes disponíveis com fotos e detalhes): https://bordercolliesul.com.br

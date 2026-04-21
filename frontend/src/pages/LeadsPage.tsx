@@ -2592,9 +2592,10 @@ type LeadFilter = {
   search: string;
   lead_classification: string;
   is_archived: string;
+  needs_reply: string;
 };
 
-const FILTER_DEFAULTS: LeadFilter = { tier: '', status: '', is_ai_active: '', search: '', lead_classification: '', is_archived: '' };
+const FILTER_DEFAULTS: LeadFilter = { tier: '', status: '', is_ai_active: '', search: '', lead_classification: '', is_archived: '', needs_reply: '' };
 
 const LEADS_CACHE_KEY = 'leads_list_cache';
 
@@ -2643,6 +2644,7 @@ export default function LeadsPage() {
     if (f.is_ai_active) params.is_ai_active = f.is_ai_active === 'true';
     if (f.search) params.search = f.search;
     if (f.lead_classification) params.lead_classification = f.lead_classification;
+    if (f.needs_reply === 'true') params.needs_reply = true;
     params.is_archived = f.is_archived === 'true';
     return params;
   };
@@ -2791,6 +2793,28 @@ export default function LeadsPage() {
 
         {/* Quick classification filter buttons */}
         <div className="px-3 py-2 border-b border-gray-100 flex items-center gap-1.5 flex-shrink-0 overflow-x-auto">
+          {/* Botão Aguardando — filtro especial de needs_reply */}
+          <button
+            onClick={() => {
+              const next = { ...FILTER_DEFAULTS, needs_reply: filters.needs_reply === 'true' ? '' : 'true' };
+              setFilters(next);
+              pageRef.current = 1;
+              sessionStorage.removeItem(LEADS_CACHE_KEY);
+              load(next, 1);
+            }}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold flex-shrink-0 transition-colors ${
+              filters.needs_reply === 'true'
+                ? 'bg-amber-500 text-white'
+                : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+            }`}
+            title="Leads que enviaram mensagem e aguardam resposta"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-current" />
+            Aguardando
+          </button>
+
+          <div className="w-px h-4 bg-gray-200 flex-shrink-0" />
+
           {([
             { key: '',            label: 'Todos',     icon: null, activeClass: 'bg-gray-800 text-white',  defaultClass: 'bg-gray-100 text-gray-500 hover:bg-gray-200' },
             { key: 'DANGER_LEAD', label: 'Danger',    icon: '⚠️', activeClass: 'bg-red-900 text-white',   defaultClass: 'bg-red-50 text-red-900 hover:bg-red-100 font-semibold' },
@@ -2802,18 +2826,22 @@ export default function LeadsPage() {
             const isArchived = key === 'ARCHIVED';
             const isActive = isArchived
               ? filters.is_archived === 'true'
-              : filters.lead_classification === key && filters.is_archived !== 'true';
+              : filters.lead_classification === key && filters.is_archived !== 'true' && filters.needs_reply !== 'true';
             return (
               <button
                 key={key}
                 onClick={() => {
                   if (isArchived) {
-                    const next = { ...filters, lead_classification: '', is_archived: filters.is_archived === 'true' ? '' : 'true' };
+                    const next = { ...filters, lead_classification: '', is_archived: filters.is_archived === 'true' ? '' : 'true', needs_reply: '' };
                     setFilters(next);
+                    pageRef.current = 1;
+                    sessionStorage.removeItem(LEADS_CACHE_KEY);
                     load(next, 1);
                   } else {
-                    const next = { ...filters, lead_classification: filters.lead_classification === key ? '' : key, is_archived: '' };
+                    const next = { ...filters, lead_classification: filters.lead_classification === key ? '' : key, is_archived: '', needs_reply: '' };
                     setFilters(next);
+                    pageRef.current = 1;
+                    sessionStorage.removeItem(LEADS_CACHE_KEY);
                     load(next, 1);
                   }
                 }}

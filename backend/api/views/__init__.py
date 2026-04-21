@@ -150,6 +150,18 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         if lead_classification:
             qs = qs.filter(lead_classification=lead_classification)
 
+        # Filtro: apenas leads aguardando resposta (última mensagem foi do lead, status != CLOSED)
+        needs_reply = self.request.query_params.get('needs_reply')
+        if needs_reply == 'true':
+            last_msg_dir_sq = Subquery(
+                Message.objects.filter(
+                    conversation__lead=OuterRef('pk'),
+                ).order_by('-created_at').values('direction')[:1]
+            )
+            qs = qs.annotate(_last_dir=last_msg_dir_sq).filter(
+                _last_dir='IN',
+            ).exclude(status='CLOSED')
+
         # Ordena pela última atividade de mensagem em qualquer conversa do lead.
         # Qualquer mensagem (IN ou OUT, humana ou bot) move o lead para o topo.
         # Leads sem conversa ficam no final, ordenados por created_at desc.
