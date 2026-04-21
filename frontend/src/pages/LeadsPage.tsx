@@ -2604,6 +2604,7 @@ export default function LeadsPage() {
   const [leads, setLeads] = useState<LeadListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const pageRef = useRef(1);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<LeadFilter>(FILTER_DEFAULTS);
@@ -2630,16 +2631,23 @@ export default function LeadsPage() {
         setTotal(data.count);
         setHasMore(!!data.next);
         setPage(p);
+        pageRef.current = p;
       })
       .finally(() => setLoading(false));
   }, [filters]);
 
-  // Polling silencioso da lista — sem spinner, só atualiza os dados
+  // Polling silencioso — recarrega todas as páginas já abertas para não perder leads do "Carregar mais"
   const silentRefresh = useCallback((f: LeadFilter = filters) => {
-    leadsService.getLeads(buildParams(f, 1) as never).then(data => {
-      setLeads(data.results);
-      setTotal(data.count);
-      setHasMore(!!data.next);
+    const totalPages = pageRef.current;
+    const requests = Array.from({ length: totalPages }, (_, i) =>
+      leadsService.getLeads(buildParams(f, i + 1) as never)
+    );
+    Promise.all(requests).then(results => {
+      const allLeads = results.flatMap(r => r.results);
+      const last = results[results.length - 1];
+      setLeads(allLeads);
+      setTotal(last.count);
+      setHasMore(!!last.next);
     }).catch(() => {});
   }, [filters]);
 
@@ -2653,11 +2661,13 @@ export default function LeadsPage() {
   function applyFilter(key: keyof LeadFilter, value: string) {
     const next = { ...filters, [key]: value };
     setFilters(next);
+    pageRef.current = 1;
     load(next, 1);
   }
 
   function clearFilters() {
     setFilters(FILTER_DEFAULTS);
+    pageRef.current = 1;
     load(FILTER_DEFAULTS, 1);
   }
 

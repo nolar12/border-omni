@@ -1,0 +1,46 @@
+---
+description: Contexto do projeto border_omni e instruções de sincronização com o vault Obsidian via MCP.
+alwaysApply: true
+---
+
+# border_omni — Sistema de Gestão BorderCollieSul
+
+## Projeto
+- **Nome:** border_omni
+- **Produto:** BorderCollieSul (sistema interno de gestão do canil)
+- **Stack:** Django 4.2 + DRF | Vite + React + Capacitor | MySQL
+- **Vault Obsidian:** `01-Projetos/BorderCollieSul/`
+
+## Ao iniciar qualquer sessão
+1. Leia `.ai/stack.md` e `.ai/architecture.md` (contexto local)
+2. Use MCP `obsidian` para ler `01-Projetos/BorderCollieSul/README.md`
+3. Use MCP `obsidian` para ler `01-Projetos/BorderCollieSul/10-Arquitetura/README.md`
+
+## Ao concluir mudança significativa
+| Tipo | Onde atualizar |
+|------|---------------|
+| Feature | `01-Projetos/BorderCollieSul/README.md` + `05-Produto/README.md` |
+| Arquitetura | `01-Projetos/BorderCollieSul/10-Arquitetura/README.md` + `.ai/architecture.md` |
+| Decisão | `01-Projetos/BorderCollieSul/03-Decisoes/README.md` + `.ai/decisions.md` |
+| Log de sessão | `10-Logs/BorderCollieSul/YYYY-MM-DD.md` |
+
+## Documentação automática — sem precisar pedir
+
+**Atualize durante a sessão, sem esperar ser solicitado:**
+- Nova feature implementada → atualize imediatamente os `.ai/` e o Obsidian
+- Nova dependência adicionada → `.ai/stack.md` + Obsidian `10-Arquitetura/README.md`
+- Novo endpoint, modelo ou fluxo → `.ai/architecture.md` + Obsidian `10-Arquitetura/README.md`
+- Regra de negócio identificada → `.ai/business.md` + Obsidian `02-Regras-Negocio/README.md`
+- Decisão técnica tomada → `.ai/decisions.md` + Obsidian `03-Decisoes/README.md`
+
+**Ao fazer qualquer commit:**
+1. Crie/atualize o log do dia no vault Obsidian: `10-Logs/[PROJETO]/YYYY-MM-DD.md`
+2. Commite o vault: `cd /home/marcellosouza/Obsidian && git add . && git commit -m "docs([projeto]): log YYYY-MM-DD" && git push`
+
+**NÃO espere ser solicitado. Documentar é parte do trabalho, não um passo extra.**
+
+## O que NÃO precisa documentar
+- Correções de lint ou formatação
+- Refatorações internas sem mudança de comportamento
+- Ajustes de estilo/CSS menores
+- Typos em comentários
