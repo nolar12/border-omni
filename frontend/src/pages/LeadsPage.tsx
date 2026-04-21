@@ -2596,18 +2596,42 @@ type LeadFilter = {
 
 const FILTER_DEFAULTS: LeadFilter = { tier: '', status: '', is_ai_active: '', search: '', lead_classification: '', is_archived: '' };
 
+const LEADS_CACHE_KEY = 'leads_list_cache';
+
+interface LeadsCache {
+  leads: LeadListItem[];
+  total: number;
+  page: number;
+  hasMore: boolean;
+  filters: LeadFilter;
+}
+
+function readLeadsCache(): LeadsCache | null {
+  try {
+    const raw = sessionStorage.getItem(LEADS_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as LeadsCache) : null;
+  } catch { return null; }
+}
+
+function writeLeadsCache(cache: LeadsCache) {
+  try { sessionStorage.setItem(LEADS_CACHE_KEY, JSON.stringify(cache)); } catch {}
+}
+
 export default function LeadsPage() {
   const { id } = useParams<{ id?: string }>();
   const navigate = useNavigate();
   const selectedId = id ? Number(id) : null;
 
-  const [leads, setLeads] = useState<LeadListItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const pageRef = useRef(1);
-  const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState<LeadFilter>(FILTER_DEFAULTS);
+  const initialCache = useRef(readLeadsCache());
+  const _cache = initialCache.current;
+
+  const [leads, setLeads] = useState<LeadListItem[]>(_cache?.leads ?? []);
+  const [total, setTotal] = useState(_cache?.total ?? 0);
+  const [page, setPage] = useState(_cache?.page ?? 1);
+  const pageRef = useRef(_cache?.page ?? 1);
+  const [hasMore, setHasMore] = useState(_cache?.hasMore ?? false);
+  const [loading, setLoading] = useState(!_cache);
+  const [filters, setFilters] = useState<LeadFilter>(_cache?.filters ?? FILTER_DEFAULTS);
   const [showFilters, setShowFilters] = useState(false);
   const [reclassifyingAll, setReclassifyingAll] = useState(false);
   const [reclassifyAllDone, setReclassifyAllDone] = useState(false);
@@ -2627,7 +2651,11 @@ export default function LeadsPage() {
     setLoading(true);
     leadsService.getLeads(buildParams(f, p) as never)
       .then(data => {
-        setLeads(p === 1 ? data.results : prev => [...prev, ...data.results]);
+        setLeads(prev => {
+          const next = p === 1 ? data.results : [...prev, ...data.results];
+          writeLeadsCache({ leads: next, total: data.count, page: p, hasMore: !!data.next, filters: f });
+          return next;
+        });
         setTotal(data.count);
         setHasMore(!!data.next);
         setPage(p);
@@ -2648,10 +2676,18 @@ export default function LeadsPage() {
       setLeads(allLeads);
       setTotal(last.count);
       setHasMore(!!last.next);
+      writeLeadsCache({ leads: allLeads, total: last.count, page: totalPages, hasMore: !!last.next, filters: f });
     }).catch(() => {});
   }, [filters]);
 
-  useEffect(() => { load(); }, []);
+  // Se há cache, restaura instantaneamente e atualiza em background; senão faz load normal
+  useEffect(() => {
+    if (_cache) {
+      silentRefresh(_cache.filters);
+    } else {
+      load();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const timer = setInterval(() => silentRefresh(filters), 15_000);
@@ -2662,12 +2698,14 @@ export default function LeadsPage() {
     const next = { ...filters, [key]: value };
     setFilters(next);
     pageRef.current = 1;
+    sessionStorage.removeItem(LEADS_CACHE_KEY);
     load(next, 1);
   }
 
   function clearFilters() {
     setFilters(FILTER_DEFAULTS);
     pageRef.current = 1;
+    sessionStorage.removeItem(LEADS_CACHE_KEY);
     load(FILTER_DEFAULTS, 1);
   }
 
