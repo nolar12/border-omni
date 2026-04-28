@@ -45,7 +45,7 @@ MESSAGES = {
         "Perfeito!\n\n"
         "Só para alinhar expectativas:\n\n"
         "Nossos filhotes, com pedigree, microchip e todo acompanhamento inicial, "
-        "têm valor a partir de R$ 3.000.\n\n"
+        "têm valor a partir de R$ 2.500.\n\n"
         "Esse investimento está dentro do que você planeja para adquirir seu filhote?\n\n"
         "1. Sim, está dentro do planejamento\n"
         "2. Talvez, gostaria de entender melhor\n"

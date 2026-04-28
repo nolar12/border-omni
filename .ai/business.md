@@ -7,6 +7,6 @@
 - Leads: qualificação por estados, classificação IA, campo "danger"
 - A/B de mídia na primeira mensagem de lead
 - Handoff: desativa IA ao assumir manualmente, envia mensagem de transição
-- Contrato de venda: preço padrão 3.000, sinal ~30%, dados do filhote via Dog vinculado
+- Contrato de venda: preço padrão 2.500, sinal ~30%, dados do filhote via Dog vinculado
 - Canil: ninhadas (Litter) e cães (Dog) com mídias e saúde
 - Listagem pública de ninhadas: `/api/public/litters/?org_id=` (obrigatório)

@@ -96,7 +96,7 @@ class SaleContract(models.Model):
             if dog.price:
                 self.price = dog.price
         if not self.price:
-            self.price = 4000.00
+            self.price = 2500.00
         if self.price:
             self.deposit_amount = round(float(self.price) * 0.30, 2)
         super().save(*args, **kwargs)

@@ -111,7 +111,7 @@ function ContractDrawer({ initial, prefilledLead, prefilledDog, onClose, onSaved
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const price = 4000;
+  const price = 2500;
   const deposit = price * 0.3;
 
   function fmtBRL(v: number) {
