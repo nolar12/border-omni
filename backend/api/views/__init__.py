@@ -655,15 +655,20 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
                     upload_filename = base_name
 
                 upload_url = f'https://graph.facebook.com/v22.0/{channel_provider.phone_number_id}/media'
-                # default_storage.open() works transparently with S3 and filesystem.
+                # IMPORTANT: read full content into memory before sending. Streams from
+                # default_storage (S3) lack a known length, causing requests to fall back
+                # to "Transfer-Encoding: chunked", which the Meta API does not parse
+                # correctly — it detects the body as application/octet-stream and
+                # rejects with "Unsupported Voice mime type" for audio uploads.
                 with default_storage.open(rel_path, 'rb') as fh:
-                    upload_resp = http_requests.post(
-                        upload_url,
-                        headers={'Authorization': f'Bearer {channel_provider.access_token}'},
-                        data={'messaging_product': 'whatsapp'},
-                        files={'file': (upload_filename, fh, mime)},
-                        timeout=60,
-                    )
+                    file_content = fh.read()
+                upload_resp = http_requests.post(
+                    upload_url,
+                    headers={'Authorization': f'Bearer {channel_provider.access_token}'},
+                    data={'messaging_product': 'whatsapp'},
+                    files={'file': (upload_filename, file_content, mime)},
+                    timeout=60,
+                )
                 if upload_resp.status_code == 200:
                     media_id = upload_resp.json().get('id')
                     logger.info(f'WA media upload OK: type={item.media_type} mime={mime} media_id={media_id}')
