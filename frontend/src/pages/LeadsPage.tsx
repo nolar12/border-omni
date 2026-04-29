@@ -370,7 +370,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [templateVideoPreview, setTemplateVideoPreview] = useState<GalleryMedia | null>(null);
   const [showGalleryModal, setShowGalleryModal] = useState(false);
   const [galleryItems, setGalleryItems] = useState<GalleryMedia[]>([]);
-  const [galleryFilter, setGalleryFilter] = useState<'ALL' | 'IMAGE' | 'VIDEO' | 'DOCUMENT'>('ALL');
+  const [galleryFilter, setGalleryFilter] = useState<'ALL' | 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'AUDIO'>('ALL');
   const [gallerySelections, setGallerySelections] = useState<Map<number, { item: GalleryMedia; sendDesc: boolean }>>(new Map());
   const [galleryVideoPreview, setGalleryVideoPreview] = useState<GalleryMedia | null>(null);
   const [sendingGallery, setSendingGallery] = useState(false);
@@ -385,7 +385,6 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [qrShortcut, setQrShortcut] = useState('');
   const [savingQR, setSavingQR] = useState(false);
   const [qrSavedToast, setQrSavedToast] = useState(false);
-  const [sendError, setSendError] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -645,16 +644,11 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     isSendingRef.current = true;
     const rawText = msgText.trim();
     setSending(true);
-    setSendError('');
     try {
-      const msg = await leadsService.sendMessage(lead.id, rawText, selectedChannel ?? undefined);
+      const msg = await leadsService.sendMessage(lead.id, rawText);
       setMessages(prev => [...prev, msg]);
       setMsgText('');
       triggerSaveQRModal(rawText);
-    } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setSendError(detail ?? 'Erro ao enviar mensagem. Tente novamente.');
-      setTimeout(() => setSendError(''), 5000);
     } finally {
       setSending(false);
       isSendingRef.current = false;
@@ -1364,82 +1358,6 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
 
               {/* Barra principal de input */}
               <div className="px-3 pt-2 pb-2.5 flex flex-col gap-1.5">
-
-                {/* ── Linha de ações secundárias — ACIMA do textarea ── */}
-                <div className="flex items-center gap-1 pb-1.5 border-b border-gray-100">
-                  {/* Respostas rápidas */}
-                  <button
-                    onClick={() => setShowQR(true)}
-                    title="Respostas rápidas"
-                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                    </svg>
-                  </button>
-
-                  {/* Anexar arquivo */}
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    title="Enviar arquivo / documento"
-                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                    </svg>
-                  </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.gif,.webp,.mp4,.mp3"
-                    onChange={handleFileSelect}
-                  />
-
-                  {/* Galeria */}
-                  <button
-                    onClick={openGalleryModal}
-                    title="Enviar da galeria"
-                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-purple-600 transition-colors flex-shrink-0"
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <rect x="3" y="3" width="18" height="18" rx="2"/>
-                      <circle cx="8.5" cy="8.5" r="1.5"/>
-                      <polyline points="21 15 16 10 5 21"/>
-                    </svg>
-                  </button>
-
-                  {/* Enviar Template */}
-                  <button
-                    onClick={openTemplateModal}
-                    title="Enviar template WhatsApp"
-                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-orange-500 transition-colors flex-shrink-0"
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                      <line x1="9" y1="10" x2="15" y2="10"/>
-                      <line x1="9" y1="14" x2="13" y2="14"/>
-                    </svg>
-                  </button>
-
-                  {/* Sugerir com IA (briefing manual) */}
-                  <button
-                    onClick={() => { setShowBriefPanel(v => !v); if (showBriefPanel) setBriefText(''); }}
-                    title="Sugerir resposta com IA"
-                    className={`flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0 ${
-                      showBriefPanel ? 'bg-violet-100 text-violet-600' : 'text-gray-400 hover:bg-violet-50 hover:text-violet-500'
-                    }`}
-                  >
-                    {loadingBrief
-                      ? <span className="loading loading-spinner loading-xs" />
-                      : <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-                          <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
-                        </svg>
-                    }
-                  </button>
-                </div>
-
                 {/* Textarea — largura total */}
                 <textarea
                   ref={textareaRef}
@@ -1513,18 +1431,83 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                   </div>
                 )}
 
-                {/* Erro de envio */}
-                {sendError && (
-                  <div className="flex items-center gap-2 px-1 py-1 rounded-lg bg-red-50 border border-red-200">
-                    <svg className="w-3.5 h-3.5 text-red-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                {/* Linha de ações abaixo do textarea */}
+                <div className="flex items-center gap-1">
+                  {/* Respostas rápidas */}
+                  <button
+                    onClick={() => setShowQR(true)}
+                    title="Respostas rápidas"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                     </svg>
-                    <p className="text-xs text-red-600 flex-1">{sendError}</p>
-                  </div>
-                )}
+                  </button>
 
-                {/* ── Linha de envio — abaixo do textarea ── */}
-                <div className="flex items-center gap-2 justify-end">
+                  {/* Anexar arquivo */}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Enviar arquivo / documento"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.gif,.webp,.mp4,.mp3"
+                    onChange={handleFileSelect}
+                  />
+
+                  {/* Galeria */}
+                  <button
+                    onClick={openGalleryModal}
+                    title="Enviar da galeria"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-purple-600 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <rect x="3" y="3" width="18" height="18" rx="2"/>
+                      <circle cx="8.5" cy="8.5" r="1.5"/>
+                      <polyline points="21 15 16 10 5 21"/>
+                    </svg>
+                  </button>
+
+                  {/* Enviar Template */}
+                  <button
+                    onClick={openTemplateModal}
+                    title="Enviar template WhatsApp"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-orange-500 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                      <line x1="9" y1="10" x2="15" y2="10"/>
+                      <line x1="9" y1="14" x2="13" y2="14"/>
+                    </svg>
+                  </button>
+
+                  {/* Sugerir com IA (briefing manual) */}
+                  <button
+                    onClick={() => { setShowBriefPanel(v => !v); if (showBriefPanel) setBriefText(''); }}
+                    title="Sugerir resposta com IA"
+                    className={`flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0 ${
+                      showBriefPanel ? 'bg-violet-100 text-violet-600' : 'text-gray-400 hover:bg-violet-50 hover:text-violet-500'
+                    }`}
+                  >
+                    {loadingBrief
+                      ? <span className="loading loading-spinner loading-xs" />
+                      : <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                          <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
+                        </svg>
+                    }
+                  </button>
+
+                  {/* Spacer */}
+                  <div className="flex-1" />
+
                   {/* Gravar áudio */}
                   {!msgText.trim() && !isRecording && (
                     <button
@@ -2275,7 +2258,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
 
             {/* Filter tabs */}
             <div className="flex items-center gap-1 px-5 pt-3 pb-1 flex-shrink-0">
-              {(['ALL', 'IMAGE', 'VIDEO', 'DOCUMENT'] as const).map(f => (
+              {(['ALL', 'IMAGE', 'VIDEO', 'DOCUMENT', 'AUDIO'] as const).map(f => (
                 <button
                   key={f}
                   onClick={() => setGalleryFilter(f)}
@@ -2283,7 +2266,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                     galleryFilter === f ? 'bg-purple-100 text-purple-700' : 'text-gray-500 hover:bg-gray-100'
                   }`}
                 >
-                  {f === 'ALL' ? 'Todos' : f === 'IMAGE' ? 'Imagens' : f === 'VIDEO' ? 'Vídeos' : 'PDFs'}
+                  {f === 'ALL' ? 'Todos' : f === 'IMAGE' ? 'Imagens' : f === 'VIDEO' ? 'Vídeos' : f === 'DOCUMENT' ? 'PDFs' : 'Áudios'}
                 </button>
               ))}
             </div>
@@ -2332,6 +2315,17 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                               ? <img src={item.file_url} alt={item.name} className="w-full h-full object-cover" />
                               : item.media_type === 'VIDEO'
                               ? <VideoThumbnail src={item.file_url} />
+                              : item.media_type === 'AUDIO'
+                              ? (
+                                <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-green-50 to-emerald-100">
+                                  <svg className="w-9 h-9 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                                    <path d="M9 18V5l12-2v13"/>
+                                    <circle cx="6" cy="18" r="3"/>
+                                    <circle cx="18" cy="16" r="3"/>
+                                  </svg>
+                                  <span className="text-emerald-600 text-[10px] font-bold">PTT</span>
+                                </div>
+                              )
                               : (
                                 <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-red-50 to-red-100">
                                   <svg className="w-9 h-9 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -2375,9 +2369,10 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                           <div className={`absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide ${
                             item.media_type === 'IMAGE' ? 'bg-blue-500/80 text-white'
                             : item.media_type === 'VIDEO' ? 'bg-purple-600/80 text-white'
+                            : item.media_type === 'AUDIO' ? 'bg-emerald-500/80 text-white'
                             : 'bg-red-500/80 text-white'
                           }`}>
-                            {item.media_type === 'IMAGE' ? 'IMG' : item.media_type === 'VIDEO' ? 'VID' : 'PDF'}
+                            {item.media_type === 'IMAGE' ? 'IMG' : item.media_type === 'VIDEO' ? 'VID' : item.media_type === 'AUDIO' ? 'PTT' : 'PDF'}
                           </div>
 
                           <div className="px-2 pt-1.5 pb-2">
@@ -2415,6 +2410,16 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                         ? <img src={item.file_url} alt={item.name} className="w-full h-full object-cover" />
                         : item.media_type === 'VIDEO'
                         ? <VideoThumbnail src={item.file_url} />
+                        : item.media_type === 'AUDIO'
+                        ? (
+                          <div className="w-full h-full flex items-center justify-center bg-emerald-50">
+                            <svg className="w-6 h-6 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                              <path d="M9 18V5l12-2v13"/>
+                              <circle cx="6" cy="18" r="3"/>
+                              <circle cx="18" cy="16" r="3"/>
+                            </svg>
+                          </div>
+                        )
                         : (
                           <div className="w-full h-full flex items-center justify-center bg-red-50">
                             <svg className="w-6 h-6 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
@@ -2429,32 +2434,46 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                     {/* Info */}
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-gray-800 truncate">{item.name}</p>
-                      {item.description ? (
-                        <p className="text-xs text-gray-500 mt-0.5 leading-snug break-words">
-                          {item.description}
+
+                      {/* Áudio PTT: só nome + ícone, sem nenhum extra */}
+                      {item.media_type === 'AUDIO' ? (
+                        <p className="text-[11px] text-emerald-600 mt-0.5 flex items-center gap-1">
+                          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                          </svg>
+                          Mensagem de voz
                         </p>
                       ) : (
-                        <p className="text-xs text-gray-400 italic mt-0.5">Sem descrição</p>
-                      )}
+                        <>
+                          {item.description ? (
+                            <p className="text-xs text-gray-500 mt-0.5 leading-snug break-words">
+                              {item.description}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-gray-400 italic mt-0.5">Sem descrição</p>
+                          )}
 
-                      {/* Checkbox: send description */}
-                      {item.description && (
-                        <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer select-none w-fit">
-                          <input
-                            type="checkbox"
-                            checked={sendDesc}
-                            onChange={() => {
-                              setGallerySelections(prev => {
-                                const next = new Map(prev);
-                                const sel = next.get(item.id);
-                                if (sel) next.set(item.id, { ...sel, sendDesc: !sel.sendDesc });
-                                return next;
-                              });
-                            }}
-                            className="w-3.5 h-3.5 rounded accent-purple-600 cursor-pointer"
-                          />
-                          <span className="text-[11px] text-gray-600">Enviar descrição como mensagem</span>
-                        </label>
+                          {/* Checkbox: send description — only for non-audio */}
+                          {item.description && (
+                            <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer select-none w-fit">
+                              <input
+                                type="checkbox"
+                                checked={sendDesc}
+                                onChange={() => {
+                                  setGallerySelections(prev => {
+                                    const next = new Map(prev);
+                                    const sel = next.get(item.id);
+                                    if (sel) next.set(item.id, { ...sel, sendDesc: !sel.sendDesc });
+                                    return next;
+                                  });
+                                }}
+                                className="w-3.5 h-3.5 rounded accent-purple-600 cursor-pointer"
+                              />
+                              <span className="text-[11px] text-gray-600">Enviar descrição como mensagem</span>
+                            </label>
+                          )}
+                        </>
                       )}
                     </div>
 

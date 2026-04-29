@@ -234,13 +234,8 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         if not text:
             return Response({'detail': 'Texto obrigatório.'}, status=400)
 
-        # Usa canal enviado pelo frontend ou a conversa mais recente do lead
-        requested_channel = request.data.get('channel')
-        active_conv = None
-        if requested_channel:
-            active_conv = lead.conversations.filter(channel=requested_channel).order_by('-last_message_at').first()
-        if not active_conv:
-            active_conv = lead.conversations.order_by('-last_message_at').first()
+        # Usa a conversa mais recente do lead; default para whatsapp se ainda não existe
+        active_conv = lead.conversations.order_by('-last_message_at').first()
         if not active_conv:
             active_conv, _ = Conversation.objects.get_or_create(
                 lead=lead, channel='whatsapp',
@@ -680,13 +675,24 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
             media_ref = {'link': public_file_url}
             logger.warning('Gallery: using link fallback (media upload failed). Requires public URL to be reachable.')
 
-        media_type_key = 'image' if item.media_type == 'IMAGE' else 'video'
-        # Send media WITHOUT caption — description follows as a separate text message.
+        WA_TYPE_MAP = {
+            'IMAGE':    'image',
+            'VIDEO':    'video',
+            'DOCUMENT': 'document',
+            'AUDIO':    'audio',
+        }
+        media_type_key = WA_TYPE_MAP.get(item.media_type, 'document')
+
+        media_obj = dict(media_ref)
+        if item.media_type == 'DOCUMENT':
+            media_obj['filename'] = item.name or file_on_disk.name if file_on_disk else item.name or 'arquivo'
+
+        # Send media WITHOUT inline caption — description follows as a separate text message.
         media_payload = {
             'messaging_product': 'whatsapp',
             'to': lead.phone,
             'type': media_type_key,
-            media_type_key: media_ref,
+            media_type_key: media_obj,
         }
 
         try:
@@ -703,7 +709,8 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         )
 
         label = item.name or media_type_lower
-        media_label = f'🖼 {label}' if item.media_type == 'IMAGE' else f'▶ {label}'
+        LABEL_ICONS = {'IMAGE': '🖼', 'VIDEO': '▶', 'DOCUMENT': '📄', 'AUDIO': '🎤'}
+        media_label = f'{LABEL_ICONS.get(item.media_type, "📎")} {label}'
         wamid = resp.json().get('messages', [{}])[0].get('id', '')
         media_msg = Message.objects.create(
             conversation=conv,
@@ -716,8 +723,9 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
 
         saved_messages = [media_msg]
 
-        # If there is a caption, send it as a separate text message.
-        if caption:
+        # Áudio PTT nunca envia legenda como texto — quebraria a ilusão de mensagem gravada.
+        # Para imagem, vídeo e documento, a descrição é enviada como texto separado.
+        if caption and item.media_type != 'AUDIO':
             try:
                 text_payload = {
                     'messaging_product': 'whatsapp',
