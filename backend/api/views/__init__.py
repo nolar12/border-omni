@@ -2804,6 +2804,27 @@ class GalleryMediaViewSet(viewsets.ModelViewSet):
         final_mime = mime
         final_ext = os.path.splitext(uploaded.name)[1].lower() or ''
 
+        # Arquivos MP4/M4A/MOV sem stream de vídeo (ex: "WhatsApp Audio .mp4") chegam
+        # com content_type video/* mas são puro áudio — reclassificar via ffprobe.
+        if media_type == 'VIDEO':
+            try:
+                probe_tmp = tempfile.NamedTemporaryFile(suffix=final_ext or '.mp4', delete=False)
+                probe_tmp.write(file_bytes)
+                probe_tmp.close()
+                probe = subprocess.run(
+                    ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                     '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', probe_tmp.name],
+                    capture_output=True, timeout=30,
+                )
+                has_video_stream = bool(probe.stdout.strip())
+                os.unlink(probe_tmp.name)
+                if not has_video_stream:
+                    # Sem stream de vídeo → é áudio dentro de container MP4
+                    media_type = 'AUDIO'
+                    final_mime = 'audio/mp4'
+            except Exception:
+                pass  # mantém como VIDEO se ffprobe falhar
+
         # Áudio: converter para OGG Opus (formato PTT do WhatsApp)
         if media_type == 'AUDIO':
             try:
