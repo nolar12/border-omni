@@ -643,21 +643,31 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         if file_on_disk and file_on_disk.exists():
             try:
                 mime = item.mime_type or _mimetypes.guess_type(str(file_on_disk))[0] or 'application/octet-stream'
+
+                # Para áudio PTT, Meta exige audio/ogg com codec opus — força mime exato
+                # e usa nome do arquivo com extensão .ogg para a API não inferir errado.
+                if item.media_type == 'AUDIO':
+                    mime = 'audio/ogg; codecs=opus'
+                    upload_filename = 'audio.ogg'
+                else:
+                    upload_filename = file_on_disk.name
+
                 upload_url = f'https://graph.facebook.com/v22.0/{channel_provider.phone_number_id}/media'
                 with open(file_on_disk, 'rb') as fh:
                     upload_resp = http_requests.post(
                         upload_url,
                         headers={'Authorization': f'Bearer {channel_provider.access_token}'},
                         data={'messaging_product': 'whatsapp'},
-                        files={'file': (file_on_disk.name, fh, mime)},
+                        files={'file': (upload_filename, fh, mime)},
                         timeout=60,
                     )
                 if upload_resp.status_code == 200:
                     media_id = upload_resp.json().get('id')
+                    logger.info(f'WA media upload OK: type={item.media_type} mime={mime} media_id={media_id}')
                 else:
-                    logger.warning(f'WA media upload failed: {upload_resp.status_code} {upload_resp.text}')
+                    logger.error(f'WA media upload failed: {upload_resp.status_code} {upload_resp.text} | mime={mime}')
             except Exception as e:
-                logger.warning(f'WA media upload error: {e}')
+                logger.error(f'WA media upload error: {e}')
 
         # Build the send-message payload: prefer media_id (no public URL needed),
         # fall back to link (requires ngrok/public host) if upload failed.
@@ -685,7 +695,11 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
 
         media_obj = dict(media_ref)
         if item.media_type == 'DOCUMENT':
-            media_obj['filename'] = item.name or file_on_disk.name if file_on_disk else item.name or 'arquivo'
+            media_obj['filename'] = item.name or (file_on_disk.name if file_on_disk else 'arquivo')
+        elif item.media_type == 'AUDIO':
+            # Sinaliza que é mensagem de voz (PTT — Push To Talk).
+            # Meta exibe como voice note quando o arquivo é OGG/Opus mono puro.
+            media_obj['voice'] = True
 
         # Send media WITHOUT inline caption — description follows as a separate text message.
         media_payload = {
@@ -695,11 +709,14 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
             media_type_key: media_obj,
         }
 
+        logger.info(f'Gallery send: type={media_type_key} mime={item.mime_type} payload_keys={list(media_obj.keys())}')
+
         try:
             resp = http_requests.post(msg_url, json=media_payload, headers=wa_headers_json, timeout=20)
             if resp.status_code != 200:
-                logger.error(f'Gallery send error: {resp.status_code} {resp.text}')
+                logger.error(f'Gallery send error: {resp.status_code} {resp.text} | payload={media_payload}')
                 return Response({'detail': f'Erro ao enviar mídia: {resp.text}'}, status=502)
+            logger.info(f'Gallery send OK: {resp.json()}')
         except Exception as e:
             return Response({'detail': f'Erro ao enviar item de galeria: {str(e)}'}, status=500)
 
@@ -2852,7 +2869,7 @@ class GalleryMediaViewSet(viewsets.ModelViewSet):
                 if result.returncode == 0 and os.path.exists(tmp_out_path):
                     with open(tmp_out_path, 'rb') as f:
                         file_bytes = f.read()
-                    final_mime = 'audio/ogg'
+                    final_mime = 'audio/ogg; codecs=opus'
                     final_ext = '.ogg'
                     logger.info(f'Gallery upload: {uploaded.name} convertido para OGG Opus ({len(file_bytes)} bytes)')
                 else:
