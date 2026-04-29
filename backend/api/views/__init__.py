@@ -2822,8 +2822,9 @@ class GalleryMediaViewSet(viewsets.ModelViewSet):
                     # Sem stream de vídeo → é áudio dentro de container MP4
                     media_type = 'AUDIO'
                     final_mime = 'audio/mp4'
-            except Exception:
-                pass  # mantém como VIDEO se ffprobe falhar
+                    logger.info(f'Gallery upload: {uploaded.name} reclassificado como AUDIO (sem stream de vídeo)')
+            except Exception as e:
+                logger.warning(f'Gallery ffprobe check falhou: {e}')
 
         # Áudio: converter para OGG Opus (formato PTT do WhatsApp)
         if media_type == 'AUDIO':
@@ -2853,11 +2854,14 @@ class GalleryMediaViewSet(viewsets.ModelViewSet):
                         file_bytes = f.read()
                     final_mime = 'audio/ogg'
                     final_ext = '.ogg'
+                    logger.info(f'Gallery upload: {uploaded.name} convertido para OGG Opus ({len(file_bytes)} bytes)')
+                else:
+                    logger.error(f'Gallery ffmpeg falhou (code={result.returncode}): {result.stderr.decode()[-500:]}')
                 os.unlink(tmp_in_path)
                 if os.path.exists(tmp_out_path):
                     os.unlink(tmp_out_path)
-            except Exception:
-                pass  # fallback: salva o arquivo original sem converter
+            except Exception as e:
+                logger.error(f'Gallery conversão OGG falhou: {e}')
 
         uid = uuid_mod.uuid4().hex
         filename = f'gallery/{org.id}/{uid}{final_ext}'
