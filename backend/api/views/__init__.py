@@ -618,11 +618,14 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         media_type_lower = item.media_type.lower()
 
         import mimetypes as _mimetypes
-        from pathlib import Path
+        import os as _os
         from django.conf import settings as django_settings
+        from django.core.files.storage import default_storage
 
-        # Resolve the file on disk from the stored relative path (/media/...).
-        # file_url examples: "/media/gallery/3/abc123.jpg" or legacy absolute URL.
+        # Resolve the storage-relative path from the stored URL.
+        # file_url examples:
+        #   dev:  "/media/gallery/3/abc123.ogg"  (filesystem under MEDIA_ROOT)
+        #   prod: "https://bucket.s3.region.amazonaws.com/media/gallery/3/abc.ogg"  (S3)
         if item.file_url.startswith('/media/'):
             rel_path = item.file_url[len('/media/'):]
         elif '/media/' in item.file_url:
@@ -630,19 +633,18 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         else:
             rel_path = None
 
-        file_on_disk = Path(django_settings.MEDIA_ROOT) / rel_path if rel_path else None
-
         wa_headers_json = {
             'Authorization': f'Bearer {channel_provider.access_token}',
             'Content-Type': 'application/json',
         }
 
         # Upload the file to WhatsApp Media API to get a media_id.
-        # This avoids any dependency on a public URL / ngrok being active.
+        # Uses default_storage so it works for both filesystem (dev) and S3 (prod).
         media_id = None
-        if file_on_disk and file_on_disk.exists():
+        if rel_path and default_storage.exists(rel_path):
             try:
-                mime = item.mime_type or _mimetypes.guess_type(str(file_on_disk))[0] or 'application/octet-stream'
+                base_name = _os.path.basename(rel_path)
+                mime = item.mime_type or _mimetypes.guess_type(base_name)[0] or 'application/octet-stream'
 
                 # Para áudio PTT, Meta exige audio/ogg com codec opus — força mime exato
                 # e usa nome do arquivo com extensão .ogg para a API não inferir errado.
@@ -650,10 +652,11 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
                     mime = 'audio/ogg; codecs=opus'
                     upload_filename = 'audio.ogg'
                 else:
-                    upload_filename = file_on_disk.name
+                    upload_filename = base_name
 
                 upload_url = f'https://graph.facebook.com/v22.0/{channel_provider.phone_number_id}/media'
-                with open(file_on_disk, 'rb') as fh:
+                # default_storage.open() works transparently with S3 and filesystem.
+                with default_storage.open(rel_path, 'rb') as fh:
                     upload_resp = http_requests.post(
                         upload_url,
                         headers={'Authorization': f'Bearer {channel_provider.access_token}'},
@@ -667,7 +670,9 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
                 else:
                     logger.error(f'WA media upload failed: {upload_resp.status_code} {upload_resp.text} | mime={mime}')
             except Exception as e:
-                logger.error(f'WA media upload error: {e}')
+                logger.error(f'WA media upload error: {e}', exc_info=True)
+        else:
+            logger.warning(f'Gallery: arquivo não encontrado no storage. rel_path={rel_path} file_url={item.file_url}')
 
         # Build the send-message payload: prefer media_id (no public URL needed),
         # fall back to link (requires ngrok/public host) if upload failed.
@@ -695,7 +700,7 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
 
         media_obj = dict(media_ref)
         if item.media_type == 'DOCUMENT':
-            media_obj['filename'] = item.name or (file_on_disk.name if file_on_disk else 'arquivo')
+            media_obj['filename'] = item.name or (_os.path.basename(rel_path) if rel_path else 'arquivo')
         elif item.media_type == 'AUDIO':
             # Sinaliza que é mensagem de voz (PTT — Push To Talk).
             # Meta exibe como voice note quando o arquivo é OGG/Opus mono puro.
