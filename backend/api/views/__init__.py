@@ -234,8 +234,13 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         if not text:
             return Response({'detail': 'Texto obrigatório.'}, status=400)
 
-        # Usa a conversa mais recente do lead; default para whatsapp se ainda não existe
-        active_conv = lead.conversations.order_by('-last_message_at').first()
+        # Usa canal enviado pelo frontend ou a conversa mais recente do lead
+        requested_channel = request.data.get('channel')
+        active_conv = None
+        if requested_channel:
+            active_conv = lead.conversations.filter(channel=requested_channel).order_by('-last_message_at').first()
+        if not active_conv:
+            active_conv = lead.conversations.order_by('-last_message_at').first()
         if not active_conv:
             active_conv, _ = Conversation.objects.get_or_create(
                 lead=lead, channel='whatsapp',
@@ -2753,12 +2758,12 @@ class GalleryMediaViewSet(viewsets.ModelViewSet):
             return GalleryMedia.objects.none()
         qs = GalleryMedia.objects.filter(organization=org)
         media_type = self.request.query_params.get('media_type')
-        if media_type in ('IMAGE', 'VIDEO'):
+        if media_type in ('IMAGE', 'VIDEO', 'DOCUMENT', 'AUDIO'):
             qs = qs.filter(media_type=media_type)
         return qs
 
     def create(self, request, *args, **kwargs):
-        import mimetypes, os, uuid as uuid_mod
+        import mimetypes, os, uuid as uuid_mod, subprocess, tempfile
         from django.core.files.storage import default_storage
         from django.core.files.base import ContentFile
         from django.conf import settings as django_settings
@@ -2778,18 +2783,57 @@ class GalleryMediaViewSet(viewsets.ModelViewSet):
             media_type = 'VIDEO'
         elif mime == 'application/pdf':
             media_type = 'DOCUMENT'
+        elif mime.startswith('audio/'):
+            media_type = 'AUDIO'
         else:
-            return Response({'detail': 'Tipo não suportado. Envie imagens, vídeos ou PDFs.'}, status=400)
+            return Response({'detail': 'Tipo não suportado. Envie imagens, vídeos, PDFs ou áudios.'}, status=400)
 
-        max_bytes = 100 * 1024 * 1024  # 100 MB (PDFs podem ser maiores)
+        max_bytes = 100 * 1024 * 1024
         if uploaded.size > max_bytes:
             return Response({'detail': 'Arquivo muito grande. Máximo: 100 MB.'}, status=400)
 
-        ext = os.path.splitext(uploaded.name)[1].lower() or ''
-        filename = f'gallery/{org.id}/{uuid_mod.uuid4().hex}{ext}'
-        saved_path = default_storage.save(filename, ContentFile(uploaded.read()))
+        file_bytes = uploaded.read()
+        final_mime = mime
+        final_ext = os.path.splitext(uploaded.name)[1].lower() or ''
 
-        # URL absoluta: S3 em produção (default_storage.url) ou caminho relativo em dev.
+        # Áudio: converter para OGG Opus (formato PTT do WhatsApp)
+        if media_type == 'AUDIO':
+            try:
+                with tempfile.NamedTemporaryFile(suffix=final_ext or '.audio', delete=False) as tmp_in:
+                    tmp_in.write(file_bytes)
+                    tmp_in_path = tmp_in.name
+                tmp_out_path = tmp_in_path + '_ptt.ogg'
+                result = subprocess.run(
+                    [
+                        'ffmpeg', '-y', '-i', tmp_in_path,
+                        '-c:a', 'libopus',
+                        '-b:a', '32k',
+                        '-vbr', 'on',
+                        '-compression_level', '10',
+                        '-frame_duration', '60',
+                        '-application', 'voip',
+                        '-ar', '16000',
+                        '-ac', '1',
+                        tmp_out_path,
+                    ],
+                    capture_output=True,
+                    timeout=120,
+                )
+                if result.returncode == 0 and os.path.exists(tmp_out_path):
+                    with open(tmp_out_path, 'rb') as f:
+                        file_bytes = f.read()
+                    final_mime = 'audio/ogg'
+                    final_ext = '.ogg'
+                os.unlink(tmp_in_path)
+                if os.path.exists(tmp_out_path):
+                    os.unlink(tmp_out_path)
+            except Exception:
+                pass  # fallback: salva o arquivo original sem converter
+
+        uid = uuid_mod.uuid4().hex
+        filename = f'gallery/{org.id}/{uid}{final_ext}'
+        saved_path = default_storage.save(filename, ContentFile(file_bytes))
+
         raw_url = default_storage.url(saved_path)
         if raw_url.startswith('http'):
             file_url = raw_url
@@ -2801,9 +2845,9 @@ class GalleryMediaViewSet(viewsets.ModelViewSet):
             name=request.data.get('name', '') or uploaded.name,
             description=request.data.get('description', ''),
             file_url=file_url,
-            mime_type=mime,
+            mime_type=final_mime,
             media_type=media_type,
-            size_bytes=uploaded.size,
+            size_bytes=len(file_bytes),
         )
         return Response(GalleryMediaSerializer(item).data, status=201)
 

@@ -47,8 +47,8 @@ export const leadsService = {
     return data;
   },
 
-  async sendMessage(id: number, text: string): Promise<Message> {
-    const { data } = await api.post<Message>(`/leads/${id}/send_message/`, { text });
+  async sendMessage(id: number, text: string, channel?: string): Promise<Message> {
+    const { data } = await api.post<Message>(`/leads/${id}/send_message/`, { text, channel });
     return data;
   },
 

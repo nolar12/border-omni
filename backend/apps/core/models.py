@@ -108,7 +108,7 @@ class InitialMessageMedia(models.Model):
 
 
 class GalleryMedia(models.Model):
-    MEDIA_TYPE_CHOICES = [('IMAGE', 'Imagem'), ('VIDEO', 'Vídeo'), ('DOCUMENT', 'Documento')]
+    MEDIA_TYPE_CHOICES = [('IMAGE', 'Imagem'), ('VIDEO', 'Vídeo'), ('DOCUMENT', 'Documento'), ('AUDIO', 'Áudio')]
 
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name='gallery_media'

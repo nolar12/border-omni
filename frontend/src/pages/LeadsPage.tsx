@@ -385,6 +385,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [qrShortcut, setQrShortcut] = useState('');
   const [savingQR, setSavingQR] = useState(false);
   const [qrSavedToast, setQrSavedToast] = useState(false);
+  const [sendError, setSendError] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -644,11 +645,16 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     isSendingRef.current = true;
     const rawText = msgText.trim();
     setSending(true);
+    setSendError('');
     try {
-      const msg = await leadsService.sendMessage(lead.id, rawText);
+      const msg = await leadsService.sendMessage(lead.id, rawText, selectedChannel ?? undefined);
       setMessages(prev => [...prev, msg]);
       setMsgText('');
       triggerSaveQRModal(rawText);
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setSendError(detail ?? 'Erro ao enviar mensagem. Tente novamente.');
+      setTimeout(() => setSendError(''), 5000);
     } finally {
       setSending(false);
       isSendingRef.current = false;
@@ -1358,6 +1364,82 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
 
               {/* Barra principal de input */}
               <div className="px-3 pt-2 pb-2.5 flex flex-col gap-1.5">
+
+                {/* ── Linha de ações secundárias — ACIMA do textarea ── */}
+                <div className="flex items-center gap-1 pb-1.5 border-b border-gray-100">
+                  {/* Respostas rápidas */}
+                  <button
+                    onClick={() => setShowQR(true)}
+                    title="Respostas rápidas"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                    </svg>
+                  </button>
+
+                  {/* Anexar arquivo */}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Enviar arquivo / documento"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.gif,.webp,.mp4,.mp3"
+                    onChange={handleFileSelect}
+                  />
+
+                  {/* Galeria */}
+                  <button
+                    onClick={openGalleryModal}
+                    title="Enviar da galeria"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-purple-600 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <rect x="3" y="3" width="18" height="18" rx="2"/>
+                      <circle cx="8.5" cy="8.5" r="1.5"/>
+                      <polyline points="21 15 16 10 5 21"/>
+                    </svg>
+                  </button>
+
+                  {/* Enviar Template */}
+                  <button
+                    onClick={openTemplateModal}
+                    title="Enviar template WhatsApp"
+                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-orange-500 transition-colors flex-shrink-0"
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                      <line x1="9" y1="10" x2="15" y2="10"/>
+                      <line x1="9" y1="14" x2="13" y2="14"/>
+                    </svg>
+                  </button>
+
+                  {/* Sugerir com IA (briefing manual) */}
+                  <button
+                    onClick={() => { setShowBriefPanel(v => !v); if (showBriefPanel) setBriefText(''); }}
+                    title="Sugerir resposta com IA"
+                    className={`flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0 ${
+                      showBriefPanel ? 'bg-violet-100 text-violet-600' : 'text-gray-400 hover:bg-violet-50 hover:text-violet-500'
+                    }`}
+                  >
+                    {loadingBrief
+                      ? <span className="loading loading-spinner loading-xs" />
+                      : <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                          <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
+                        </svg>
+                    }
+                  </button>
+                </div>
+
                 {/* Textarea — largura total */}
                 <textarea
                   ref={textareaRef}
@@ -1431,83 +1513,18 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                   </div>
                 )}
 
-                {/* Linha de ações abaixo do textarea */}
-                <div className="flex items-center gap-1">
-                  {/* Respostas rápidas */}
-                  <button
-                    onClick={() => setShowQR(true)}
-                    title="Respostas rápidas"
-                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                {/* Erro de envio */}
+                {sendError && (
+                  <div className="flex items-center gap-2 px-1 py-1 rounded-lg bg-red-50 border border-red-200">
+                    <svg className="w-3.5 h-3.5 text-red-500 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                     </svg>
-                  </button>
+                    <p className="text-xs text-red-600 flex-1">{sendError}</p>
+                  </div>
+                )}
 
-                  {/* Anexar arquivo */}
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    title="Enviar arquivo / documento"
-                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-blue-600 transition-colors flex-shrink-0"
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                    </svg>
-                  </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png,.gif,.webp,.mp4,.mp3"
-                    onChange={handleFileSelect}
-                  />
-
-                  {/* Galeria */}
-                  <button
-                    onClick={openGalleryModal}
-                    title="Enviar da galeria"
-                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-purple-600 transition-colors flex-shrink-0"
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <rect x="3" y="3" width="18" height="18" rx="2"/>
-                      <circle cx="8.5" cy="8.5" r="1.5"/>
-                      <polyline points="21 15 16 10 5 21"/>
-                    </svg>
-                  </button>
-
-                  {/* Enviar Template */}
-                  <button
-                    onClick={openTemplateModal}
-                    title="Enviar template WhatsApp"
-                    className="flex items-center justify-center w-10 h-10 rounded-xl text-gray-400 hover:bg-gray-100 hover:text-orange-500 transition-colors flex-shrink-0"
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                      <line x1="9" y1="10" x2="15" y2="10"/>
-                      <line x1="9" y1="14" x2="13" y2="14"/>
-                    </svg>
-                  </button>
-
-                  {/* Sugerir com IA (briefing manual) */}
-                  <button
-                    onClick={() => { setShowBriefPanel(v => !v); if (showBriefPanel) setBriefText(''); }}
-                    title="Sugerir resposta com IA"
-                    className={`flex items-center justify-center w-10 h-10 rounded-xl transition-colors flex-shrink-0 ${
-                      showBriefPanel ? 'bg-violet-100 text-violet-600' : 'text-gray-400 hover:bg-violet-50 hover:text-violet-500'
-                    }`}
-                  >
-                    {loadingBrief
-                      ? <span className="loading loading-spinner loading-xs" />
-                      : <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-                          <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
-                        </svg>
-                    }
-                  </button>
-
-                  {/* Spacer */}
-                  <div className="flex-1" />
-
+                {/* ── Linha de envio — abaixo do textarea ── */}
+                <div className="flex items-center gap-2 justify-end">
                   {/* Gravar áudio */}
                   {!msgText.trim() && !isRecording && (
                     <button
