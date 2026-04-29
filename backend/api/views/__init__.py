@@ -2850,17 +2850,26 @@ class GalleryMediaViewSet(viewsets.ModelViewSet):
                     tmp_in.write(file_bytes)
                     tmp_in_path = tmp_in.name
                 tmp_out_path = tmp_in_path + '_ptt.ogg'
+                # Parâmetros idênticos aos OGG/Opus reais do WhatsApp para que a Meta
+                # reconheça como mensagem de voz (PTT). map_metadata -1 remove tags do
+                # container original (ex: motorola/android tags do MP4) que confundem o
+                # WhatsApp e o fazem tratar o áudio como arquivo em vez de voice note.
                 result = subprocess.run(
                     [
                         'ffmpeg', '-y', '-i', tmp_in_path,
+                        '-vn',
+                        '-map_metadata', '-1',
+                        '-map', '0:a:0',
                         '-c:a', 'libopus',
-                        '-b:a', '32k',
+                        '-b:a', '16k',
                         '-vbr', 'on',
                         '-compression_level', '10',
                         '-frame_duration', '60',
                         '-application', 'voip',
-                        '-ar', '16000',
+                        '-ar', '48000',
                         '-ac', '1',
+                        '-fflags', '+bitexact',
+                        '-flags:a', '+bitexact',
                         tmp_out_path,
                     ],
                     capture_output=True,
