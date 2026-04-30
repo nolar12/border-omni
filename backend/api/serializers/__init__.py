@@ -647,7 +647,7 @@ class DogWithMediaSerializer(DogListSerializer):
     media = DogMediaSerializer(many=True, read_only=True)
 
     class Meta(DogListSerializer.Meta):
-        fields = DogListSerializer.Meta.fields + ['media']
+        fields = DogListSerializer.Meta.fields + ['notes', 'media']
 
 
 class LitterDetailSerializer(LitterListSerializer):
