@@ -224,6 +224,9 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+# Google OAuth
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
+
 # Supabase — infraestrutura vetorial compartilhada (dados isolados por organization_id)
 SUPABASE_URL = os.getenv('SUPABASE_URL', '')
 SUPABASE_SERVICE_KEY = os.getenv('SUPABASE_SERVICE_KEY', '')

@@ -4,9 +4,12 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useGoogleLogin } from '@react-oauth/google';
 import { authService } from '../services/auth';
 
-export default function Login() {
+export default function Register() {
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
@@ -14,13 +17,24 @@ export default function Login() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setLoading(true);
     setError('');
+
+    if (password !== confirmPassword) {
+      setError('As senhas não conferem.');
+      return;
+    }
+    if (password.length < 6) {
+      setError('A senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+
+    setLoading(true);
     try {
-      await authService.login(email, password);
+      await authService.register({ name, email, phone, password });
       navigate('/dashboard');
-    } catch {
-      setError('Email ou senha inválidos.');
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || 'Erro ao criar conta. Tente novamente.';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -47,7 +61,10 @@ export default function Login() {
   });
 
   return (
-    <div data-theme="light" className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 p-4">
+    <div
+      data-theme="light"
+      className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-blue-900 p-4"
+    >
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="w-14 h-14 rounded-2xl bg-blue-500 flex items-center justify-center mx-auto mb-4 shadow-lg">
@@ -56,12 +73,14 @@ export default function Login() {
           <h1 className="text-3xl font-bold text-white">Border Omni</h1>
           <p className="text-slate-400 text-base mt-1">Qualificação de leads via WhatsApp</p>
         </div>
+
         <div className="bg-white rounded-2xl shadow-xl p-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4">Entrar</h2>
+          <h2 className="text-xl font-semibold text-gray-800 mb-4">Criar conta</h2>
 
           {error && (
             <div className="flex items-center gap-2 bg-red-50 text-red-600 text-sm rounded-lg px-3 py-2 mb-4">
-              <span>⚠️</span><span>{error}</span>
+              <span>⚠️</span>
+              <span>{error}</span>
             </div>
           )}
 
@@ -86,29 +105,78 @@ export default function Login() {
             <div className="flex-1 h-px bg-gray-200" />
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nome completo</label>
+              <input
+                type="text"
+                placeholder="Seu nome"
+                className="w-full border border-gray-200 rounded-xl px-3 py-3 text-sm text-gray-900 bg-white outline-none focus:border-blue-400 transition-colors"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                required
+              />
+            </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input type="email" placeholder="seu@email.com"
+              <input
+                type="email"
+                placeholder="seu@email.com"
                 className="w-full border border-gray-200 rounded-xl px-3 py-3 text-sm text-gray-900 bg-white outline-none focus:border-blue-400 transition-colors"
-                value={email} onChange={e => setEmail(e.target.value)} required />
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Telefone <span className="text-gray-400 font-normal">(opcional)</span>
+              </label>
+              <input
+                type="tel"
+                placeholder="(51) 99999-9999"
+                className="w-full border border-gray-200 rounded-xl px-3 py-3 text-sm text-gray-900 bg-white outline-none focus:border-blue-400 transition-colors"
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Senha</label>
-              <input type="password" placeholder="••••••••"
+              <input
+                type="password"
+                placeholder="Mínimo 6 caracteres"
                 className="w-full border border-gray-200 rounded-xl px-3 py-3 text-sm text-gray-900 bg-white outline-none focus:border-blue-400 transition-colors"
-                value={password} onChange={e => setPassword(e.target.value)} required />
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                minLength={6}
+              />
             </div>
-            <button type="submit" disabled={loading || googleLoading}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold rounded-xl py-3 text-sm transition-colors flex items-center justify-center gap-2">
-              {loading ? <span className="loading loading-spinner loading-sm" /> : 'Entrar'}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar senha</label>
+              <input
+                type="password"
+                placeholder="Repita a senha"
+                className="w-full border border-gray-200 rounded-xl px-3 py-3 text-sm text-gray-900 bg-white outline-none focus:border-blue-400 transition-colors"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                required
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading || googleLoading}
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold rounded-xl py-3 text-sm transition-colors flex items-center justify-center gap-2 mt-1"
+            >
+              {loading ? <span className="loading loading-spinner loading-sm" /> : 'Criar conta'}
             </button>
           </form>
         </div>
+
         <p className="text-center text-slate-400 text-sm mt-4">
-          Não tem conta?{' '}
-          <Link to="/register" className="text-blue-400 hover:text-blue-300 font-medium">
-            Criar conta
+          Já tem uma conta?{' '}
+          <Link to="/login" className="text-blue-400 hover:text-blue-300 font-medium">
+            Entrar
           </Link>
         </p>
       </div>

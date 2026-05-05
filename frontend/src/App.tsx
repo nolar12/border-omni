@@ -4,6 +4,7 @@ import { registerSW } from 'virtual:pwa-register';
 import Layout from './components/Layout';
 import PrivateRoute from './components/PrivateRoute';
 import Login from './pages/Login';
+import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import LeadsPage from './pages/LeadsPage';
 import Simulator from './pages/Simulator';
@@ -30,6 +31,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
         {/* Página pública do contrato — sem autenticação */}
         <Route path="/contrato/:token" element={<ContractPublicPage />} />
         <Route

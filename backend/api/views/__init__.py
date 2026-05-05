@@ -1,7 +1,9 @@
 import logging
+import requests as http_requests
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
 from django.db import transaction
+from django.conf import settings
 from django.db.models import OuterRef, Subquery, Case, When, Value, IntegerField, BooleanField, Q, F
 from rest_framework import viewsets, mixins, status
 from rest_framework.decorators import action
@@ -61,10 +63,14 @@ class RegisterView(APIView):
         data = request.data
         email = data.get('email', '').lower()
         password = data.get('password', '')
-        first_name = data.get('first_name', '')
+        name = data.get('name', '')
+        first_name = data.get('first_name', name)
         last_name = data.get('last_name', '')
-        org_name = data.get('organization_name', first_name + ' Org')
+        phone = data.get('phone', '')
+        org_name = data.get('organization_name', (first_name or name or email) + ' Org')
 
+        if not email or not password:
+            return Response({'detail': 'Email e senha são obrigatórios.'}, status=400)
         if User.objects.filter(email=email).exists():
             return Response({'detail': 'Email já cadastrado.'}, status=400)
 
@@ -74,7 +80,7 @@ class RegisterView(APIView):
                 first_name=first_name, last_name=last_name,
             )
             org = Organization.objects.create(name=org_name)
-            UserProfile.objects.create(user=user, organization=org, role='admin')
+            UserProfile.objects.create(user=user, organization=org, role='admin', phone=phone)
             free_plan = Plan.objects.filter(name='free').first()
             if free_plan:
                 Subscription.objects.create(organization=org, plan=free_plan, status='trial')
@@ -126,6 +132,62 @@ class MeView(APIView):
                 pass
 
         return Response(UserSerializer(user).data)
+
+
+class GoogleAuthView(APIView):
+    """Autentica ou registra um usuário via Google OAuth.
+
+    Aceita `access_token` (fluxo useGoogleLogin/@react-oauth/google):
+    verifica chamando o endpoint userinfo do Google.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        access_token = request.data.get('access_token', '')
+        if not access_token:
+            return Response({'detail': 'Token Google não fornecido.'}, status=400)
+
+        google_resp = http_requests.get(
+            'https://www.googleapis.com/oauth2/v3/userinfo',
+            headers={'Authorization': f'Bearer {access_token}'},
+            timeout=10,
+        )
+        if google_resp.status_code != 200:
+            return Response({'detail': 'Token Google inválido ou expirado.'}, status=400)
+
+        payload = google_resp.json()
+        email = (payload.get('email') or '').lower()
+        if not email:
+            return Response({'detail': 'Email não disponível na conta Google.'}, status=400)
+
+        given_name = payload.get('given_name', '')
+        family_name = payload.get('family_name', '')
+
+        user = User.objects.filter(email=email).first()
+        if user is None:
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    username=email, email=email, password=None,
+                    first_name=given_name, last_name=family_name,
+                )
+                org_name = f'{given_name or email} Org'
+                org = Organization.objects.create(name=org_name)
+                UserProfile.objects.create(user=user, organization=org, role='admin')
+                free_plan = Plan.objects.filter(name='free').first()
+                if free_plan:
+                    Subscription.objects.create(organization=org, plan=free_plan, status='trial')
+        else:
+            updated = False
+            if not user.first_name and given_name:
+                user.first_name = given_name
+                updated = True
+            if not user.last_name and family_name:
+                user.last_name = family_name
+                updated = True
+            if updated:
+                user.save(update_fields=['first_name', 'last_name'])
+
+        return Response(_get_tokens(user))
 
 
 # ─── Leads ────────────────────────────────────────────────────────────────────

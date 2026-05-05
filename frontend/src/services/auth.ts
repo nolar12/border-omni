@@ -1,26 +1,36 @@
 import api from './api';
 import type { AuthTokens, User } from '../types';
 
+function _saveTokens(data: AuthTokens) {
+  localStorage.setItem('access_token', data.access);
+  localStorage.setItem('refresh_token', data.refresh);
+  localStorage.setItem('user', JSON.stringify(data.user));
+}
+
 export const authService = {
   async login(email: string, password: string): Promise<AuthTokens> {
     const { data } = await api.post<AuthTokens>('/auth/login', { email, password });
-    localStorage.setItem('access_token', data.access);
-    localStorage.setItem('refresh_token', data.refresh);
-    localStorage.setItem('user', JSON.stringify(data.user));
+    _saveTokens(data);
     return data;
   },
 
   async register(payload: {
+    name: string;
     email: string;
     password: string;
-    first_name: string;
+    phone?: string;
+    first_name?: string;
     last_name?: string;
-    organization_name: string;
+    organization_name?: string;
   }): Promise<AuthTokens> {
     const { data } = await api.post<AuthTokens>('/auth/register', payload);
-    localStorage.setItem('access_token', data.access);
-    localStorage.setItem('refresh_token', data.refresh);
-    localStorage.setItem('user', JSON.stringify(data.user));
+    _saveTokens(data);
+    return data;
+  },
+
+  async googleLogin(accessToken: string): Promise<AuthTokens> {
+    const { data } = await api.post<AuthTokens>('/auth/google', { access_token: accessToken });
+    _saveTokens(data);
     return data;
   },
 
