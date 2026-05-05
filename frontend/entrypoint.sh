@@ -4,7 +4,8 @@ set -e
 cat > /usr/share/nginx/html/env-config.js <<EOF
 window._env = {
   API_URL: "${API_URL}",
-  APP_ENV: "${APP_ENV}"
+  APP_ENV: "${APP_ENV}",
+  GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID}"
 };
 EOF
 

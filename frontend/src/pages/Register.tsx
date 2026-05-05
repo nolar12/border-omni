@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useGoogleLogin } from '@react-oauth/google';
 import { authService } from '../services/auth';
+import { useGoogleEnabled } from '../hooks/useGoogleEnabled';
 
 export default function Register() {
   const [name, setName] = useState('');
@@ -14,6 +15,7 @@ export default function Register() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const googleEnabled = useGoogleEnabled();
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -84,26 +86,29 @@ export default function Register() {
             </div>
           )}
 
-          {/* Google OAuth */}
-          <button
-            type="button"
-            onClick={() => { setError(''); loginWithGoogle(); }}
-            disabled={googleLoading || loading}
-            className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition-colors mb-4"
-          >
-            {googleLoading ? (
-              <span className="loading loading-spinner loading-sm" />
-            ) : (
-              <GoogleIcon />
-            )}
-            Continuar com Google
-          </button>
-
-          <div className="flex items-center gap-3 mb-4">
-            <div className="flex-1 h-px bg-gray-200" />
-            <span className="text-xs text-gray-400">ou</span>
-            <div className="flex-1 h-px bg-gray-200" />
-          </div>
+          {/* Google OAuth — só mostra se VITE_GOOGLE_CLIENT_ID estiver configurado */}
+          {googleEnabled && (
+            <>
+              <button
+                type="button"
+                onClick={() => { setError(''); loginWithGoogle(); }}
+                disabled={googleLoading || loading}
+                className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition-colors mb-4"
+              >
+                {googleLoading ? (
+                  <span className="loading loading-spinner loading-sm" />
+                ) : (
+                  <GoogleIcon />
+                )}
+                Continuar com Google
+              </button>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-1 h-px bg-gray-200" />
+                <span className="text-xs text-gray-400">ou</span>
+                <div className="flex-1 h-px bg-gray-200" />
+              </div>
+            </>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-3">
             <div>

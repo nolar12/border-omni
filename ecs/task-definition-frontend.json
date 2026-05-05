@@ -15,7 +15,8 @@
       ],
       "environment": [
         {"name": "API_URL",  "value": "https://api.filhotefacil.com.br"},
-        {"name": "APP_ENV",  "value": "production"}
+        {"name": "APP_ENV",  "value": "production"},
+        {"name": "GOOGLE_CLIENT_ID", "value": "889640042238-q21q2fnl1q93shbpmos7fdjr6ovd18ct.apps.googleusercontent.com"}
       ],
       "logConfiguration": {
         "logDriver": "awslogs",
