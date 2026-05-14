@@ -1,10 +1,10 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
 from apps.core.models import Organization, UserProfile, Plan, Subscription, AgentConfig, InitialMessageMedia, GalleryMedia
-from apps.leads.models import Lead, LeadTag, Note
+from apps.leads.models import Lead, LeadTag, Note, LeadProfile
 from apps.conversations.models import Message, Conversation, MessageTemplate
 from apps.quick_replies.models import QuickReply, QuickReplyCategory
-from apps.channels.models import ChannelProvider
+from apps.channels.models import ChannelProvider, QualityRatingEvent, MetaConversionEvent
 from apps.contracts.models import SaleContract
 from apps.notes.models import GenericNote
 from apps.kennel.models import Dog, Litter, DogMedia, LitterMedia, DogHealthRecord, LitterHealthRecord
@@ -57,6 +57,26 @@ class NoteSerializer(serializers.ModelSerializer):
 
 # ─── Leads ───────────────────────────────────────────────────────────────────
 
+class LeadProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LeadProfile
+        fields = [
+            'intencao_uso', 'perfil_localizacao', 'potencial_compra',
+            'sensibilidade_preco', 'urgencia', 'classificacao_motivo',
+            'tags_automaticas', 'is_reserved', 'is_purchased', 'updated_at',
+        ]
+
+
+class MetaConversionEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MetaConversionEvent
+        fields = [
+            'id', 'event_name', 'lead_status', 'status',
+            'campaign_id', 'adset_id', 'ad_id',
+            'error_message', 'sent_at', 'created_at',
+        ]
+
+
 class AssignedUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
@@ -77,9 +97,9 @@ class LeadListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'phone', 'full_name', 'city', 'state', 'tier', 'score',
             'lead_classification', 'status', 'source', 'channels_used', 'is_ai_active',
-            'is_archived', 'assigned_to', 'tags', 'last_message_direction',
-            'whatsapp_last_message_at', 'last_message_text', 'awaiting_human_reply',
-            'created_at', 'updated_at',
+            'is_archived', 'opted_in', 'lgpd_consent', 'assigned_to', 'tags',
+            'last_message_direction', 'whatsapp_last_message_at', 'last_message_text',
+            'awaiting_human_reply', 'created_at', 'updated_at',
         ]
 
     def get_tags(self, obj):
@@ -150,6 +170,8 @@ class LeadDetailSerializer(serializers.ModelSerializer):
     notes = NoteSerializer(many=True, read_only=True)
     assigned_to = AssignedUserSerializer(read_only=True)
     conversations = ConversationSerializer(many=True, read_only=True)
+    profile = LeadProfileSerializer(read_only=True)
+    last_meta_event = serializers.SerializerMethodField()
 
     class Meta:
         model = Lead
@@ -158,14 +180,23 @@ class LeadDetailSerializer(serializers.ModelSerializer):
             'full_name', 'instagram_handle', 'city', 'state',
             'housing_type', 'daily_time_minutes', 'experience_level', 'budget_ok',
             'timeline', 'purpose', 'has_kids', 'has_other_pets', 'score', 'tier',
-            'lead_classification', 'is_archived',
+            'lead_classification', 'is_archived', 'opted_in', 'lgpd_consent',
             'status', 'source', 'channels_used', 'is_ai_active', 'assigned_to',
             'conversation_state', 'tags', 'notes', 'conversations',
+            'ad_referral', 'ctwa_clid',
+            'profile', 'last_meta_event',
             'created_at', 'updated_at',
         ]
 
     def get_tags(self, obj):
         return list(obj.tags.values_list('name', flat=True))
+
+    def get_last_meta_event(self, obj):
+        try:
+            ev = obj.meta_events.order_by('-created_at').first()
+            return MetaConversionEventSerializer(ev).data if ev else None
+        except Exception:
+            return None
 
 
 # ─── Messages ────────────────────────────────────────────────────────────────
@@ -223,6 +254,7 @@ class ChannelProviderSerializer(serializers.ModelSerializer):
             'phone_number_id', 'business_account_id',
             'instagram_account_id', 'page_id',
             'webhook_verify_token', 'webhook_url',
+            'quality_rating', 'quality_synced_at',
             'is_active', 'is_simulated', 'verification_status',
             'last_verified_at', 'created_at', 'updated_at',
         ]
@@ -238,6 +270,14 @@ class ChannelProviderSerializer(serializers.ModelSerializer):
         if len(token) <= 12:
             return '••••••••'
         return token[:6] + '••••••••' + token[-4:]
+
+
+class QualityRatingEventSerializer(serializers.ModelSerializer):
+    is_degradation = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = QualityRatingEvent
+        fields = ['id', 'previous_rating', 'new_rating', 'is_degradation', 'created_at']
 
 
 # ─── Agent Config ────────────────────────────────────────────────────────────

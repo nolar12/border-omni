@@ -40,6 +40,42 @@ export type LeadSource = 'INSTAGRAM_AD' | 'ORGANIC' | 'OTHER';
 export type LeadClassification = 'HOT_LEAD' | 'WARM_LEAD' | 'COLD_LEAD' | 'DANGER_LEAD';
 export type HousingType = 'HOUSE_Y' | 'HOUSE_N' | 'HOUSE' | 'APT' | 'OTHER';
 
+export type LeadIntencaoUso =
+  | 'familia_companhia' | 'trabalho_rural' | 'reproducao' | 'curiosidade' | 'indefinido';
+export type LeadPerfilLocalizacao =
+  | 'capital_grande_centro' | 'cidade_media' | 'rural_interior' | 'outro_estado_distante' | 'indefinido';
+export type LeadPotencialCompra = 'alto' | 'medio' | 'baixo' | 'indefinido';
+export type LeadSensibilidadePreco = 'baixa' | 'media' | 'alta' | 'indefinido';
+export type LeadUrgencia = 'imediata' | 'curto_prazo' | 'pesquisando' | 'indefinido';
+
+export interface LeadProfile {
+  intencao_uso: LeadIntencaoUso;
+  perfil_localizacao: LeadPerfilLocalizacao;
+  potencial_compra: LeadPotencialCompra;
+  sensibilidade_preco: LeadSensibilidadePreco;
+  urgencia: LeadUrgencia;
+  classificacao_motivo: string;
+  tags_automaticas: string[];
+  is_reserved: boolean;
+  is_purchased: boolean;
+  updated_at: string;
+}
+
+export type MetaEventStatus = 'pending' | 'sent' | 'error' | 'skipped';
+
+export interface MetaConversionEvent {
+  id: number;
+  event_name: string;
+  lead_status: string;
+  status: MetaEventStatus;
+  campaign_id: string;
+  adset_id: string;
+  ad_id: string;
+  error_message: string;
+  sent_at: string | null;
+  created_at: string;
+}
+
 export interface Lead {
   id: number;
   phone: string;
@@ -61,6 +97,8 @@ export interface Lead {
   tier: Tier | null;
   lead_classification: LeadClassification | null;
   is_archived: boolean;
+  opted_in: boolean;
+  lgpd_consent: boolean;
   status: LeadStatus;
   source: LeadSource;
   channels_used: string;
@@ -70,6 +108,10 @@ export interface Lead {
   notes: Note[];
   conversation_state: string | null;
   conversations: Conversation[];
+  ad_referral: Record<string, unknown> | null;
+  ctwa_clid: string | null;
+  profile: LeadProfile | null;
+  last_meta_event: MetaConversionEvent | null;
   created_at: string;
   updated_at: string;
 }
@@ -83,6 +125,8 @@ export interface LeadListItem {
   tier: Tier | null;
   lead_classification: LeadClassification | null;
   is_archived: boolean;
+  opted_in: boolean;
+  lgpd_consent: boolean;
   score: number;
   status: LeadStatus;
   source: LeadSource;
@@ -162,6 +206,8 @@ export interface ChannelProvider {
   page_id: string;
   webhook_verify_token: string;
   webhook_url: string;
+  quality_rating?: string;
+  quality_synced_at?: string | null;
   is_active: boolean;
   is_simulated: boolean;
   verification_status: 'verified' | 'pending' | 'failed';
@@ -169,6 +215,76 @@ export interface ChannelProvider {
   created_at: string;
   updated_at: string;
 }
+
+export interface QualityRatingEvent {
+  id: number;
+  previous_rating: string;
+  new_rating: string;
+  is_degradation: boolean;
+  created_at: string;
+}
+
+export interface QualitySyncResult {
+  quality_rating: string;
+  quality_synced_at: string | null;
+  changed: boolean;
+  event_id: number | null;
+}
+
+// ─── Meta OAuth — Business Integration System User Token flow ────────────────
+
+export interface MetaPhoneNumber {
+  id: string;
+  display_phone_number: string;
+  verified_name: string;
+  quality_rating?: string;
+}
+
+export interface MetaWabaAsset {
+  waba_id: string;
+  waba_name: string;
+  phone_numbers: MetaPhoneNumber[];
+}
+
+export interface MetaInstagramAccount {
+  id: string;
+  username: string;
+  name?: string;
+}
+
+export interface MetaPageAsset {
+  id: string;
+  name: string;
+  access_token: string;
+  instagram_business_account?: MetaInstagramAccount;
+}
+
+export interface MetaDiscoverResponse {
+  provider: string;
+  access_token: string;
+  assets: MetaWabaAsset[] | MetaPageAsset[];
+}
+
+export interface MetaWabaSelection {
+  provider: 'whatsapp';
+  name: string;
+  access_token: string;
+  waba_id: string;
+  phone_number_id: string;
+}
+
+export interface MetaPageSelection {
+  provider: 'facebook' | 'messenger' | 'instagram';
+  name: string;
+  access_token: string;
+  page_id: string;
+  page_name: string;
+  page_token: string;
+  instagram_account_id?: string;
+  instagram_username?: string;
+}
+
+export type MetaSelection = MetaWabaSelection | MetaPageSelection;
 
 export interface PaginatedResponse<T> {
   count: number;

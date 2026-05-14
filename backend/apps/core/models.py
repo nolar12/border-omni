@@ -40,6 +40,14 @@ class AgentConfig(models.Model):
     off_hours_end = models.TimeField(null=True, blank=True)
     off_hours_message = models.TextField(blank=True, default='')
     off_hours_timezone = models.CharField(max_length=60, blank=True, default='America/Sao_Paulo')
+    # Meta Conversions API (CAPI) — feedback de qualificação para campanhas
+    meta_pixel_id = models.CharField(max_length=50, blank=True, default='')
+    meta_capi_token = models.TextField(blank=True, default='')
+    meta_conversions_enabled = models.BooleanField(default=False)
+    meta_test_event_code = models.CharField(max_length=50, blank=True, default='')
+    send_warm_events = models.BooleanField(default=False)
+    send_hot_events = models.BooleanField(default=True)
+    send_purchases = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

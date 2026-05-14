@@ -47,6 +47,7 @@ class Message(models.Model):
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, null=True, blank=True)
     direction = models.CharField(max_length=3, choices=DIRECTION_CHOICES)
     text = models.TextField()
+    transcription = models.TextField(null=True, blank=True)
     provider_message_id = models.CharField(max_length=200, null=True, blank=True)
     msg_status = models.CharField(max_length=10, choices=STATUS_CHOICES, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

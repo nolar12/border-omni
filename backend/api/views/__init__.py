@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import logging
 import requests as http_requests
 from django.contrib.auth.models import User
@@ -24,7 +26,8 @@ from api.serializers import (
     UserSerializer, LeadListSerializer, LeadDetailSerializer,
     MessageSerializer, NoteSerializer,
     QuickReplySerializer, QuickReplyCategorySerializer,
-    ChannelProviderSerializer, PlanSerializer, SubscriptionSerializer,
+    ChannelProviderSerializer, QualityRatingEventSerializer,
+    PlanSerializer, SubscriptionSerializer,
     AgentConfigSerializer, InitialMessageMediaSerializer,
     MessageTemplateSerializer, GalleryMediaSerializer,
     ContractSerializer, ContractPublicSerializer,
@@ -202,7 +205,7 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         org = _get_org(self.request.user)
         if not org:
             return Lead.objects.none()
-        qs = Lead.objects.filter(organization=org).select_related('assigned_to').prefetch_related('tags')
+        qs = Lead.objects.filter(organization=org).select_related('assigned_to', 'profile').prefetch_related('tags')
         show_archived = self.request.query_params.get('is_archived', 'false').lower()
         if show_archived == 'true':
             qs = qs.filter(is_archived=True)
@@ -304,6 +307,13 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
                 defaults={'organization': org, 'state': 'active'},
             )
         channel = active_conv.channel
+
+        # ── Janela 24h: WhatsApp só permite texto livre se janela aberta ─────────
+        if channel == 'whatsapp' and not _is_whatsapp_window_open(active_conv):
+            return Response(
+                {'detail': 'Janela de 24h expirada. Use um template aprovado para iniciar a conversa.'},
+                status=400,
+            )
 
         # Captura última mensagem IN para armazenar o par de treinamento
         last_in = (
@@ -1103,6 +1113,23 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         total = Lead.objects.filter(organization=org, is_archived=False).count()
         return Response({'detail': f'Classificação iniciada para {total} leads em background.'})
 
+    @action(detail=True, methods=['post'], url_path='resend_meta_event')
+    def resend_meta_event(self, request, pk=None):
+        """Reenvia o evento de classificação para a Meta Conversions API (útil após erro)."""
+        lead = self.get_object()
+        org = lead.organization
+        if not lead.lead_classification:
+            return Response({'detail': 'Lead sem classificação para enviar.'}, status=400)
+        try:
+            from apps.channels.meta_conversions_service import MetaConversionsService
+            cfg = getattr(org, 'agent_config', None)
+            if not cfg or not cfg.meta_conversions_enabled:
+                return Response({'detail': 'Meta Conversions API não habilitada para este tenant.'}, status=400)
+            MetaConversionsService().send_if_applicable(lead, lead.lead_classification, org)
+            return Response({'ok': True, 'classification': lead.lead_classification})
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=500)
+
     @action(detail=True, methods=['post'])
     def archive(self, request, pk=None):
         lead = self.get_object()
@@ -1158,6 +1185,20 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
 
 # ─── Webhook ──────────────────────────────────────────────────────────────────
 
+def _verify_meta_signature(request) -> bool:
+    """Verifica X-Hub-Signature-256 enviada pela Meta.
+    Retorna True se a assinatura bater ou se META_APP_SECRET não estiver configurado (modo dev)."""
+    app_secret = getattr(settings, 'META_APP_SECRET', '')
+    if not app_secret:
+        return True
+    sig_header = request.META.get('HTTP_X_HUB_SIGNATURE_256', '')
+    if not sig_header.startswith('sha256='):
+        return False
+    received = sig_header[7:]
+    mac = hmac.new(app_secret.encode(), request.body, hashlib.sha256)
+    return hmac.compare_digest(mac.hexdigest(), received)
+
+
 class WhatsAppWebhookView(APIView):
     permission_classes = [AllowAny]
 
@@ -1176,6 +1217,9 @@ class WhatsAppWebhookView(APIView):
         is_meta_payload = data.get('object') == 'whatsapp_business_account'
 
         if is_meta_payload:
+            if not _verify_meta_signature(request):
+                logger.warning('WhatsApp webhook: assinatura X-Hub-Signature-256 inválida')
+                return Response({'detail': 'Invalid signature.'}, status=403)
             return self._handle_meta_payload(data)
         else:
             return self._handle_simulator_payload(data)
@@ -1216,13 +1260,19 @@ class WhatsAppWebhookView(APIView):
 
             org = channel_provider.organization
 
+            # Captura referral de Click-to-WhatsApp Ads (presente apenas na 1ª mensagem do lead)
+            referral = msg.get('referral') or {}
+
             # ── Mídia recebida (imagem, documento, áudio, vídeo) ──────────────
             MEDIA_TYPES = {'image', 'document', 'audio', 'video', 'sticker'}
             if msg_type in MEDIA_TYPES:
-                return self._handle_incoming_media(
+                response = self._handle_incoming_media(
                     org=org, from_phone=from_phone, msg=msg,
                     msg_type=msg_type, channel_provider=channel_provider, contact_name=contact_name,
                 )
+                if referral:
+                    self._save_ad_referral(org=org, phone=from_phone, referral=referral)
+                return response
 
             # ── Texto ─────────────────────────────────────────────────────────
             if msg_type != 'text':
@@ -1235,10 +1285,13 @@ class WhatsAppWebhookView(APIView):
             logging.getLogger('apps').error(f'Webhook Meta payload error: {e} | data: {data}')
             return Response({'received': True}, status=200)
 
-        return self._process_message(
+        response = self._process_message(
             org=org, sender_id=from_phone, text=text,
             channel='whatsapp', channel_provider=channel_provider, contact_name=contact_name,
         )
+        if referral:
+            self._save_ad_referral(org=org, phone=from_phone, referral=referral)
+        return response
 
     def _handle_status_update(self, statuses):
         """Atualiza msg_status das mensagens OUT conforme notificações do Meta."""
@@ -1356,6 +1409,7 @@ class WhatsAppWebhookView(APIView):
         icon  = icons.get(effective_type, '📎')
 
         local_url = ''
+        stored_path = None
         display_filename = filename or ''
         if media_id and channel_provider.access_token:
             try:
@@ -1494,7 +1548,7 @@ class WhatsAppWebhookView(APIView):
         Conversation.objects.filter(pk=conv.pk).update(last_message_at=now)
         Lead.objects.filter(pk=lead.pk).update(updated_at=now)
 
-        Message.objects.create(
+        message = Message.objects.create(
             conversation=conv,
             organization=org,
             direction='IN',
@@ -1503,9 +1557,29 @@ class WhatsAppWebhookView(APIView):
         )
         logger.info(f'Incoming [{msg_type}] from {from_phone}: {label or media_id}')
 
+        # Transcrição assíncrona de áudios via Whisper
+        if msg_type == 'audio' and stored_path and getattr(getattr(org, 'agent_config', None), 'openai_api_key', None):
+            from apps.qualifier.transcriber import transcribe_audio_async
+            transcribe_audio_async(message.pk, stored_path, org.agent_config.openai_api_key)
+
         _notify_users_via_whatsapp(org=org, lead=lead, text=text, channel_provider=channel_provider)
 
         return Response({'received': True, 'type': msg_type})
+
+    def _save_ad_referral(self, org, phone: str, referral: dict):
+        """Salva dados de anúncio (referral) no lead quando proveniente de Click-to-WhatsApp/Messenger Ad."""
+        try:
+            Lead.objects.filter(
+                organization=org,
+                phone=phone,
+                ad_referral__isnull=True,
+            ).update(
+                ad_referral=referral,
+                ctwa_clid=referral.get('ctwa_clid', ''),
+                source='INSTAGRAM_AD',
+            )
+        except Exception as exc:
+            logger.warning(f'_save_ad_referral error (phone={phone}): {exc}')
 
     def _handle_simulator_payload(self, data):
         """Processa o payload do simulador interno (testes sem Meta)."""
@@ -1742,6 +1816,10 @@ class MetaWebhookView(APIView):
         return Response({'detail': 'Invalid verify token.'}, status=403)
 
     def post(self, request):
+        if not _verify_meta_signature(request):
+            logger.warning('Meta webhook: assinatura X-Hub-Signature-256 inválida')
+            return Response({'detail': 'Invalid signature.'}, status=403)
+
         data = request.data
         obj = data.get('object', '')
 
@@ -1790,6 +1868,11 @@ class MetaWebhookView(APIView):
                         channel='messenger', channel_provider=channel_provider,
                         contact_name=contact_name,
                     )
+
+                    # Captura referral de anúncios Messenger (Click-to-Messenger Ads)
+                    referral = messaging.get('referral') or {}
+                    if referral:
+                        self._save_ad_referral(org=org, phone=sender_id, referral=referral)
 
         except Exception as e:
             logger.error(f'MetaWebhook Page error: {e}')
@@ -2456,6 +2539,32 @@ class ChannelProviderViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         org = _get_org(self.request.user)
         serializer.save(organization=org)
+
+    @action(detail=True, methods=['post'], url_path='sync_quality')
+    def sync_quality(self, request, pk=None):
+        """Dispara sync imediato do quality_rating para este canal."""
+        cp = self.get_object()
+        if cp.provider != 'whatsapp':
+            return Response({'detail': 'Sync de qualidade disponível apenas para WhatsApp.'}, status=400)
+        if not cp.phone_number_id or not cp.access_token:
+            return Response({'detail': 'Canal sem phone_number_id ou access_token configurado.'}, status=400)
+
+        from apps.channels.tasks import sync_single_channel
+        result = sync_single_channel(cp)
+        cp.refresh_from_db()
+        return Response({
+            'quality_rating': cp.quality_rating,
+            'quality_synced_at': cp.quality_synced_at,
+            'changed': result['changed'],
+            'event_id': result['event_id'],
+        })
+
+    @action(detail=True, methods=['get'], url_path='quality_history')
+    def quality_history(self, request, pk=None):
+        """Retorna os últimos 30 eventos de mudança de rating para este canal."""
+        cp = self.get_object()
+        events = cp.quality_events.all()[:30]
+        return Response(QualityRatingEventSerializer(events, many=True).data)
 
 
 # ─── Message Templates ─────────────────────────────────────────────────────────

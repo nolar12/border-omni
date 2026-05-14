@@ -37,6 +37,19 @@ ANALISE O HISTÓRICO E RETORNE:
 10. nivel_risco: nenhum | suspeito | alto_risco
 11. motivo_risco: texto curto explicando o padrão de risco detectado (ou "" se nivel_risco = nenhum)
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CAMPOS DE PERFIL — USADOS NA CLASSIFICAÇÃO HOT/WARM/COLD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+12. intencao_uso: familia_companhia | trabalho_rural | reproducao | curiosidade | indefinido
+13. perfil_localizacao: capital_grande_centro | cidade_media | rural_interior | outro_estado_distante | indefinido
+14. potencial_compra: alto | medio | baixo | indefinido
+15. urgencia_compra: imediata | curto_prazo | pesquisando | indefinido
+16. tags_automaticas: lista com tags identificadas na conversa — use APENAS tags desta lista:
+    familia, apartamento, casa_com_patio, crianca, agro, fazenda, gado, ovelha,
+    entrega, pedigree, valor, desconto, reserva, pagamento
+17. classificacao_motivo: texto curto, 1 linha — explica por que atribuiu os valores de perfil acima
+
 SINAIS POSITIVOS QUE AUMENTAM probabilidade_conversao:
 - Futuro do indicativo ("quando eu buscar", "vou preparar") — sinal forte de decisão mental já tomada
 - Lead continua engajado após saber o preço — o preço não é objeção
@@ -63,6 +76,54 @@ REGRA DE MATURIDADE — USE COMO REFERÊNCIA:
 - morno: já pesquisando, fez 1-2 perguntas sobre preço ou disponibilidade
 - quente: perguntou sobre logística, pagamento, entrega, detalhes do filhote específico — PRÓXIMO DA DECISÃO
 - muito_quente: falou em reserva, urgência, data, ou combinou próximo passo
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REGRAS DE INFERÊNCIA PARA CAMPOS DE PERFIL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+INTENÇÃO DE USO:
+- Mencionou fazenda, gado, ovelha, sítio, campo, pastoreio ou "para trabalho" → intencao_uso = trabalho_rural, adicionar tags agro e/ou fazenda
+- Mencionou família, filhos, criança, apartamento, casa, companhia ou "para minha filha/filho/esposa" → intencao_uso = familia_companhia
+- Mencionou reprodução, acasalamento, "quero criar", plantel, matrizes → intencao_uso = reproducao
+- Perguntou apenas por curiosidade, sem sinais de interesse real → intencao_uso = curiosidade
+
+POTENCIAL DE COMPRA:
+- Perguntou sobre reserva, pagamento, sinal, entrada, parcelamento, macho/fêmea disponível ou entrega → potencial_compra = alto, adicionar tags reserva e/ou pagamento/entrega
+- Perguntou só "valor?" ou "qual o preço?" sem qualquer outro contexto → potencial_compra = baixo ou medio, sensibilidade_preco = alta, adicionar tag valor
+- Demonstrou engajamento com logística e valor sem objeção → potencial_compra = alto
+
+SENSIBILIDADE A PREÇO:
+- Pediu desconto, comparou preço com outros canis, questionou o valor → sensibilidade_preco = alta, adicionar tag desconto
+- Perguntou sobre valor mas continuou engajado sem questionar → sensibilidade_preco = media
+
+URGÊNCIA:
+- Perguntou sobre disponibilidade imediata, "tem agora?", "pode reservar já?" → urgencia_compra = imediata
+- Demonstrou interesse com perspectiva de semanas → urgencia_compra = curto_prazo
+- Apenas pesquisando sem sinais de decisão → urgencia_compra = pesquisando
+
+PERFIL DE LOCALIZAÇÃO:
+- Mencionou capital, grande cidade ou região metropolitana → perfil_localizacao = capital_grande_centro
+- Mencionou cidade de porte médio → perfil_localizacao = cidade_media
+- Mencionou sítio, fazenda, zona rural, interior → perfil_localizacao = rural_interior
+- Mencionou outro estado (ex: SP, RJ, MG quando o canil é no RS) ou cidade muito distante, mas perguntou sobre entrega → perfil_localizacao = outro_estado_distante (não penaliza potencial)
+
+TAGS AUTOMÁTICAS — adicione APENAS as que a conversa confirma claramente:
+- familia → mencionou família explicitamente
+- crianca → mencionou criança, filho, filha
+- apartamento → mencionou apartamento
+- casa_com_patio → mencionou quintal, pátio, jardim
+- agro → perfil rural/agropecuário
+- fazenda → mencionou fazenda especificamente
+- gado → mencionou gado
+- ovelha → mencionou ovelha
+- entrega → perguntou sobre entrega ou transporte do filhote
+- pedigree → perguntou sobre pedigree, registro, CBKC
+- valor → perguntou sobre preço/valor
+- desconto → pediu desconto ou questionou preço agressivamente
+- reserva → perguntou sobre reservar filhote
+- pagamento → perguntou sobre forma de pagamento
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 SINAIS NEGATIVOS QUE DIMINUEM probabilidade_conversao:
 - lead_replied_after_attendant = não → classificação MÁXIMA: frio, probabilidade máxima 15
@@ -162,15 +223,25 @@ Retorne APENAS JSON válido, sem markdown:
   "probabilidade_conversao": 0,
   "resumo_intencao": "",
   "nivel_risco": "nenhum",
-  "motivo_risco": ""
+  "motivo_risco": "",
+  "intencao_uso": "indefinido",
+  "perfil_localizacao": "indefinido",
+  "potencial_compra": "indefinido",
+  "urgencia_compra": "indefinido",
+  "tags_automaticas": [],
+  "classificacao_motivo": ""
 }}"""
 
-MATURIDADE_TO_CLASSIFICATION = {
-    'muito_quente': 'HOT_LEAD',
-    'quente': 'HOT_LEAD',
-    'morno': 'WARM_LEAD',
-    'frio': 'COLD_LEAD',
-}
+def _compute_profile_classification(result: dict) -> str:
+    """
+    Determina HOT_LEAD / WARM_LEAD / COLD_LEAD a partir dos parâmetros de perfil
+    retornados pelo classificador AI.
+
+    Pontuação máxima: 13 pts base + 2 pts em tags = 15.
+    HOT >= 8 | WARM >= 4 | COLD < 4
+    """
+    from apps.channels.meta_conversions_service import _compute_profile_classification as _compute
+    return _compute(result)
 
 # Palavras-chave que indicam possível risco — dispara análise completa mesmo em early-return.
 # Inclui grafias erradas/fonéticas comuns para não ser driblado por erros de digitação.
@@ -209,7 +280,7 @@ class AILeadClassifier:
                 Message.objects
                 .filter(conversation__lead=self.lead)
                 .order_by('created_at')
-                .values('direction', 'text', 'created_at')
+                .values('direction', 'text', 'transcription', 'created_at')
             )
 
             if not messages:
@@ -234,7 +305,7 @@ class AILeadClassifier:
                 model='gpt-4o',
                 messages=[{'role': 'system', 'content': prompt}],
                 temperature=0.1,
-                max_tokens=600,
+                max_tokens=900,
                 response_format={'type': 'json_object'},
             )
             raw = response.choices[0].message.content.strip()
@@ -311,6 +382,14 @@ class AILeadClassifier:
             else:
                 label = f'[{hour_min}] ATENDENTE'
                 prev_out_time = ts
+
+            # Mensagens de áudio: usa transcrição se disponível, senão ignora
+            if text.startswith('🎵'):
+                transcription = msg.get('transcription') or ''
+                if transcription.strip():
+                    text = f'[áudio transcrito] {transcription.strip()}'
+                else:
+                    continue
 
             lines.append(f'{label}: {text}')
 
@@ -419,16 +498,20 @@ class AILeadClassifier:
             logger.info(f'AILeadClassifier: lead {self.lead.pk} → sem classificação (aguardando interação)')
             return
 
-        nivel = result.get('nivel_maturidade', '')
         nivel_risco = result.get('nivel_risco', 'nenhum')
 
-        # DANGER sobrescreve qualquer classificação de maturidade
+        # DANGER sobrescreve tudo (segurança física)
         if nivel_risco == 'alto_risco':
             classification = 'DANGER_LEAD'
         else:
-            classification = MATURIDADE_TO_CLASSIFICATION.get(nivel)
+            # Novo motor: HOT/WARM/COLD baseado nos parâmetros de perfil
+            classification = _compute_profile_classification(result)
 
         score = result.get('probabilidade_conversao')
+
+        from apps.leads.models import Lead
+        old_lead = Lead.objects.filter(pk=self.lead.pk).values('lead_classification').first()
+        old_classification = (old_lead or {}).get('lead_classification')
 
         update_fields = {'ai_profile': result}
         if classification:
@@ -436,13 +519,77 @@ class AILeadClassifier:
         if score is not None:
             update_fields['score'] = int(score)
 
-        from apps.leads.models import Lead
         Lead.objects.filter(pk=self.lead.pk).update(**update_fields)
+
+        nivel = result.get('nivel_maturidade', '')
         logger.info(
             f'AILeadClassifier: lead {self.lead.pk} → '
             f'{classification or "sem classificação"} '
             f'(prob={score}, maturidade={nivel}, risco={nivel_risco})'
         )
+
+        # Upsert LeadProfile + tags automáticas
+        self._upsert_lead_profile(result)
+
+        # Disparo CAPI se a classificação mudou
+        if classification and classification != old_classification:
+            try:
+                from apps.channels.meta_conversions_service import MetaConversionsService
+                from apps.core.models import Organization
+                org = Organization.objects.select_related('agent_config').get(pk=self.lead.organization_id)
+                MetaConversionsService().send_if_applicable(self.lead, classification, org)
+            except Exception as exc:
+                logger.warning(f'CAPI dispatch error (lead={self.lead.pk}): {exc}')
+
+    def _upsert_lead_profile(self, result: dict):
+        """Cria ou atualiza LeadProfile e sincroniza tags automáticas."""
+        try:
+            from apps.leads.models import Lead, LeadProfile, LeadTag, LeadTagAssignment
+
+            profile_data = {
+                'intencao_uso': result.get('intencao_uso', 'indefinido'),
+                'perfil_localizacao': result.get('perfil_localizacao', 'indefinido'),
+                'potencial_compra': result.get('potencial_compra', 'indefinido'),
+                'sensibilidade_preco': result.get('sensibilidade_preco', 'indefinido'),
+                'urgencia': result.get('urgencia_compra', 'indefinido'),
+                'classificacao_motivo': result.get('classificacao_motivo', ''),
+                'tags_automaticas': result.get('tags_automaticas', []),
+            }
+
+            # Valida choices — ignora valores inesperados retornados pela IA
+            valid = {
+                'intencao_uso': {'familia_companhia', 'trabalho_rural', 'reproducao', 'curiosidade', 'indefinido'},
+                'perfil_localizacao': {'capital_grande_centro', 'cidade_media', 'rural_interior', 'outro_estado_distante', 'indefinido'},
+                'potencial_compra': {'alto', 'medio', 'baixo', 'indefinido'},
+                'sensibilidade_preco': {'baixa', 'media', 'alta', 'indefinido'},
+                'urgencia': {'imediata', 'curto_prazo', 'pesquisando', 'indefinido'},
+            }
+            for field, allowed in valid.items():
+                if profile_data[field] not in allowed:
+                    profile_data[field] = 'indefinido'
+
+            LeadProfile.objects.update_or_create(
+                lead_id=self.lead.pk,
+                defaults=profile_data,
+            )
+
+            # Sincroniza tags automáticas no sistema de LeadTag
+            tags_list = profile_data['tags_automaticas']
+            if isinstance(tags_list, list) and tags_list:
+                org_id = self.lead.organization_id
+                for tag_name in tags_list:
+                    if not isinstance(tag_name, str) or not tag_name.strip():
+                        continue
+                    tag_obj, _ = LeadTag.objects.get_or_create(
+                        organization_id=org_id,
+                        name=tag_name.strip(),
+                    )
+                    LeadTagAssignment.objects.get_or_create(
+                        lead_id=self.lead.pk,
+                        tag=tag_obj,
+                    )
+        except Exception as exc:
+            logger.warning(f'_upsert_lead_profile error (lead={self.lead.pk}): {exc}')
 
 
 def run_ai_classification_async(lead, org):

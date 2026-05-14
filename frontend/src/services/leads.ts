@@ -155,4 +155,11 @@ export const leadsService = {
     });
     return data.messages;
   },
+
+  async resendMetaEvent(id: number): Promise<{ ok: boolean; classification: string }> {
+    const { data } = await api.post<{ ok: boolean; classification: string }>(
+      `/leads/${id}/resend_meta_event/`,
+    );
+    return data;
+  },
 };

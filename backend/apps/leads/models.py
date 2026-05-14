@@ -89,7 +89,11 @@ class Lead(models.Model):
     ab_variant = models.CharField(max_length=1, null=True, blank=True)
     lead_classification = models.CharField(max_length=15, choices=CLASSIFICATION_CHOICES, null=True, blank=True)
     ai_profile = models.JSONField(null=True, blank=True)
+    ad_referral = models.JSONField(null=True, blank=True)
+    ctwa_clid = models.CharField(max_length=200, null=True, blank=True)
     is_archived = models.BooleanField(default=False)
+    opted_in = models.BooleanField(default=False)
+    lgpd_consent = models.BooleanField(default=False)
     tags = models.ManyToManyField(LeadTag, through='LeadTagAssignment', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -100,6 +104,59 @@ class Lead(models.Model):
 
     def __str__(self):
         return f"{self.full_name or self.phone} ({self.tier or '?'})"
+
+
+class LeadProfile(models.Model):
+    INTENCAO_CHOICES = [
+        ('familia_companhia', 'Família/Companhia'),
+        ('trabalho_rural', 'Trabalho Rural'),
+        ('reproducao', 'Reprodução'),
+        ('curiosidade', 'Curiosidade'),
+        ('indefinido', 'Indefinido'),
+    ]
+    LOCALIZACAO_CHOICES = [
+        ('capital_grande_centro', 'Capital/Grande Centro'),
+        ('cidade_media', 'Cidade Média'),
+        ('rural_interior', 'Rural/Interior'),
+        ('outro_estado_distante', 'Outro Estado/Distante'),
+        ('indefinido', 'Indefinido'),
+    ]
+    POTENCIAL_CHOICES = [
+        ('alto', 'Alto'),
+        ('medio', 'Médio'),
+        ('baixo', 'Baixo'),
+        ('indefinido', 'Indefinido'),
+    ]
+    SENSIBILIDADE_CHOICES = [
+        ('baixa', 'Baixa'),
+        ('media', 'Média'),
+        ('alta', 'Alta'),
+        ('indefinido', 'Indefinido'),
+    ]
+    URGENCIA_CHOICES = [
+        ('imediata', 'Imediata'),
+        ('curto_prazo', 'Curto Prazo'),
+        ('pesquisando', 'Pesquisando'),
+        ('indefinido', 'Indefinido'),
+    ]
+
+    lead = models.OneToOneField(Lead, on_delete=models.CASCADE, related_name='profile')
+    intencao_uso = models.CharField(max_length=30, choices=INTENCAO_CHOICES, default='indefinido')
+    perfil_localizacao = models.CharField(max_length=30, choices=LOCALIZACAO_CHOICES, default='indefinido')
+    potencial_compra = models.CharField(max_length=15, choices=POTENCIAL_CHOICES, default='indefinido')
+    sensibilidade_preco = models.CharField(max_length=15, choices=SENSIBILIDADE_CHOICES, default='indefinido')
+    urgencia = models.CharField(max_length=20, choices=URGENCIA_CHOICES, default='indefinido')
+    classificacao_motivo = models.TextField(blank=True, default='')
+    tags_automaticas = models.JSONField(default=list)
+    is_reserved = models.BooleanField(default=False)
+    is_purchased = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'lead_profiles'
+
+    def __str__(self):
+        return f"Profile({self.lead_id}) {self.intencao_uso} / {self.potencial_compra}"
 
 
 class LeadTagAssignment(models.Model):

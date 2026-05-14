@@ -1647,6 +1647,97 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
             </div>
           )}
 
+          {/* ── Perfil AI ── */}
+          {lead.profile && (
+            <div className="mt-4 pt-3 border-t border-gray-100">
+              <p className="text-xs text-gray-400 mb-2 uppercase tracking-wide font-semibold">Perfil IA</p>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                {lead.profile.intencao_uso !== 'indefinido' && (
+                  <div className="bg-violet-50 rounded-lg p-2">
+                    <p className="text-xs text-gray-400">Intenção</p>
+                    <p className="font-medium text-violet-700 capitalize">{lead.profile.intencao_uso.replace(/_/g, ' ')}</p>
+                  </div>
+                )}
+                {lead.profile.potencial_compra !== 'indefinido' && (
+                  <div className={`rounded-lg p-2 ${lead.profile.potencial_compra === 'alto' ? 'bg-green-50' : lead.profile.potencial_compra === 'baixo' ? 'bg-red-50' : 'bg-amber-50'}`}>
+                    <p className="text-xs text-gray-400">Potencial</p>
+                    <p className={`font-medium capitalize ${lead.profile.potencial_compra === 'alto' ? 'text-green-700' : lead.profile.potencial_compra === 'baixo' ? 'text-red-700' : 'text-amber-700'}`}>{lead.profile.potencial_compra}</p>
+                  </div>
+                )}
+                {lead.profile.sensibilidade_preco !== 'indefinido' && (
+                  <div className="bg-gray-50 rounded-lg p-2">
+                    <p className="text-xs text-gray-400">Sens. Preço</p>
+                    <p className="font-medium text-gray-700 capitalize">{lead.profile.sensibilidade_preco}</p>
+                  </div>
+                )}
+                {lead.profile.urgencia !== 'indefinido' && (
+                  <div className="bg-gray-50 rounded-lg p-2">
+                    <p className="text-xs text-gray-400">Urgência</p>
+                    <p className="font-medium text-gray-700 capitalize">{lead.profile.urgencia.replace(/_/g, ' ')}</p>
+                  </div>
+                )}
+              </div>
+              {lead.profile.classificacao_motivo && (
+                <p className="mt-2 text-xs text-gray-500 italic">{lead.profile.classificacao_motivo}</p>
+              )}
+              {lead.profile.tags_automaticas.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {lead.profile.tags_automaticas.map(tag => (
+                    <span key={tag} className="badge badge-sm bg-violet-100 text-violet-700 border-violet-200">{tag}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Campanha Meta ── */}
+          {(lead.ad_referral || lead.last_meta_event) && (
+            <div className="mt-4 pt-3 border-t border-gray-100">
+              <p className="text-xs text-gray-400 mb-2 uppercase tracking-wide font-semibold">Meta Ads</p>
+              {lead.ctwa_clid && (
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span className="badge badge-sm bg-blue-100 text-blue-700 border-blue-200">📣 Anúncio Meta</span>
+                  <span className="text-xs text-gray-400 font-mono truncate max-w-[140px]">{lead.ctwa_clid.slice(0, 20)}…</span>
+                </div>
+              )}
+              {lead.last_meta_event && (
+                <div className="bg-gray-50 rounded-lg p-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-gray-700">{lead.last_meta_event.event_name}</span>
+                    <span className={`badge badge-xs ${
+                      lead.last_meta_event.status === 'sent'    ? 'bg-green-100 text-green-700 border-green-200' :
+                      lead.last_meta_event.status === 'error'   ? 'bg-red-100 text-red-700 border-red-200' :
+                      lead.last_meta_event.status === 'skipped' ? 'bg-gray-200 text-gray-500' :
+                      'bg-amber-100 text-amber-700 border-amber-200'
+                    }`}>
+                      {lead.last_meta_event.status === 'sent'    ? '✓ Enviado' :
+                       lead.last_meta_event.status === 'error'   ? '✗ Erro' :
+                       lead.last_meta_event.status === 'skipped' ? 'Ignorado' : 'Pendente'}
+                    </span>
+                  </div>
+                  {lead.last_meta_event.error_message && (
+                    <p className="mt-1 text-red-500 text-xs">{lead.last_meta_event.error_message.slice(0, 80)}</p>
+                  )}
+                  <p className="text-gray-400 mt-1">{lead.last_meta_event.created_at ? new Date(lead.last_meta_event.created_at).toLocaleString('pt-BR') : ''}</p>
+                  {lead.last_meta_event.status === 'error' && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          await leadsService.resendMetaEvent(lead.id);
+                          const updated = await leadsService.getLead(lead.id);
+                          setLead(updated);
+                        } catch { /* silencia */ }
+                      }}
+                      className="mt-2 w-full flex items-center justify-center gap-1 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors"
+                    >
+                      ↻ Reenviar para Meta
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ── Contract button ── */}
           <div className="mt-5 pt-4 border-t border-gray-100">
             <p className="text-xs text-gray-400 mb-2 uppercase tracking-wide font-semibold">Contrato</p>
