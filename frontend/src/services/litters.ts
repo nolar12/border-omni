@@ -52,4 +52,30 @@ export const littersService = {
   async removeMedia(litterId: number, mediaId: number): Promise<void> {
     await api.delete(`/litters/${litterId}/media/${mediaId}/`);
   },
+
+  async generateRegistrationPdf(
+    litterId: number,
+    payload: { extra_data?: Record<string, unknown> }
+  ): Promise<Blob> {
+    const { data } = await api.post(`/litters/${litterId}/generate_registration_pdf/`, payload, {
+      responseType: 'blob',
+    });
+    return data;
+  },
+
+  async getRegistrationData(litterId: number): Promise<{ extra_data: Record<string, unknown> }> {
+    const { data } = await api.get<{ extra_data: Record<string, unknown> }>(`/litters/${litterId}/registration_data/`);
+    return data;
+  },
+
+  async saveRegistrationData(
+    litterId: number,
+    payload: { extra_data: Record<string, unknown> }
+  ): Promise<{ extra_data: Record<string, unknown>; detail: string }> {
+    const { data } = await api.post<{ extra_data: Record<string, unknown>; detail: string }>(
+      `/litters/${litterId}/registration_data/`,
+      payload
+    );
+    return data;
+  },
 };

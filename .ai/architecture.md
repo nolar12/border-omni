@@ -11,7 +11,7 @@ backend/
 │   ├── views/__init__.py    # MONOLÍTICO — todas as views
 │   └── serializers/__init__.py
 └── apps/
-    ├── core/         # Organization, UserProfile, Plan, Subscription, AgentConfig, mídia, galeria
+    ├── core/         # Organization, UserProfile (inclui dados de certificado do canil), Plan, Subscription, AgentConfig, mídia, galeria
     ├── leads/        # Lead (opted_in, lgpd_consent, ad_referral, ctwa_clid), LeadTag, Note
     │                 # LeadProfile (OneToOne: intencao_uso, potencial_compra, urgencia, tags_automaticas...)
     ├── conversations/ # Conversation, Message (+ transcription), MessageTemplate
@@ -27,7 +27,7 @@ backend/
     ├── rag/          # rag_service.py, embeddings, supabase vetorial
     ├── contracts/    # SaleContract, pdf_utils.py (WeasyPrint)
     ├── notes/        # GenericNote por organização
-    └── kennel/       # Litter, Dog, DogMedia, DogHealthRecord, LitterHealthRecord
+    └── kennel/       # Litter, Dog, DogMedia, DogHealthRecord, LitterHealthRecord, templates PDF de registro
 
 frontend/
 └── src/
@@ -72,6 +72,28 @@ frontend/
 - `MetaOAuthDiscoverView` troca code por SUAT e lista assets do cliente
 - `MetaOAuthFinalizeView` salva ChannelProvider e registra webhooks via API
 - App Meta central (FilhoteFacil) é apenas orquestrador — nunca hospeda WABAs de clientes
+
+## Registro oficial de ninhada (PDF AcroForm)
+- Novo fluxo no canil para preencher PDF oficial com dados da ninhada, pais e filhotes.
+- Fluxo simplificado: usa template único fixo (`LITTER_REGISTRATION_TEMPLATE_PATH`) sem upload/lista de templates na tela.
+- Modelos novos:
+  - `LitterDocumentTemplate`: armazena arquivo PDF, `field_mapping`, `required_fields` e `field_inventory`.
+  - `LitterRegistrationDocument`: histórico de emissões com `extra_data`, status e PDF gerado.
+  - `Litter.registration_data`: rascunho persistente dos dados extras do formulário por ninhada.
+- Serviço `apps.kennel.pdf_utils`:
+  - extrai inventário de campos AcroForm (`extract_pdf_fields`);
+  - aplica auto-mapeamento padrão CBKC (`build_cbkc_default_mapping`) para os campos conhecidos do formulário;
+  - monta contexto (`build_litter_registration_context`);
+  - resolve mapeamentos (`resolve_mapping`);
+  - preenche PDF (`fill_pdf_template`) usando `pypdf`.
+- Endpoints autenticados:
+  - CRUD `litter-document-templates` (com action `inspect_fields`);
+  - `POST /api/litters/{id}/generate_registration_pdf/` para gerar/download do registro.
+  - `GET/POST /api/litters/{id}/registration_data/` para carregar/salvar rascunho antes da geração.
+- Frontend (`LittersPage`):
+  - uso direto de template oficial fixo configurado no backend;
+  - captura de `extra_data` por ninhada/pais/filhotes;
+  - geração/download do PDF final.
 
 ## Convenções
 - Todo queryset filtra por `request.user.userprofile.organization`

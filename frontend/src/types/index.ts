@@ -6,6 +6,19 @@ export interface User {
   organization_name: string;
   plan_name: string;
   phone?: string;
+  kennel_cbkc_code?: string;
+  kennel_fci_code?: string;
+  kennel_prefix?: string;
+  kennel_owner_name?: string;
+  kennel_address_line?: string;
+  kennel_neighborhood?: string;
+  kennel_city?: string;
+  kennel_state?: string;
+  kennel_zip_code?: string;
+  kennel_phone?: string;
+  kennel_breed?: string;
+  kennel_registry_date?: string | null;
+  kennel_issue_date?: string | null;
 }
 
 export interface Plan {
@@ -529,11 +542,31 @@ export interface Litter {
   female_count: number;
   total_count: number;
   cbkc_number: string;
+  is_featured: boolean;
   notes: string;
   cover_photo: string | null;
   puppies: Dog[];
   media: LitterMedia[];
   health_records: LitterHealthRecord[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LitterTemplateField {
+  name: string;
+  type: string;
+  value: string;
+}
+
+export interface LitterDocumentTemplate {
+  id: number;
+  name: string;
+  source_file: string;
+  source_file_url: string | null;
+  field_mapping: Record<string, string>;
+  required_fields: string[];
+  field_inventory: LitterTemplateField[];
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 }

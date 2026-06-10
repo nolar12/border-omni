@@ -40,7 +40,24 @@ export const authService = {
     return data;
   },
 
-  async updateProfile(payload: { first_name?: string; last_name?: string; phone?: string }): Promise<User> {
+  async updateProfile(payload: {
+    first_name?: string;
+    last_name?: string;
+    phone?: string;
+    kennel_cbkc_code?: string;
+    kennel_fci_code?: string;
+    kennel_prefix?: string;
+    kennel_owner_name?: string;
+    kennel_address_line?: string;
+    kennel_neighborhood?: string;
+    kennel_city?: string;
+    kennel_state?: string;
+    kennel_zip_code?: string;
+    kennel_phone?: string;
+    kennel_breed?: string;
+    kennel_registry_date?: string | null;
+    kennel_issue_date?: string | null;
+  }): Promise<User> {
     const { data } = await api.patch<User>('/auth/me', payload);
     localStorage.setItem('user', JSON.stringify(data));
     return data;

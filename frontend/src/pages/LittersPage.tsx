@@ -6,7 +6,15 @@ import { littersService, type LitterPayload } from '../services/litters';
 import { litterHealthService, type LitterHealthPayload } from '../services/litterHealth';
 import { dogsService, type DogPayload } from '../services/dogs';
 import { dogHealthService, type HealthRecordPayload } from '../services/dogHealth';
-import type { Litter, Dog, DogMedia, LitterMedia, DogHealthRecord, LitterHealthRecord, HealthRecordType } from '../types';
+import type {
+  Litter,
+  Dog,
+  DogMedia,
+  LitterMedia,
+  DogHealthRecord,
+  LitterHealthRecord,
+  HealthRecordType,
+} from '../types';
 
 const HEALTH_TYPE_LABELS: Record<HealthRecordType, string> = {
   vaccine: 'Vacina',
@@ -37,10 +45,12 @@ function LitterCard({
   litter,
   onEdit,
   onPuppies,
+  onRegistration,
 }: {
   litter: Litter;
   onEdit: () => void;
   onPuppies: () => void;
+  onRegistration: () => void;
 }) {
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 hover:border-slate-500 transition-colors overflow-hidden flex flex-col">
@@ -92,7 +102,7 @@ function LitterCard({
           </p>
         )}
 
-        <div className="mt-auto flex gap-2">
+        <div className="mt-auto grid grid-cols-2 gap-2">
           <button
             onClick={onEdit}
             className="flex-1 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium transition-colors"
@@ -104,6 +114,12 @@ function LitterCard({
             className="flex-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
           >
             Filhotes ({litter.total_count})
+          </button>
+          <button
+            onClick={onRegistration}
+            className="col-span-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors"
+          >
+            PDF Registro
           </button>
         </div>
       </div>
@@ -1349,6 +1365,403 @@ function LitterModal({ litter, allDogs, onClose, onSaved }: LitterModalProps) {
   );
 }
 
+interface RegistrationPdfModalProps {
+  litter: Litter;
+  onClose: () => void;
+}
+
+function RegistrationPdfModal({ litter, onClose }: RegistrationPdfModalProps) {
+  const [generating, setGenerating] = useState(false);
+  const [savingData, setSavingData] = useState(false);
+  const [loadingData, setLoadingData] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const buildDefaultExtraData = useCallback((): Record<string, unknown> => ({
+    general: {
+      code: '',
+      creator_eventual: '',
+      canil: '',
+      raca: 'Border Collie',
+      variedade: '',
+      criadores: '',
+      creator_or_kennel: true,
+    },
+    father: {
+      owner_name: '',
+      owner_address: '',
+      owner_zip_1: '',
+      owner_zip_2: '',
+      owner_email: '',
+      owner_phone_ddd: '',
+      owner_phone: '',
+      signature: '',
+    },
+    mother: {
+      owner_name: '',
+      owner_address: '',
+      owner_zip_1: '',
+      owner_zip_2: '',
+      owner_email: '',
+      owner_phone_ddd: '',
+      owner_phone: '',
+      signature: '',
+    },
+    puppies: (litter.puppies ?? []).map(() => ({
+      pedigree: false,
+      exportacao: false,
+      propriedade: false,
+      transferencia: false,
+      registro_limitado: false,
+      pedigree_pet: false,
+      limitation: '',
+      name_override: '',
+    })),
+  }), [litter.puppies]);
+  const [extraData, setExtraData] = useState<Record<string, unknown>>(buildDefaultExtraData);
+
+  useEffect(() => {
+    setExtraData(buildDefaultExtraData());
+  }, [buildDefaultExtraData]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadSavedData = async () => {
+      setLoadingData(true);
+      try {
+        const payload = await littersService.getRegistrationData(litter.id);
+        if (!isMounted) return;
+        const saved = payload.extra_data ?? {};
+        const base = buildDefaultExtraData();
+        setExtraData({
+          ...base,
+          ...saved,
+          general: {
+            ...(base.general as Record<string, unknown>),
+            ...((saved.general as Record<string, unknown>) ?? {}),
+          },
+          father: {
+            ...(base.father as Record<string, unknown>),
+            ...((saved.father as Record<string, unknown>) ?? {}),
+          },
+          mother: {
+            ...(base.mother as Record<string, unknown>),
+            ...((saved.mother as Record<string, unknown>) ?? {}),
+          },
+          puppies: (base.puppies as Array<Record<string, unknown>>).map((item, idx) => ({
+            ...item,
+            ...((((saved.puppies as Array<Record<string, unknown>> | undefined) ?? [])[idx]) ?? {}),
+          })),
+        });
+      } catch {
+        // Sem dados salvos ainda — segue com defaults.
+      } finally {
+        if (isMounted) setLoadingData(false);
+      }
+    };
+    void loadSavedData();
+    return () => {
+      isMounted = false;
+    };
+  }, [buildDefaultExtraData, litter.id]);
+  useEffect(() => {
+    setExtraData(prev => ({
+      ...prev,
+      puppies: (litter.puppies ?? []).map((puppy, idx) => {
+        const previous = ((prev.puppies as Array<Record<string, unknown>> | undefined) ?? [])[idx] ?? {};
+        return {
+          pedigree: Boolean(previous.pedigree),
+          exportacao: Boolean(previous.exportacao),
+          propriedade: Boolean(previous.propriedade),
+          transferencia: Boolean(previous.transferencia),
+          registro_limitado: Boolean(previous.registro_limitado),
+          pedigree_pet: Boolean(previous.pedigree_pet),
+          limitation: String(previous.limitation ?? ''),
+          // Pré-preenche com nome do cadastro para facilitar ajustes pontuais.
+          name_override: String(previous.name_override ?? puppy.name ?? ''),
+        };
+      }),
+    }));
+  }, [litter.puppies]);
+
+  const setExtra = (path: string, value: unknown) => {
+    setExtraData(prev => {
+      const chunks = path.split('.');
+      const next = JSON.parse(JSON.stringify(prev)) as Record<string, unknown>;
+      let cur: any = next;
+      for (let idx = 0; idx < chunks.length; idx += 1) {
+        const chunk = chunks[idx];
+        const isLast = idx === chunks.length - 1;
+        if (Array.isArray(cur)) {
+          const arrIndex = Number(chunk);
+          if (isLast) {
+            cur[arrIndex] = value;
+          } else {
+            cur = cur[arrIndex];
+          }
+          continue;
+        }
+        if (isLast) {
+          cur[chunk] = value;
+        } else {
+          cur = cur[chunk];
+        }
+      }
+      return next;
+    });
+  };
+
+  const generatePdf = async () => {
+    setError(null);
+    setSuccess(null);
+    setGenerating(true);
+    try {
+      const blob = await littersService.generateRegistrationPdf(litter.id, {
+        extra_data: extraData,
+      });
+      const fileName = `registro_ninhada_${litter.id}.pdf`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+      setSuccess('PDF de registro gerado com sucesso.');
+    } catch (err: any) {
+      const blob = err?.response?.data;
+      if (blob instanceof Blob) {
+        const text = await blob.text();
+        try {
+          const parsed = JSON.parse(text);
+          setError(parsed.detail ?? 'Falha ao gerar PDF de registro.');
+        } catch {
+          setError('Falha ao gerar PDF de registro.');
+        }
+      } else {
+        setError('Falha ao gerar PDF de registro.');
+      }
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const saveDraftData = async () => {
+    setError(null);
+    setSuccess(null);
+    setSavingData(true);
+    try {
+      const payload = await littersService.saveRegistrationData(litter.id, {
+        extra_data: extraData,
+      });
+      setSuccess(payload.detail || 'Dados salvos com sucesso.');
+    } catch {
+      setError('Falha ao salvar dados do formulário.');
+    } finally {
+      setSavingData(false);
+    }
+  };
+
+  const puppiesExtra = (extraData.puppies as Array<Record<string, unknown>>) ?? [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="bg-slate-800 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-slate-700">
+          <div>
+            <h2 className="text-white text-lg font-bold">PDF Oficial da Ninhada</h2>
+            <p className="text-slate-400 text-xs mt-1">{litter.name}</p>
+            <p className="text-slate-500 text-xs mt-1">Template fixo CBKC configurado no backend.</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {loadingData && (
+            <div className="rounded-lg border border-blue-500/40 bg-blue-500/10 text-blue-200 text-xs px-3 py-2">
+              Carregando dados salvos da ninhada...
+            </div>
+          )}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="bg-slate-700/40 border border-slate-700 rounded-xl p-4 space-y-3">
+              <p className="text-white text-sm font-semibold">Dados gerais</p>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  value={String((extraData.general as Record<string, unknown>)?.code ?? '')}
+                  onChange={e => setExtra('general.code', e.target.value)}
+                  className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none"
+                  placeholder="Código"
+                />
+                <input
+                  value={String((extraData.general as Record<string, unknown>)?.creator_eventual ?? '')}
+                  onChange={e => setExtra('general.creator_eventual', e.target.value)}
+                  className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none"
+                  placeholder="Criador eventual"
+                />
+                <input
+                  value={String((extraData.general as Record<string, unknown>)?.canil ?? '')}
+                  onChange={e => setExtra('general.canil', e.target.value)}
+                  className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none"
+                  placeholder="Canil"
+                />
+                <input
+                  value={String((extraData.general as Record<string, unknown>)?.variedade ?? '')}
+                  onChange={e => setExtra('general.variedade', e.target.value)}
+                  className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none"
+                  placeholder="Variedade"
+                />
+                <input
+                  value={String((extraData.general as Record<string, unknown>)?.criadores ?? '')}
+                  onChange={e => setExtra('general.criadores', e.target.value)}
+                  className="col-span-2 bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none"
+                  placeholder="Criador(es)"
+                />
+              </div>
+            </div>
+
+            <div className="bg-slate-700/40 border border-slate-700 rounded-xl p-4 space-y-3">
+              <p className="text-white text-sm font-semibold">Dados do Padreador</p>
+              <div className="grid grid-cols-2 gap-2">
+                <input value={String((extraData.father as Record<string, unknown>)?.owner_name ?? '')} onChange={e => setExtra('father.owner_name', e.target.value)} className="col-span-2 bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="Proprietário" />
+                <input value={String((extraData.father as Record<string, unknown>)?.owner_address ?? '')} onChange={e => setExtra('father.owner_address', e.target.value)} className="col-span-2 bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="Endereço" />
+                <input value={String((extraData.father as Record<string, unknown>)?.owner_zip_1 ?? '')} onChange={e => setExtra('father.owner_zip_1', e.target.value)} className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="CEP parte 1" />
+                <input value={String((extraData.father as Record<string, unknown>)?.owner_zip_2 ?? '')} onChange={e => setExtra('father.owner_zip_2', e.target.value)} className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="CEP parte 2" />
+                <input value={String((extraData.father as Record<string, unknown>)?.owner_email ?? '')} onChange={e => setExtra('father.owner_email', e.target.value)} className="col-span-2 bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="E-mail" />
+                <input value={String((extraData.father as Record<string, unknown>)?.owner_phone_ddd ?? '')} onChange={e => setExtra('father.owner_phone_ddd', e.target.value)} className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="DDD" />
+                <input value={String((extraData.father as Record<string, unknown>)?.owner_phone ?? '')} onChange={e => setExtra('father.owner_phone', e.target.value)} className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="Telefone" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-slate-700/40 border border-slate-700 rounded-xl p-4 space-y-3">
+            <p className="text-white text-sm font-semibold">Dados da Matriz</p>
+            <div className="grid grid-cols-2 gap-2">
+              <input value={String((extraData.mother as Record<string, unknown>)?.owner_name ?? '')} onChange={e => setExtra('mother.owner_name', e.target.value)} className="col-span-2 bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="Proprietário" />
+              <input value={String((extraData.mother as Record<string, unknown>)?.owner_address ?? '')} onChange={e => setExtra('mother.owner_address', e.target.value)} className="col-span-2 bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="Endereço" />
+              <input value={String((extraData.mother as Record<string, unknown>)?.owner_zip_1 ?? '')} onChange={e => setExtra('mother.owner_zip_1', e.target.value)} className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="CEP parte 1" />
+              <input value={String((extraData.mother as Record<string, unknown>)?.owner_zip_2 ?? '')} onChange={e => setExtra('mother.owner_zip_2', e.target.value)} className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="CEP parte 2" />
+              <input value={String((extraData.mother as Record<string, unknown>)?.owner_email ?? '')} onChange={e => setExtra('mother.owner_email', e.target.value)} className="col-span-2 bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="E-mail" />
+              <input value={String((extraData.mother as Record<string, unknown>)?.owner_phone_ddd ?? '')} onChange={e => setExtra('mother.owner_phone_ddd', e.target.value)} className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="DDD" />
+              <input value={String((extraData.mother as Record<string, unknown>)?.owner_phone ?? '')} onChange={e => setExtra('mother.owner_phone', e.target.value)} className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none" placeholder="Telefone" />
+            </div>
+          </div>
+
+          <div className="bg-slate-700/40 border border-slate-700 rounded-xl p-4 space-y-3">
+            <p className="text-white text-sm font-semibold">Opções por filhote</p>
+            {(litter.puppies ?? []).length === 0 ? (
+              <p className="text-slate-400 text-xs">Nenhum filhote cadastrado para esta ninhada.</p>
+            ) : (
+              <div className="space-y-2">
+                {(litter.puppies ?? []).map((puppy, idx) => (
+                  <div key={puppy.id} className="border border-slate-700 rounded-lg p-3">
+                    <p className="text-xs text-white font-semibold mb-2">
+                      {idx + 1}. {puppy.name || `Filhote ${idx + 1}`}
+                    </p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+                      <input
+                        value={puppy.name ?? ''}
+                        readOnly
+                        className="bg-slate-900/60 text-slate-300 rounded-lg px-3 py-2 text-xs border border-slate-700"
+                        placeholder="Nome cadastro"
+                        title="Nome no cadastro"
+                      />
+                      <input
+                        value={puppy.sex_display ?? puppy.sex ?? ''}
+                        readOnly
+                        className="bg-slate-900/60 text-slate-300 rounded-lg px-3 py-2 text-xs border border-slate-700"
+                        placeholder="Sexo cadastro"
+                        title="Sexo no cadastro"
+                      />
+                      <input
+                        value={puppy.color ?? ''}
+                        readOnly
+                        className="bg-slate-900/60 text-slate-300 rounded-lg px-3 py-2 text-xs border border-slate-700"
+                        placeholder="Cor cadastro"
+                        title="Cor no cadastro"
+                      />
+                      <input
+                        value={puppy.microchip ?? ''}
+                        readOnly
+                        className="bg-slate-900/60 text-slate-300 rounded-lg px-3 py-2 text-xs border border-slate-700"
+                        placeholder="Microchip cadastro"
+                        title="Microchip no cadastro"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                      {[
+                        ['pedigree', 'Pedigree'],
+                        ['exportacao', 'Exportação'],
+                        ['propriedade', 'Propriedade'],
+                        ['transferencia', 'Transferência'],
+                        ['registro_limitado', 'Registro limitado'],
+                        ['pedigree_pet', 'Pedigree pet'],
+                      ].map(([key, label]) => (
+                        <label key={key} className="flex items-center gap-2 text-xs text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={Boolean((puppiesExtra[idx] ?? {})[key])}
+                            onChange={e => setExtra(`puppies.${idx}.${key}`, e.target.checked)}
+                          />
+                          {label}
+                        </label>
+                      ))}
+                      <input
+                        value={String((puppiesExtra[idx] ?? {}).name_override ?? '')}
+                        onChange={e => setExtra(`puppies.${idx}.name_override`, e.target.value)}
+                        className="md:col-span-2 bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none"
+                        placeholder="Nome no formulário (já vem do cadastro)"
+                      />
+                      <input
+                        value={String((puppiesExtra[idx] ?? {}).limitation ?? '')}
+                        onChange={e => setExtra(`puppies.${idx}.limitation`, e.target.value)}
+                        className="bg-slate-700 text-white rounded-lg px-3 py-2 text-xs border border-slate-600 outline-none"
+                        placeholder="Limitação"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {error && (
+            <div className="rounded-lg border border-red-500/40 bg-red-500/10 text-red-200 text-xs px-3 py-2">
+              {error}
+            </div>
+          )}
+          {success && (
+            <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 text-xs px-3 py-2">
+              {success}
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 pb-5 pt-3 border-t border-slate-700 flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm transition-colors">
+            Fechar
+          </button>
+          <button
+            onClick={saveDraftData}
+            disabled={savingData || generating}
+            className="px-5 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
+          >
+            {savingData ? 'Salvando...' : 'Salvar dados'}
+          </button>
+          <button
+            onClick={generatePdf}
+            disabled={generating || savingData}
+            className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
+          >
+            {generating ? 'Gerando...' : 'Gerar PDF de Registro'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function LittersPage() {
@@ -1357,6 +1770,7 @@ export default function LittersPage() {
   const [loading, setLoading] = useState(true);
   const [modalLitter, setModalLitter] = useState<Litter | null | undefined>(undefined);
   const [puppiesTarget, setPuppiesTarget] = useState<Litter | null>(null);
+  const [registrationTarget, setRegistrationTarget] = useState<Litter | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1395,6 +1809,11 @@ export default function LittersPage() {
   const handleOpenPuppies = async (litter: Litter) => {
     const detail = await littersService.get(litter.id);
     setPuppiesTarget(detail);
+  };
+
+  const handleOpenRegistration = async (litter: Litter) => {
+    const detail = await littersService.get(litter.id);
+    setRegistrationTarget(detail);
   };
 
   const handlePuppiesChanged = (updated: Litter) => {
@@ -1445,6 +1864,7 @@ export default function LittersPage() {
               litter={litter}
               onEdit={() => handleEdit(litter)}
               onPuppies={() => handleOpenPuppies(litter)}
+              onRegistration={() => handleOpenRegistration(litter)}
             />
           ))}
         </div>
@@ -1464,6 +1884,13 @@ export default function LittersPage() {
           litter={puppiesTarget}
           onClose={() => setPuppiesTarget(null)}
           onChanged={handlePuppiesChanged}
+        />
+      )}
+
+      {registrationTarget && (
+        <RegistrationPdfModal
+          litter={registrationTarget}
+          onClose={() => setRegistrationTarget(null)}
         />
       )}
     </div>

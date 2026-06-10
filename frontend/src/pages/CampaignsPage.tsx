@@ -32,6 +32,24 @@ const CATEGORY_LABELS: Record<string, string> = {
   AUTHENTICATION: 'Autenticação',
 };
 
+const STATE_DDD_PRESETS: Record<string, { label: string; ddds: string[] }> = {
+  PR: { label: 'Paraná', ddds: ['41', '42', '43', '44', '45', '46'] },
+  SP: { label: 'São Paulo', ddds: ['11', '12', '13', '14', '15', '16', '17', '18', '19'] },
+  RJ: { label: 'Rio de Janeiro', ddds: ['21', '22', '24'] },
+  MG: { label: 'Minas Gerais', ddds: ['31', '32', '33', '34', '35', '37', '38'] },
+  SC: { label: 'Santa Catarina', ddds: ['47', '48', '49'] },
+  RS: { label: 'Rio Grande do Sul', ddds: ['51', '53', '54', '55'] },
+  BA: { label: 'Bahia', ddds: ['71', '73', '74', '75', '77'] },
+  GO: { label: 'Goiás', ddds: ['61', '62', '64'] },
+  PE: { label: 'Pernambuco', ddds: ['81', '87'] },
+  CE: { label: 'Ceará', ddds: ['85', '88'] },
+  MT: { label: 'Mato Grosso', ddds: ['65', '66'] },
+  MS: { label: 'Mato Grosso do Sul', ddds: ['67'] },
+  ES: { label: 'Espírito Santo', ddds: ['27', '28'] },
+  AM: { label: 'Amazonas', ddds: ['92', '97'] },
+  PA: { label: 'Pará', ddds: ['91', '93', '94'] },
+};
+
 function detectChannel(channels_used: string): string {
   const raw = (channels_used || '').toLowerCase();
   if (raw.includes('instagram')) return 'instagram';
@@ -249,6 +267,8 @@ export default function CampaignsPage() {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterClassification, setFilterClassification] = useState('');
   const [filterWindow, setFilterWindow] = useState('');
+  const [filterOptIn, setFilterOptIn] = useState('');
+  const [filterState, setFilterState] = useState('');
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
@@ -273,10 +293,12 @@ export default function CampaignsPage() {
   useEffect(() => {
     const fetchAll = async () => {
       setLoadingLeads(true);
+      setSelectedIds(new Set());
       const allLeads: LeadListItem[] = [];
+      const ddd = filterState ? STATE_DDD_PRESETS[filterState].ddds.join(',') : undefined;
       let page = 1;
       while (page <= 15) {
-        const resp = await leadsService.getLeads({ page });
+        const resp = await leadsService.getLeads({ page, ddd });
         allLeads.push(...resp.results);
         if (!resp.next) break;
         page++;
@@ -285,7 +307,7 @@ export default function CampaignsPage() {
       setLoadingLeads(false);
     };
     fetchAll().catch(() => setLoadingLeads(false));
-  }, []);
+  }, [filterState]);
 
   useEffect(() => {
     if (selectedTemplate) {
@@ -320,6 +342,8 @@ export default function CampaignsPage() {
       if (filterWindow === 'open' && !isOpen) return false;
       if (filterWindow === 'closed' && isOpen) return false;
     }
+    if (filterOptIn === 'yes' && !l.opted_in) return false;
+    if (filterOptIn === 'no' && l.opted_in) return false;
     return true;
   });
 
@@ -725,6 +749,29 @@ export default function CampaignsPage() {
                 <option value="open">⏱ Janela aberta</option>
                 <option value="closed">⌛ Janela expirada</option>
               </select>
+              <select
+                value={filterOptIn}
+                onChange={e => setFilterOptIn(e.target.value)}
+                disabled={phase !== 'setup'}
+                className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 disabled:opacity-50"
+              >
+                <option value="">Opt-in — todos</option>
+                <option value="yes">✅ Com opt-in</option>
+                <option value="no">⚠️ Sem opt-in</option>
+              </select>
+              <select
+                value={filterState}
+                onChange={e => setFilterState(e.target.value)}
+                disabled={phase !== 'setup'}
+                className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 disabled:opacity-50"
+              >
+                <option value="">Estado (DDD) — todos</option>
+                {Object.entries(STATE_DDD_PRESETS).map(([uf, { label, ddds }]) => (
+                  <option key={uf} value={uf}>
+                    {label} ({ddds.join(', ')})
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Select all toolbar */}
@@ -763,7 +810,19 @@ export default function CampaignsPage() {
                     Limpar seleção
                   </button>
                 )}
-                <span className="ml-auto text-xs text-gray-400">
+                <span className="ml-auto flex items-center gap-2 text-xs text-gray-400">
+                  {filterState && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">
+                      📍 {STATE_DDD_PRESETS[filterState].label}
+                      <button
+                        onClick={() => setFilterState('')}
+                        className="ml-0.5 text-indigo-400 hover:text-indigo-700"
+                        title="Remover filtro de estado"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )}
                   {filteredLeads.length} lead{filteredLeads.length !== 1 ? 's' : ''} encontrado
                   {filteredLeads.length !== 1 ? 's' : ''}
                 </span>

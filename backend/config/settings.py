@@ -34,6 +34,7 @@ THIRD_PARTY_APPS = [
     'rest_framework_simplejwt',
     'corsheaders',
     'django_filters',
+    'django_celery_beat',
 ]
 
 LOCAL_APPS = [
@@ -226,6 +227,37 @@ SIMPLE_JWT = {
 
 # Google OAuth
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
+
+# Meta / Facebook — Business Integration System User Token (SUAT) OAuth
+# Configure em: developers.facebook.com → seu app → Facebook Login for Business → Configurations
+META_APP_ID = os.getenv('META_APP_ID', '')
+META_APP_SECRET = os.getenv('META_APP_SECRET', '')
+# Config IDs criados no Meta App Dashboard (um por canal)
+META_CONFIG_ID_WHATSAPP = os.getenv('META_CONFIG_ID_WHATSAPP', '')
+META_CONFIG_ID_FACEBOOK = os.getenv('META_CONFIG_ID_FACEBOOK', '')
+META_CONFIG_ID_INSTAGRAM = os.getenv('META_CONFIG_ID_INSTAGRAM', '')
+# URL pública do backend — usada para registrar webhooks via API
+META_WEBHOOK_BASE_URL = os.getenv('META_WEBHOOK_BASE_URL', MEDIA_BASE_URL)
+
+# Celery + Redis
+REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'America/Sao_Paulo'
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# Encryption key para access_token e app_secret em repouso
+# Gerar com: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+FIELD_ENCRYPTION_KEY = os.getenv('FIELD_ENCRYPTION_KEY', '')
+
+# PDF oficial fixo para registro de ninhada (CBKC)
+LITTER_REGISTRATION_TEMPLATE_PATH = os.getenv(
+    'LITTER_REGISTRATION_TEMPLATE_PATH',
+    '/home/marcellosouza/Cathedral/PESSOAL/CANIL/MIDIA_DOCS/BORDER_DOCS/forms-mapa_ninhadas.pdf',
+)
 
 # Supabase — infraestrutura vetorial compartilhada (dados isolados por organization_id)
 SUPABASE_URL = os.getenv('SUPABASE_URL', '')

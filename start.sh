@@ -31,18 +31,51 @@ error()   { echo -e "${RED}[border-omni]${NC} $*"; }
 # ─── Kill any previous instances on those ports ────────────────────────────
 kill_port() {
   local port=$1
-  local pid
-  pid=$(lsof -ti tcp:"$port" 2>/dev/null || true)
-  if [ -n "$pid" ]; then
-    warn "Porta $port em uso (PID $pid). Encerrando..."
-    kill -9 "$pid" 2>/dev/null || true
+  local pids
+  pids="$(lsof -ti tcp:"$port" 2>/dev/null || true)"
+  if [ -n "$pids" ]; then
+    local pid_list
+    pid_list="$(echo "$pids" | tr '\n' ' ' | xargs)"
+    warn "Porta $port em uso (PID(s): $pid_list). Encerrando..."
+    # shellcheck disable=SC2086
+    kill -9 $pids 2>/dev/null || true
     sleep 1
   fi
+}
+
+port_http_ok() {
+  local url=$1
+  local pattern=$2
+  curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null | grep -qE "$pattern"
+}
+
+save_port_pid() {
+  local port=$1
+  local pidfile=$2
+  local pid
+  pid="$(lsof -ti tcp:"$port" 2>/dev/null | head -n 1 || true)"
+  if [ -n "$pid" ]; then
+    echo "$pid" > "$pidfile"
+  fi
+}
+
+pidfile_running() {
+  local pidfile=$1
+  if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    return 0
+  fi
+  return 1
 }
 
 # ─── Start backend ───────────────────────────────────────────────────────────
 start_backend() {
   info "Iniciando backend Django na porta 9022..."
+  if port_http_ok "http://127.0.0.1:9022/api/" "^(200|401|404|405)$"; then
+    save_port_pid 9022 "$LOG_DIR/backend.pid"
+    success "Backend já está ativo em http://localhost:9022"
+    return
+  fi
+
   kill_port 9022
 
   source "$VENV/bin/activate"
@@ -67,16 +100,27 @@ start_backend() {
     sleep 1
   done
 
+  if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+    error "Backend caiu durante a inicialização. Verifique $LOG_DIR/backend.log"
+    return 1
+  fi
+  save_port_pid 9022 "$LOG_DIR/backend.pid"
   success "Backend rodando → http://localhost:9022  (log: logs/backend.log)"
 }
 
 # ─── Start frontend ──────────────────────────────────────────────────────────
 start_frontend() {
   info "Iniciando frontend Vite na porta 9021..."
+  if port_http_ok "http://127.0.0.1:9021/" "^200$"; then
+    save_port_pid 9021 "$LOG_DIR/frontend.pid"
+    success "Frontend já está ativo em http://localhost:9021"
+    return
+  fi
+
   kill_port 9021
 
   cd "$FRONTEND"
-  npm run dev -- --host 127.0.0.1 --port 9021 > "$LOG_DIR/frontend.log" 2>&1 &
+  npm run dev -- --host 127.0.0.1 --port 9021 --strictPort > "$LOG_DIR/frontend.log" 2>&1 &
   FRONTEND_PID=$!
   echo $FRONTEND_PID > "$LOG_DIR/frontend.pid"
 
@@ -91,10 +135,17 @@ start_frontend() {
     sleep 1
   done
 
+  if ! kill -0 "$FRONTEND_PID" 2>/dev/null; then
+    error "Frontend caiu durante a inicialização. Verifique $LOG_DIR/frontend.log"
+    return 1
+  fi
+  save_port_pid 9021 "$LOG_DIR/frontend.pid"
   success "Frontend rodando → http://localhost:9021  (log: logs/frontend.log)"
 }
 
-NGROK_DOMAIN="borderomni.ngrok.app"
+NGROK_DOMAIN="${NGROK_DOMAIN:-borderomni.ngrok.app}"
+ENABLE_NGROK="${ENABLE_NGROK:-false}"
+SKIP_CELERY=false
 
 # ─── Start ngrok ─────────────────────────────────────────────────────────────
 # Expõe o backend (9022) diretamente — necessário para webhook do WhatsApp.
@@ -134,17 +185,81 @@ start_ngrok() {
   fi
 }
 
+# ─── Start Celery worker ────────────────────────────────────────────────────
+start_celery_worker() {
+  info "Iniciando Celery worker..."
+  if pidfile_running "$LOG_DIR/celery_worker.pid"; then
+    success "Celery worker já está ativo (PID $(cat "$LOG_DIR/celery_worker.pid"))"
+    return
+  fi
+
+  # Garante que o Redis está no ar — tenta iniciar silenciosamente se necessário
+  if ! redis-cli ping > /dev/null 2>&1; then
+    redis-server --daemonize yes --logfile "$LOG_DIR/redis.log" 2>/dev/null || true
+    sleep 1
+    if ! redis-cli ping > /dev/null 2>&1; then
+      warn "Redis indisponível. Celery desativado. Rode: sudo systemctl enable --now redis-server"
+      SKIP_CELERY=true
+      return
+    fi
+  fi
+
+  source "$VENV/bin/activate"
+  cd "$BACKEND"
+
+  # Kill any previous worker
+  pkill -f "celery.*border_omni.*worker" 2>/dev/null || true
+  sleep 1
+
+  celery -A config worker \
+    --loglevel=info \
+    --concurrency=2 \
+    -n "worker@%h" \
+    > "$LOG_DIR/celery_worker.log" 2>&1 &
+  CELERY_WORKER_PID=$!
+  echo $CELERY_WORKER_PID > "$LOG_DIR/celery_worker.pid"
+  success "Celery worker rodando (PID $CELERY_WORKER_PID) → log: logs/celery_worker.log"
+}
+
+# ─── Start Celery beat (scheduler) ─────────────────────────────────────────
+start_celery_beat() {
+  info "Iniciando Celery beat (agendador)..."
+  if [ "$SKIP_CELERY" = "true" ]; then
+    warn "Celery beat ignorado porque Redis está indisponível."
+    return
+  fi
+  if pidfile_running "$LOG_DIR/celery_beat.pid"; then
+    success "Celery beat já está ativo (PID $(cat "$LOG_DIR/celery_beat.pid"))"
+    return
+  fi
+
+  source "$VENV/bin/activate"
+  cd "$BACKEND"
+
+  # Kill any previous beat
+  pkill -f "celery.*border_omni.*beat" 2>/dev/null || true
+  rm -f "$BACKEND/celerybeat-schedule" 2>/dev/null || true
+  sleep 1
+
+  celery -A config beat \
+    --loglevel=info \
+    --scheduler django_celery_beat.schedulers:DatabaseScheduler \
+    > "$LOG_DIR/celery_beat.log" 2>&1 &
+  CELERY_BEAT_PID=$!
+  echo $CELERY_BEAT_PID > "$LOG_DIR/celery_beat.pid"
+  success "Celery beat rodando (PID $CELERY_BEAT_PID) → log: logs/celery_beat.log"
+}
+
 # ─── Start watchdog ──────────────────────────────────────────────────────────
 start_watchdog() {
   if systemctl --user is-active --quiet border-omni-watchdog.service 2>/dev/null; then
-    info "Watchdog já rodando — reiniciando para garantir estado limpo..."
-    systemctl --user restart border-omni-watchdog.service
+    success "Watchdog já está ativo."
   else
     info "Iniciando watchdog (systemd user service)..."
     systemctl --user start border-omni-watchdog.service 2>/dev/null || \
       warn "Watchdog não pôde ser iniciado via systemd. Rode: systemctl --user enable border-omni-watchdog.service"
+    success "Watchdog ativo → log: /tmp/border_omni_watchdog.log"
   fi
-  success "Watchdog ativo → log: /tmp/border_omni_watchdog.log"
 }
 
 # ─── Stop all ────────────────────────────────────────────────────────────────
@@ -152,16 +267,15 @@ stop_all() {
   info "Encerrando serviços..."
   systemctl --user stop border-omni-watchdog.service 2>/dev/null || true
   systemctl --user stop ngrok-borderomni.service 2>/dev/null || true
-  for pidfile in "$LOG_DIR/backend.pid" "$LOG_DIR/frontend.pid" "$LOG_DIR/ngrok.pid"; do
-    if [ -f "$pidfile" ]; then
-      pid=$(cat "$pidfile")
-      kill "$pid" 2>/dev/null && info "PID $pid encerrado" || true
-      rm -f "$pidfile"
-    fi
-  done
+
+  # Evita depender de PID file stale: encerra por assinatura de comando.
+  pkill -f "manage.py runserver 127.0.0.1:9022" 2>/dev/null || true
+  pkill -f "vite.*--host 127.0.0.1.*--port 9021" 2>/dev/null || true
+  pkill -f "celery.*-A config worker" 2>/dev/null || true
+  pkill -f "celery.*-A config beat" 2>/dev/null || true
   pkill -f "ngrok http" 2>/dev/null || true
-  kill_port 9021
-  kill_port 9022
+
+  rm -f "$LOG_DIR/backend.pid" "$LOG_DIR/frontend.pid" "$LOG_DIR/ngrok.pid" "$LOG_DIR/celery_worker.pid" "$LOG_DIR/celery_beat.pid"
   success "Serviços encerrados."
 }
 
@@ -174,8 +288,14 @@ case "${1:-start}" in
     echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
     echo ""
     start_backend
+    start_celery_worker
+    start_celery_beat
     start_frontend
-    start_ngrok
+    if [ "$ENABLE_NGROK" = "true" ]; then
+      start_ngrok
+    else
+      info "Ngrok desativado (ENABLE_NGROK=false)."
+    fi
     start_watchdog
     echo ""
     echo -e "${GREEN}✅ Sistema iniciado!${NC}"
@@ -184,14 +304,23 @@ case "${1:-start}" in
     echo -e "   Admin:     ${CYAN}http://localhost:9022/admin${NC}"
     echo -e "   Login:     marcello12souza@gmail.com  (senha no .env ou no seu gerenciador de senhas)"
     echo ""
-    echo -e "   Acesso externo (celular/fora do Wi-Fi):"
-    echo -e "   App:       ${CYAN}https://$NGROK_DOMAIN${NC}  ← rode ./start.sh build primeiro"
-    echo -e "   WhatsApp:  ${CYAN}https://$NGROK_DOMAIN/api/webhooks/whatsapp/${NC}"
-    echo -e "   Meta:      ${CYAN}https://$NGROK_DOMAIN/api/webhooks/meta/${NC}"
+    if [ "$ENABLE_NGROK" = "true" ]; then
+      echo -e "   Acesso externo (celular/fora do Wi-Fi):"
+      echo -e "   App:       ${CYAN}https://$NGROK_DOMAIN${NC}  ← rode ./start.sh build primeiro"
+      echo -e "   WhatsApp:  ${CYAN}https://$NGROK_DOMAIN/api/webhooks/whatsapp/${NC}"
+      echo -e "   Meta:      ${CYAN}https://$NGROK_DOMAIN/api/webhooks/meta/${NC}"
+      echo ""
+    fi
+    echo -e "   Para encerrar: ${YELLOW}Ctrl+C  (ou ./start.sh stop em outro terminal)${NC}"
     echo ""
-    echo -e "   Watchdog:  ${CYAN}systemctl --user status border-omni-watchdog.service${NC}"
-    echo -e "   Para encerrar: ${YELLOW}./start.sh stop${NC}"
-    echo ""
+    echo -e "${CYAN}── Logs ao vivo (Ctrl+C para sair) ──────────────────────────────${NC}"
+    trap 'echo ""; warn "Logs encerrados. Serviços continuam rodando em background."; exit 0' INT
+    tail -f \
+      "$LOG_DIR/backend.log" \
+      "$LOG_DIR/celery_worker.log" \
+      "$LOG_DIR/celery_beat.log" \
+      "$LOG_DIR/frontend.log" \
+      2>/dev/null
     ;;
   stop)
     stop_all
@@ -203,14 +332,26 @@ case "${1:-start}" in
     ;;
   status)
     echo ""
-    for name in backend frontend; do
-      pidfile="$LOG_DIR/$name.pid"
-      if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
-        success "$name rodando (PID $(cat "$pidfile"))"
-      else
-        warn "$name parado"
-      fi
-    done
+    if port_http_ok "http://127.0.0.1:9022/api/" "^(200|401|404|405)$"; then
+      success "backend rodando"
+    else
+      warn "backend parado"
+    fi
+    if port_http_ok "http://127.0.0.1:9021/" "^200$"; then
+      success "frontend rodando"
+    else
+      warn "frontend parado"
+    fi
+    if pidfile_running "$LOG_DIR/celery_worker.pid"; then
+      success "celery_worker rodando (PID $(cat "$LOG_DIR/celery_worker.pid"))"
+    else
+      warn "celery_worker parado"
+    fi
+    if pidfile_running "$LOG_DIR/celery_beat.pid"; then
+      success "celery_beat rodando (PID $(cat "$LOG_DIR/celery_beat.pid"))"
+    else
+      warn "celery_beat parado"
+    fi
     echo ""
     ;;
   logs)
@@ -219,6 +360,12 @@ case "${1:-start}" in
     echo ""
     echo -e "${CYAN}=== Frontend ===${NC}"
     tail -20 "$LOG_DIR/frontend.log" 2>/dev/null || echo "(sem log)"
+    echo ""
+    echo -e "${CYAN}=== Celery Worker ===${NC}"
+    tail -10 "$LOG_DIR/celery_worker.log" 2>/dev/null || echo "(sem log)"
+    echo ""
+    echo -e "${CYAN}=== Celery Beat ===${NC}"
+    tail -10 "$LOG_DIR/celery_beat.log" 2>/dev/null || echo "(sem log)"
     ;;
   build)
     echo ""

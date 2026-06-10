@@ -2,6 +2,8 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
+from apps.channels.views_meta_oauth import MetaOAuthDiscoverView, MetaOAuthFinalizeView
+
 from api.views import (
     RegisterView, LoginView, MeView, GoogleAuthView,
     LeadViewSet, WhatsAppWebhookView, MetaWebhookView,
@@ -18,7 +20,7 @@ from api.views import (
     ContractViewSet,
     PublicContractView, PublicContractFillView, PublicContractSignView,
     GenericNoteViewSet,
-    DogViewSet, LitterViewSet,
+    DogViewSet, LitterViewSet, LitterDocumentTemplateViewSet,
     DogHealthRecordViewSet, LitterHealthRecordViewSet,
     PublicLitterListView, PublicLitterDetailView,
     PublicPlanListView,
@@ -36,6 +38,7 @@ router.register(r'contracts', ContractViewSet, basename='contract')
 router.register(r'notes', GenericNoteViewSet, basename='note')
 router.register(r'dogs', DogViewSet, basename='dog')
 router.register(r'litters', LitterViewSet, basename='litter')
+router.register(r'litter-document-templates', LitterDocumentTemplateViewSet, basename='litterdocumenttemplate')
 router.register(r'dog-health', DogHealthRecordViewSet, basename='doghealthrecord')
 router.register(r'litter-health', LitterHealthRecordViewSet, basename='litterhealthrecord')
 
@@ -55,6 +58,10 @@ urlpatterns = [
     # Webhooks
     path('webhooks/whatsapp/', WhatsAppWebhookView.as_view(), name='whatsapp_webhook'),
     path('webhooks/meta/', MetaWebhookView.as_view(), name='meta_webhook'),
+
+    # Meta OAuth — channel setup via Business Integration System User Token
+    path('channels/meta/discover/', MetaOAuthDiscoverView.as_view(), name='meta_oauth_discover'),
+    path('channels/meta/finalize/', MetaOAuthFinalizeView.as_view(), name='meta_oauth_finalize'),
 
     # RAG — Agent Config
     path('agent-config/', AgentConfigView.as_view(), name='agent_config'),

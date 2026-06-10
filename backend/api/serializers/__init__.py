@@ -7,7 +7,10 @@ from apps.quick_replies.models import QuickReply, QuickReplyCategory
 from apps.channels.models import ChannelProvider, QualityRatingEvent, MetaConversionEvent
 from apps.contracts.models import SaleContract
 from apps.notes.models import GenericNote
-from apps.kennel.models import Dog, Litter, DogMedia, LitterMedia, DogHealthRecord, LitterHealthRecord
+from apps.kennel.models import (
+    Dog, Litter, DogMedia, LitterMedia, DogHealthRecord, LitterHealthRecord,
+    LitterDocumentTemplate, LitterRegistrationDocument,
+)
 
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
@@ -16,10 +19,31 @@ class UserSerializer(serializers.ModelSerializer):
     organization_name = serializers.SerializerMethodField()
     plan_name = serializers.SerializerMethodField()
     phone = serializers.SerializerMethodField()
+    kennel_cbkc_code = serializers.SerializerMethodField()
+    kennel_fci_code = serializers.SerializerMethodField()
+    kennel_prefix = serializers.SerializerMethodField()
+    kennel_owner_name = serializers.SerializerMethodField()
+    kennel_address_line = serializers.SerializerMethodField()
+    kennel_neighborhood = serializers.SerializerMethodField()
+    kennel_city = serializers.SerializerMethodField()
+    kennel_state = serializers.SerializerMethodField()
+    kennel_zip_code = serializers.SerializerMethodField()
+    kennel_phone = serializers.SerializerMethodField()
+    kennel_breed = serializers.SerializerMethodField()
+    kennel_registry_date = serializers.SerializerMethodField()
+    kennel_issue_date = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'organization_name', 'plan_name', 'phone']
+        fields = [
+            'id', 'email', 'first_name', 'last_name',
+            'organization_name', 'plan_name',
+            'phone',
+            'kennel_cbkc_code', 'kennel_fci_code', 'kennel_prefix', 'kennel_owner_name',
+            'kennel_address_line', 'kennel_neighborhood', 'kennel_city', 'kennel_state',
+            'kennel_zip_code', 'kennel_phone', 'kennel_breed',
+            'kennel_registry_date', 'kennel_issue_date',
+        ]
 
     def get_organization_name(self, obj):
         try:
@@ -38,6 +62,54 @@ class UserSerializer(serializers.ModelSerializer):
             return obj.profile.phone
         except Exception:
             return ''
+
+    def _profile_value(self, obj, field_name, default=''):
+        try:
+            value = getattr(obj.profile, field_name, default)
+            return value if value is not None else default
+        except Exception:
+            return default
+
+    def get_kennel_cbkc_code(self, obj):
+        return self._profile_value(obj, 'kennel_cbkc_code')
+
+    def get_kennel_fci_code(self, obj):
+        return self._profile_value(obj, 'kennel_fci_code')
+
+    def get_kennel_prefix(self, obj):
+        return self._profile_value(obj, 'kennel_prefix')
+
+    def get_kennel_owner_name(self, obj):
+        return self._profile_value(obj, 'kennel_owner_name')
+
+    def get_kennel_address_line(self, obj):
+        return self._profile_value(obj, 'kennel_address_line')
+
+    def get_kennel_neighborhood(self, obj):
+        return self._profile_value(obj, 'kennel_neighborhood')
+
+    def get_kennel_city(self, obj):
+        return self._profile_value(obj, 'kennel_city')
+
+    def get_kennel_state(self, obj):
+        return self._profile_value(obj, 'kennel_state')
+
+    def get_kennel_zip_code(self, obj):
+        return self._profile_value(obj, 'kennel_zip_code')
+
+    def get_kennel_phone(self, obj):
+        return self._profile_value(obj, 'kennel_phone')
+
+    def get_kennel_breed(self, obj):
+        return self._profile_value(obj, 'kennel_breed')
+
+    def get_kennel_registry_date(self, obj):
+        value = self._profile_value(obj, 'kennel_registry_date', None)
+        return value.isoformat() if value else None
+
+    def get_kennel_issue_date(self, obj):
+        value = self._profile_value(obj, 'kennel_issue_date', None)
+        return value.isoformat() if value else None
 
 
 # ─── Notes ───────────────────────────────────────────────────────────────────
@@ -106,6 +178,11 @@ class LeadListSerializer(serializers.ModelSerializer):
         return list(obj.tags.values_list('name', flat=True))
 
     def get_last_message_direction(self, obj):
+        # Lê do atributo anotado pelo LeadViewSet (elimina N+1).
+        # Fallback via query para contextos onde a annotation não está presente.
+        val = getattr(obj, '_last_msg_direction', None)
+        if val is not None:
+            return val
         try:
             msg = Message.objects.filter(
                 conversation__lead=obj
@@ -115,6 +192,9 @@ class LeadListSerializer(serializers.ModelSerializer):
             return None
 
     def get_whatsapp_last_message_at(self, obj):
+        val = getattr(obj, '_whatsapp_last_msg_at', None)
+        if val is not None:
+            return val.isoformat() if hasattr(val, 'isoformat') else val
         try:
             conv = obj.conversations.filter(channel='whatsapp').order_by('-last_message_at').first()
             if conv and conv.last_message_at:
@@ -124,6 +204,9 @@ class LeadListSerializer(serializers.ModelSerializer):
             return None
 
     def get_last_message_text(self, obj):
+        val = getattr(obj, '_last_msg_text', None)
+        if val is not None:
+            return val
         try:
             msg = Message.objects.filter(
                 conversation__lead=obj
@@ -136,27 +219,35 @@ class LeadListSerializer(serializers.ModelSerializer):
         """
         True quando o lead enviou uma mensagem que ainda não foi respondida
         por um humano (mensagens automáticas/bot não contam como resposta humana).
-        Mensagens humanas são identificadas por terem provider_message_id preenchido.
+        Usa atributos anotados pelo LeadViewSet para evitar N+1 queries.
         """
-        try:
-            msgs = list(
-                Message.objects.filter(conversation__lead=obj)
-                .order_by('-created_at')
-                .values('direction', 'provider_message_id', 'created_at')[:20]
-            )
-            last_in = next((m for m in msgs if m['direction'] == 'IN'), None)
-            if not last_in:
+        last_in = getattr(obj, '_last_in_at', None)
+        if last_in is None:
+            # Fallback via query para contextos sem annotation
+            try:
+                msgs = list(
+                    Message.objects.filter(conversation__lead=obj)
+                    .order_by('-created_at')
+                    .values('direction', 'provider_message_id', 'created_at')[:20]
+                )
+                last_in_msg = next((m for m in msgs if m['direction'] == 'IN'), None)
+                if not last_in_msg:
+                    return False
+                last_human_out = next(
+                    (m for m in msgs if m['direction'] == 'OUT' and m['provider_message_id']),
+                    None,
+                )
+                if not last_human_out:
+                    return True
+                return last_in_msg['created_at'] > last_human_out['created_at']
+            except Exception:
                 return False
-            last_human_out = next(
-                (m for m in msgs
-                 if m['direction'] == 'OUT' and m['provider_message_id']),
-                None,
-            )
-            if not last_human_out:
-                return True
-            return last_in['created_at'] > last_human_out['created_at']
-        except Exception:
+        if not last_in:
             return False
+        last_human_out = getattr(obj, '_last_human_out_at', None)
+        if not last_human_out:
+            return True
+        return last_in > last_human_out
 
 
 class ConversationSerializer(serializers.ModelSerializer):
@@ -699,6 +790,58 @@ class LitterDetailSerializer(LitterListSerializer):
         fields = LitterListSerializer.Meta.fields + [
             'notes', 'puppies', 'media', 'health_records',
         ]
+
+
+class LitterDocumentTemplateSerializer(serializers.ModelSerializer):
+    source_file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LitterDocumentTemplate
+        fields = [
+            'id', 'name', 'source_file', 'source_file_url',
+            'field_mapping', 'required_fields', 'field_inventory',
+            'is_active', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'field_inventory', 'source_file_url', 'created_at', 'updated_at']
+
+    def get_source_file_url(self, obj):
+        request = self.context.get('request')
+        if obj.source_file and request:
+            return request.build_absolute_uri(obj.source_file.url)
+        return obj.source_file.url if obj.source_file else None
+
+
+class LitterRegistrationDocumentSerializer(serializers.ModelSerializer):
+    generated_file_url = serializers.SerializerMethodField()
+    template_name = serializers.SerializerMethodField()
+    litter_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LitterRegistrationDocument
+        fields = [
+            'id', 'litter', 'litter_name', 'template', 'template_name',
+            'extra_data', 'generated_file', 'generated_file_url',
+            'status', 'error_message', 'generated_at',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'litter_name', 'template_name',
+            'generated_file', 'generated_file_url',
+            'status', 'error_message', 'generated_at',
+            'created_at', 'updated_at',
+        ]
+
+    def get_generated_file_url(self, obj):
+        request = self.context.get('request')
+        if obj.generated_file and request:
+            return request.build_absolute_uri(obj.generated_file.url)
+        return obj.generated_file.url if obj.generated_file else None
+
+    def get_template_name(self, obj):
+        return obj.template.name if obj.template else ''
+
+    def get_litter_name(self, obj):
+        return obj.litter.name if obj.litter else ''
 
 
 # ─── Public (no auth) ─────────────────────────────────────────────────────────

@@ -14,6 +14,16 @@ def _litter_media_upload(instance, filename):
     return f'kennel/litters/{uuid.uuid4().hex}{ext}'
 
 
+def _litter_template_upload(instance, filename):
+    ext = os.path.splitext(filename)[1].lower() or '.pdf'
+    return f'kennel/litter_templates/{uuid.uuid4().hex}{ext}'
+
+
+def _litter_registration_upload(instance, filename):
+    ext = os.path.splitext(filename)[1].lower() or '.pdf'
+    return f'kennel/litter_registrations/{uuid.uuid4().hex}{ext}'
+
+
 class Litter(models.Model):
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name='litters'
@@ -35,6 +45,7 @@ class Litter(models.Model):
     female_count = models.PositiveIntegerField(default=0)
     cbkc_number = models.CharField(max_length=100, blank=True)
     is_featured = models.BooleanField(default=False)
+    registration_data = models.JSONField(default=dict, blank=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -194,3 +205,60 @@ class LitterHealthRecord(models.Model):
 
     def __str__(self):
         return f"{self.get_record_type_display()} — {self.litter.name} ({self.date})"
+
+
+class LitterDocumentTemplate(models.Model):
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name='litter_document_templates'
+    )
+    name = models.CharField(max_length=200)
+    source_file = models.FileField(upload_to=_litter_template_upload)
+    field_mapping = models.JSONField(default=dict, blank=True)
+    required_fields = models.JSONField(default=list, blank=True)
+    field_inventory = models.JSONField(default=list, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'kennel_litter_document_templates'
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"{self.name} ({self.organization})"
+
+
+class LitterRegistrationDocument(models.Model):
+    STATUS_DRAFT = 'draft'
+    STATUS_GENERATED = 'generated'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, 'Rascunho'),
+        (STATUS_GENERATED, 'Gerado'),
+        (STATUS_FAILED, 'Falha'),
+    ]
+
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name='litter_registration_documents'
+    )
+    litter = models.ForeignKey(
+        Litter, on_delete=models.CASCADE, related_name='registration_documents'
+    )
+    template = models.ForeignKey(
+        LitterDocumentTemplate, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='generated_documents'
+    )
+    extra_data = models.JSONField(default=dict, blank=True)
+    generated_file = models.FileField(upload_to=_litter_registration_upload, null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    error_message = models.TextField(blank=True)
+    generated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'kennel_litter_registration_documents'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Registro ninhada #{self.id} — {self.litter.name}"

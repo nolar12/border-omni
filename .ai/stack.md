@@ -17,7 +17,30 @@
 | boto3 | 1.35.76 | AWS S3 |
 | django-storages | 1.14.4 | S3 storage backend |
 | requests | 2.32.3 | HTTP |
-| cryptography | 42.0.5 | Criptografia |
+| cryptography | 42.0.5 | Criptografia (tokens em repouso com Fernet) |
+| celery | 5.4.0 | Filas de tasks assíncronas |
+| redis | 5.2.1 | Broker Celery |
+| django-celery-beat | 2.7.0 | Agendamento de tasks periódicas (DB scheduler) |
+| pypdf | 4.3.1 | Leitura/preenchimento de PDF AcroForm (registro de ninhada) |
+
+## Celery
+- Broker: Redis (`redis://127.0.0.1:6379/0`)
+- Scheduler: `django_celery_beat.schedulers:DatabaseScheduler`
+- Tasks registradas: `sync_whatsapp_quality_ratings` (a cada 6h)
+- Worker iniciado via `start.sh` → logs em `logs/celery_worker.log`
+- Beat iniciado via `start.sh` → logs em `logs/celery_beat.log`
+
+## Variáveis de ambiente novas (2025-05)
+```
+REDIS_URL=redis://127.0.0.1:6379/0
+FIELD_ENCRYPTION_KEY=<gerar com Fernet.generate_key()>
+META_APP_ID=
+META_APP_SECRET=
+META_CONFIG_ID_WHATSAPP=
+META_CONFIG_ID_FACEBOOK=
+META_CONFIG_ID_INSTAGRAM=
+META_WEBHOOK_BASE_URL=
+```
 
 ## Frontend
 | Pacote | Versão | Uso |

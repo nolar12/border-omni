@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import logging
+from datetime import date
 import requests as http_requests
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
@@ -36,6 +37,7 @@ from api.serializers import (
     LitterListSerializer, LitterDetailSerializer,
     DogHealthRecordSerializer, LitterHealthRecordSerializer,
     DogMediaSerializer, LitterMediaSerializer,
+    LitterDocumentTemplateSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,7 +54,15 @@ def _get_tokens(user):
 
 def _get_org(user):
     try:
-        return user.profile.organization
+        org_id = (
+            UserProfile.objects
+            .filter(user_id=user.id)
+            .values_list('organization_id', flat=True)
+            .first()
+        )
+        if not org_id:
+            return None
+        return Organization.objects.filter(id=org_id).first()
     except Exception:
         return None
 
@@ -126,11 +136,34 @@ class MeView(APIView):
             user.last_name = data['last_name']
         user.save(update_fields=['first_name', 'last_name'])
 
-        if 'phone' in data:
+        profile_fields = [
+            'phone',
+            'kennel_cbkc_code', 'kennel_fci_code', 'kennel_prefix', 'kennel_owner_name',
+            'kennel_address_line', 'kennel_neighborhood', 'kennel_city', 'kennel_state',
+            'kennel_zip_code', 'kennel_phone', 'kennel_breed',
+        ]
+
+        if any(field in data for field in profile_fields + ['kennel_registry_date', 'kennel_issue_date']):
             try:
                 profile = user.profile
-                profile.phone = data['phone']
-                profile.save(update_fields=['phone'])
+                update_fields = []
+
+                for field_name in profile_fields:
+                    if field_name in data:
+                        setattr(profile, field_name, data[field_name] or '')
+                        update_fields.append(field_name)
+
+                for date_field in ['kennel_registry_date', 'kennel_issue_date']:
+                    if date_field in data:
+                        raw_value = data.get(date_field)
+                        parsed_date = None
+                        if raw_value:
+                            parsed_date = date.fromisoformat(raw_value)
+                        setattr(profile, date_field, parsed_date)
+                        update_fields.append(date_field)
+
+                if update_fields:
+                    profile.save(update_fields=update_fields)
             except Exception:
                 pass
 
@@ -215,6 +248,18 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
         if lead_classification:
             qs = qs.filter(lead_classification=lead_classification)
 
+        # Filtro por DDD (código de área) — suporta lista separada por vírgula, ex: "41,42,43"
+        # Formato padrão no banco: 55{DDD}{numero}, ex: 5541999887766
+        # Não usar phone__startswith=d sem prefixo pois '55' sozinho bate em todos os BR
+        ddd_param = self.request.query_params.get('ddd', '')
+        if ddd_param:
+            ddd_list = [d.strip() for d in ddd_param.split(',') if d.strip()]
+            if ddd_list:
+                ddd_q = Q()
+                for d in ddd_list:
+                    ddd_q |= Q(phone__startswith=f'55{d}') | Q(phone__startswith=f'+55{d}')
+                qs = qs.filter(ddd_q)
+
         # Filtro: apenas leads aguardando resposta (última mensagem foi do lead, status != CLOSED)
         needs_reply = self.request.query_params.get('needs_reply')
         if needs_reply == 'true':
@@ -227,6 +272,16 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
                 _last_dir='IN',
             ).exclude(status='CLOSED')
 
+        # Subqueries para eliminar N+1 no LeadListSerializer.
+        # Cada campo é calculado uma vez por query de lista, não por objeto.
+        _last_msg_qs = Message.objects.filter(
+            conversation__lead=OuterRef('pk')
+        ).order_by('-created_at')
+
+        _whatsapp_conv_qs = Conversation.objects.filter(
+            lead=OuterRef('pk'), channel='whatsapp'
+        ).order_by('-last_message_at')
+
         # Ordena pela última atividade de mensagem em qualquer conversa do lead.
         # Qualquer mensagem (IN ou OUT, humana ou bot) move o lead para o topo.
         # Leads sem conversa ficam no final, ordenados por created_at desc.
@@ -238,6 +293,22 @@ class LeadViewSet(mixins.UpdateModelMixin, viewsets.ReadOnlyModelViewSet):
 
         qs = qs.annotate(
             _last_msg_ts=last_msg_ts_sq,
+            _last_msg_direction=Subquery(_last_msg_qs.values('direction')[:1]),
+            _last_msg_text=Subquery(_last_msg_qs.values('text')[:1]),
+            _whatsapp_last_msg_at=Subquery(_whatsapp_conv_qs.values('last_message_at')[:1]),
+            _last_in_at=Subquery(
+                Message.objects.filter(
+                    conversation__lead=OuterRef('pk'),
+                    direction='IN',
+                ).order_by('-created_at').values('created_at')[:1]
+            ),
+            _last_human_out_at=Subquery(
+                Message.objects.filter(
+                    conversation__lead=OuterRef('pk'),
+                    direction='OUT',
+                    provider_message_id__isnull=False,
+                ).order_by('-created_at').values('created_at')[:1]
+            ),
         ).order_by(
             F('_last_msg_ts').desc(nulls_last=True),
             '-created_at',
@@ -3760,6 +3831,183 @@ class LitterViewSet(viewsets.ModelViewSet):
             return Response(status=204)
         except LitterMedia.DoesNotExist:
             return Response({'detail': 'Mídia não encontrada.'}, status=404)
+
+    @action(detail=True, methods=['post'])
+    def generate_registration_pdf(self, request, pk=None):
+        from django.core.files.base import ContentFile
+        from django.http import HttpResponse
+        from django.utils import timezone
+        from pathlib import Path
+        from apps.kennel.models import LitterRegistrationDocument
+        from apps.kennel.pdf_utils import (
+            extract_pdf_fields,
+            build_cbkc_default_mapping,
+            build_litter_registration_context,
+            resolve_mapping,
+            fill_pdf_template,
+        )
+
+        litter = self.get_object()
+        org = _get_org(request.user)
+        template_path = Path(getattr(settings, 'LITTER_REGISTRATION_TEMPLATE_PATH', ''))
+        if not template_path.exists():
+            return Response({
+                'detail': (
+                    'PDF oficial de registro nao encontrado. '
+                    'Configure LITTER_REGISTRATION_TEMPLATE_PATH no backend.'
+                )
+            }, status=500)
+
+        extra_data = request.data.get('extra_data')
+        if extra_data is None:
+            extra_data = litter.registration_data or {}
+        if not isinstance(extra_data, dict):
+            return Response({'detail': 'extra_data deve ser um objeto JSON.'}, status=400)
+
+        litter.registration_data = extra_data
+        litter.save(update_fields=['registration_data', 'updated_at'])
+
+        registration_doc = LitterRegistrationDocument.objects.create(
+            organization=org,
+            litter=litter,
+            template=None,
+            extra_data=extra_data,
+            status=LitterRegistrationDocument.STATUS_DRAFT,
+        )
+
+        try:
+            with template_path.open('rb') as source_fh:
+                field_inventory = extract_pdf_fields(source_fh)
+            mapping = build_cbkc_default_mapping(field_inventory)
+            context = build_litter_registration_context(litter, extra_data=extra_data)
+            mapping_values, missing_required = resolve_mapping(
+                mapping,
+                context,
+                required_fields=[],
+            )
+            if missing_required:
+                registration_doc.status = LitterRegistrationDocument.STATUS_FAILED
+                registration_doc.error_message = (
+                    'Campos obrigatorios sem valor: ' + ', '.join(missing_required)
+                )
+                registration_doc.save(update_fields=['status', 'error_message', 'updated_at'])
+                return Response({
+                    'detail': 'Campos obrigatorios sem valor.',
+                    'missing_fields': missing_required,
+                }, status=400)
+
+            with template_path.open('rb') as source_fh:
+                pdf_bytes = fill_pdf_template(source_fh, mapping_values)
+
+            filename = f"registro_ninhada_{litter.id}_{registration_doc.id}.pdf"
+            registration_doc.generated_file.save(filename, ContentFile(pdf_bytes), save=False)
+            registration_doc.status = LitterRegistrationDocument.STATUS_GENERATED
+            registration_doc.error_message = ''
+            registration_doc.generated_at = timezone.now()
+            registration_doc.save(update_fields=[
+                'generated_file', 'status', 'error_message',
+                'generated_at', 'updated_at',
+            ])
+        except RuntimeError as exc:
+            registration_doc.status = LitterRegistrationDocument.STATUS_FAILED
+            registration_doc.error_message = str(exc)
+            registration_doc.save(update_fields=['status', 'error_message', 'updated_at'])
+            return Response({'detail': str(exc)}, status=500)
+        except Exception as exc:
+            logger.exception(
+                'Falha ao gerar registro de ninhada #%s',
+                litter.id
+            )
+            registration_doc.status = LitterRegistrationDocument.STATUS_FAILED
+            registration_doc.error_message = str(exc)
+            registration_doc.save(update_fields=['status', 'error_message', 'updated_at'])
+            return Response({'detail': 'Falha ao gerar PDF de registro.'}, status=500)
+
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        response['X-Registration-Document-Id'] = str(registration_doc.id)
+        return response
+
+    @action(detail=True, methods=['get', 'post'])
+    def registration_data(self, request, pk=None):
+        litter = self.get_object()
+        if request.method.lower() == 'get':
+            return Response({'extra_data': litter.registration_data or {}})
+
+        extra_data = request.data.get('extra_data')
+        if not isinstance(extra_data, dict):
+            return Response({'detail': 'extra_data deve ser um objeto JSON.'}, status=400)
+        litter.registration_data = extra_data
+        litter.save(update_fields=['registration_data', 'updated_at'])
+        return Response({'extra_data': litter.registration_data, 'detail': 'Dados salvos com sucesso.'})
+
+
+class LitterDocumentTemplateViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = LitterDocumentTemplateSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        from apps.kennel.models import LitterDocumentTemplate
+        org = _get_org(self.request.user)
+        if not org:
+            return LitterDocumentTemplate.objects.none()
+        qs = LitterDocumentTemplate.objects.filter(organization=org)
+        is_active = self.request.query_params.get('is_active')
+        if is_active in {'true', '1'}:
+            qs = qs.filter(is_active=True)
+        if is_active in {'false', '0'}:
+            qs = qs.filter(is_active=False)
+        return qs
+
+    def _refresh_inventory(self, template):
+        from apps.kennel.pdf_utils import extract_pdf_fields, build_cbkc_default_mapping
+        with template.source_file.open('rb') as source_fh:
+            field_inventory = extract_pdf_fields(source_fh)
+        template.field_inventory = field_inventory
+        update_fields = ['field_inventory', 'updated_at']
+        if not template.field_mapping:
+            template.field_mapping = build_cbkc_default_mapping(field_inventory)
+            update_fields.append('field_mapping')
+        template.save(update_fields=update_fields)
+        return field_inventory
+
+    def create(self, request, *args, **kwargs):
+        from django.db import transaction
+        org = _get_org(request.user)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            with transaction.atomic():
+                template = serializer.save(organization=org)
+                self._refresh_inventory(template)
+        except RuntimeError as exc:
+            return Response({'detail': str(exc)}, status=400)
+        output = self.get_serializer(template)
+        return Response(output.data, status=201)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        template = serializer.save()
+        if 'source_file' in request.FILES:
+            try:
+                self._refresh_inventory(template)
+            except RuntimeError as exc:
+                return Response({'detail': str(exc)}, status=400)
+        output = self.get_serializer(template)
+        return Response(output.data)
+
+    @action(detail=True, methods=['post'])
+    def inspect_fields(self, request, pk=None):
+        template = self.get_object()
+        try:
+            field_inventory = self._refresh_inventory(template)
+        except RuntimeError as exc:
+            return Response({'detail': str(exc)}, status=400)
+        return Response({'fields': field_inventory, 'count': len(field_inventory)})
 
 
 class DogHealthRecordViewSet(viewsets.ModelViewSet):

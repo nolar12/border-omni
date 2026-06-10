@@ -29,6 +29,7 @@ export default function Login() {
   }
 
   const loginWithGoogle = useGoogleLogin({
+    scope: 'openid profile email',
     onSuccess: async (tokenResponse) => {
       setGoogleLoading(true);
       setError('');
@@ -42,7 +43,8 @@ export default function Login() {
         setGoogleLoading(false);
       }
     },
-    onError: () => {
+    onError: (err) => {
+      console.error('Google OAuth error:', err);
       setError('Falha na autenticação com Google.');
       setGoogleLoading(false);
     },

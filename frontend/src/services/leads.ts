@@ -10,6 +10,7 @@ export interface LeadFilters {
   is_archived?: boolean;
   search?: string;
   page?: number;
+  ddd?: string; // DDDs separados por vírgula, ex: "41,42,43,44,45,46"
 }
 
 export const leadsService = {

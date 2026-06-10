@@ -11,6 +11,19 @@ export default function ProfileModal({ onClose }: Props) {
   const [firstName, setFirstName] = useState(user?.first_name ?? '');
   const [lastName, setLastName] = useState(user?.last_name ?? '');
   const [phone, setPhone] = useState(user?.phone ?? '');
+  const [kennelCbkcCode, setKennelCbkcCode] = useState(user?.kennel_cbkc_code ?? '');
+  const [kennelFciCode, setKennelFciCode] = useState(user?.kennel_fci_code ?? '');
+  const [kennelPrefix, setKennelPrefix] = useState(user?.kennel_prefix ?? '');
+  const [kennelOwnerName, setKennelOwnerName] = useState(user?.kennel_owner_name ?? '');
+  const [kennelAddressLine, setKennelAddressLine] = useState(user?.kennel_address_line ?? '');
+  const [kennelNeighborhood, setKennelNeighborhood] = useState(user?.kennel_neighborhood ?? '');
+  const [kennelCity, setKennelCity] = useState(user?.kennel_city ?? '');
+  const [kennelState, setKennelState] = useState(user?.kennel_state ?? '');
+  const [kennelZipCode, setKennelZipCode] = useState(user?.kennel_zip_code ?? '');
+  const [kennelPhone, setKennelPhone] = useState(user?.kennel_phone ?? '');
+  const [kennelBreed, setKennelBreed] = useState(user?.kennel_breed ?? '');
+  const [kennelRegistryDate, setKennelRegistryDate] = useState(user?.kennel_registry_date ?? '');
+  const [kennelIssueDate, setKennelIssueDate] = useState(user?.kennel_issue_date ?? '');
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
@@ -29,7 +42,24 @@ export default function ProfileModal({ onClose }: Props) {
     setError('');
     setSuccess(false);
     try {
-      await authService.updateProfile({ first_name: firstName, last_name: lastName, phone });
+      await authService.updateProfile({
+        first_name: firstName,
+        last_name: lastName,
+        phone,
+        kennel_cbkc_code: kennelCbkcCode,
+        kennel_fci_code: kennelFciCode,
+        kennel_prefix: kennelPrefix,
+        kennel_owner_name: kennelOwnerName,
+        kennel_address_line: kennelAddressLine,
+        kennel_neighborhood: kennelNeighborhood,
+        kennel_city: kennelCity,
+        kennel_state: kennelState.toUpperCase(),
+        kennel_zip_code: kennelZipCode,
+        kennel_phone: kennelPhone,
+        kennel_breed: kennelBreed,
+        kennel_registry_date: kennelRegistryDate || null,
+        kennel_issue_date: kennelIssueDate || null,
+      });
       setSuccess(true);
       setTimeout(() => setSuccess(false), 2500);
     } catch {
@@ -46,7 +76,7 @@ export default function ProfileModal({ onClose }: Props) {
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <h2 className="text-lg font-semibold text-gray-800">Meu Perfil</h2>
@@ -61,7 +91,7 @@ export default function ProfileModal({ onClose }: Props) {
           </button>
         </div>
 
-        <form onSubmit={handleSave} className="px-6 py-5 space-y-5">
+        <form onSubmit={handleSave} className="px-6 py-5 space-y-5 overflow-y-auto">
           {/* Avatar */}
           <div className="flex justify-center">
             <div className="w-16 h-16 rounded-full bg-blue-600 flex items-center justify-center">
@@ -126,6 +156,161 @@ export default function ProfileModal({ onClose }: Props) {
             <p className="mt-1 text-xs text-gray-400">
               Usado para notificações de novas mensagens recebidas no sistema.
             </p>
+          </div>
+
+          <div className="border-t border-gray-100 pt-4 space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800">Dados do canil (certificado)</h3>
+              <p className="text-xs text-gray-400 mt-1">
+                Campos baseados no certificado CBKC/FCI para facilitar cadastros e documentos oficiais.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Cód. CBKC</label>
+                <input
+                  type="text"
+                  value={kennelCbkcCode}
+                  onChange={e => setKennelCbkcCode(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="94362"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Cód. FCI</label>
+                <input
+                  type="text"
+                  value={kennelFciCode}
+                  onChange={e => setKennelFciCode(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="198/26"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Prefixo do canil</label>
+                <input
+                  type="text"
+                  value={kennelPrefix}
+                  onChange={e => setKennelPrefix(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="BC-SUL"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Raça registrada</label>
+                <input
+                  type="text"
+                  value={kennelBreed}
+                  onChange={e => setKennelBreed(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="BORDER COLLIE"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Titular no certificado</label>
+              <input
+                type="text"
+                value={kennelOwnerName}
+                onChange={e => setKennelOwnerName(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Nome completo"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Registro do certificado</label>
+                <input
+                  type="date"
+                  value={kennelRegistryDate}
+                  onChange={e => setKennelRegistryDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Emissão do certificado</label>
+                <input
+                  type="date"
+                  value={kennelIssueDate}
+                  onChange={e => setKennelIssueDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Endereço (linha principal)</label>
+              <input
+                type="text"
+                value={kennelAddressLine}
+                onChange={e => setKennelAddressLine(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Rua e número"
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bairro</label>
+                <input
+                  type="text"
+                  value={kennelNeighborhood}
+                  onChange={e => setKennelNeighborhood(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Bairro"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Cidade</label>
+                <input
+                  type="text"
+                  value={kennelCity}
+                  onChange={e => setKennelCity(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Cidade"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">UF</label>
+                <input
+                  type="text"
+                  maxLength={2}
+                  value={kennelState}
+                  onChange={e => setKennelState(e.target.value.toUpperCase())}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm uppercase focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="SC"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">CEP</label>
+                <input
+                  type="text"
+                  value={kennelZipCode}
+                  onChange={e => setKennelZipCode(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="88780-000"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Telefone do canil</label>
+                <input
+                  type="tel"
+                  value={kennelPhone}
+                  onChange={e => setKennelPhone(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="(21) 97212-1012"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Feedback */}
