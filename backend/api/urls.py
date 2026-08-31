@@ -3,6 +3,11 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.channels.views_meta_oauth import MetaOAuthDiscoverView, MetaOAuthFinalizeView
+from apps.advertising.views import (
+    AdvertisingAccountViewSet, AdCampaignViewSet, AdvertisingSettingsView,
+    GoogleAdsOAuthStartView, GoogleAdsOAuthDiscoverView, GoogleAdsOAuthFinalizeView,
+    PublicAdClickTokenView,
+)
 
 from api.views import (
     RegisterView, LoginView, MeView, GoogleAuthView,
@@ -41,6 +46,8 @@ router.register(r'litters', LitterViewSet, basename='litter')
 router.register(r'litter-document-templates', LitterDocumentTemplateViewSet, basename='litterdocumenttemplate')
 router.register(r'dog-health', DogHealthRecordViewSet, basename='doghealthrecord')
 router.register(r'litter-health', LitterHealthRecordViewSet, basename='litterhealthrecord')
+router.register(r'advertising-accounts', AdvertisingAccountViewSet, basename='advertisingaccount')
+router.register(r'ad-campaigns', AdCampaignViewSet, basename='adcampaign')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -94,4 +101,13 @@ urlpatterns = [
 
     # Public plans (no authentication required)
     path('public/plans/', PublicPlanListView.as_view(), name='public_plans'),
+
+    # Omni Ads — Google Ads
+    path('advertising-settings/', AdvertisingSettingsView.as_view(), name='advertising_settings'),
+    path('advertising/google-ads/oauth/start/', GoogleAdsOAuthStartView.as_view(), name='google_ads_oauth_start'),
+    path('advertising/google-ads/oauth/discover/', GoogleAdsOAuthDiscoverView.as_view(), name='google_ads_oauth_discover'),
+    path('advertising/google-ads/oauth/finalize/', GoogleAdsOAuthFinalizeView.as_view(), name='google_ads_oauth_finalize'),
+
+    # Public Omni Ads endpoint (no authentication required) — called by the landing site
+    path('public/ads/click-token/', PublicAdClickTokenView.as_view(), name='public_ad_click_token'),
 ]

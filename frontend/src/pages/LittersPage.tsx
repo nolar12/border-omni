@@ -3,6 +3,7 @@ import DateInput from '../components/DateInput';
 import UploadZone from '../components/UploadZone';
 import ImageCropEditor from '../components/ImageCropEditor';
 import { littersService, type LitterPayload } from '../services/litters';
+import { advertisingService, type AdCampaign } from '../services/advertising';
 import { litterHealthService, type LitterHealthPayload } from '../services/litterHealth';
 import { dogsService, type DogPayload } from '../services/dogs';
 import { dogHealthService, type HealthRecordPayload } from '../services/dogHealth';
@@ -46,11 +47,13 @@ function LitterCard({
   onEdit,
   onPuppies,
   onRegistration,
+  onPromote,
 }: {
   litter: Litter;
   onEdit: () => void;
   onPuppies: () => void;
   onRegistration: () => void;
+  onPromote: () => void;
 }) {
   return (
     <div className="bg-slate-800 rounded-xl border border-slate-700 hover:border-slate-500 transition-colors overflow-hidden flex flex-col">
@@ -117,9 +120,15 @@ function LitterCard({
           </button>
           <button
             onClick={onRegistration}
-            className="col-span-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors"
+            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors"
           >
             PDF Registro
+          </button>
+          <button
+            onClick={onPromote}
+            className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold transition-colors"
+          >
+            Promover
           </button>
         </div>
       </div>
@@ -1762,6 +1771,153 @@ function RegistrationPdfModal({ litter, onClose }: RegistrationPdfModalProps) {
   );
 }
 
+// ─── Promote Modal (Omni Ads — Google Ads) ─────────────────────────────────────
+
+interface PromoteModalProps {
+  litter: Litter;
+  onClose: () => void;
+}
+
+function PromoteModal({ litter, onClose }: PromoteModalProps) {
+  const [region, setRegion] = useState('');
+  const [radiusKm, setRadiusKm] = useState(30);
+  const [dailyBudget, setDailyBudget] = useState(20);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [landingUrl, setLandingUrl] = useState(`https://bordercolliesul.com.br/ninhada/${litter.id}`);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [campaign, setCampaign] = useState<AdCampaign | null>(null);
+  const [clientRequestId] = useState(() => crypto.randomUUID());
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const created = await advertisingService.promoteLitter({
+        litter_id: litter.id,
+        daily_budget: dailyBudget,
+        region,
+        radius_km: radiusKm,
+        start_date: startDate || undefined,
+        end_date: endDate || undefined,
+        landing_url: landingUrl,
+        client_request_id: clientRequestId,
+      });
+      setCampaign(created);
+      if (created.status === 'error') {
+        setError(created.error_message || 'Não foi possível criar a campanha agora, tente novamente.');
+      }
+    } catch (err) {
+      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setError(message || 'Não foi possível criar a campanha agora, tente novamente.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="bg-slate-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-slate-700">
+          <h2 className="text-white text-lg font-bold">Promover: {litter.name}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-white">
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4 overflow-y-auto">
+          {campaign ? (
+            <div className="space-y-3">
+              <p className="text-sm text-slate-300">
+                Status da campanha:{' '}
+                <span className="font-semibold text-white">{campaign.status}</span>
+              </p>
+              {error && <p className="text-sm text-red-400">{error}</p>}
+              {campaign.ad_headlines?.length > 0 && (
+                <div className="bg-slate-900/60 rounded-lg p-3 text-xs text-slate-300 space-y-1">
+                  <p className="text-slate-500 uppercase tracking-wide text-[10px]">Sugestões de anúncio</p>
+                  {campaign.ad_headlines.map((h, i) => <p key={i}>• {h}</p>)}
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="text-xs text-slate-400">Canal</label>
+                <div className="mt-1 px-3 py-2 rounded-lg bg-slate-900/60 text-slate-300 text-sm">Google Ads (Pesquisa)</div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-400">Região</label>
+                <input
+                  value={region}
+                  onChange={e => setRegion(e.target.value)}
+                  placeholder="Ex: Florianópolis/SC"
+                  className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-white text-sm"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-slate-400">Raio (km)</label>
+                  <input
+                    type="number" min={1} value={radiusKm}
+                    onChange={e => setRadiusKm(Number(e.target.value))}
+                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-white text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400">Orçamento diário (R$)</label>
+                  <input
+                    type="number" min={1} step="0.01" value={dailyBudget}
+                    onChange={e => setDailyBudget(Number(e.target.value))}
+                    className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-white text-sm"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-slate-400">Data inicial</label>
+                  <DateInput value={startDate} onChange={setStartDate} className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-white text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400">Data final</label>
+                  <DateInput value={endDate} onChange={setEndDate} className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-white text-sm" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-400">Landing page</label>
+                <input
+                  value={landingUrl}
+                  onChange={e => setLandingUrl(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-white text-sm"
+                />
+              </div>
+              {error && <p className="text-sm text-red-400">{error}</p>}
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-700">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-slate-300 hover:text-white text-sm font-medium">
+            {campaign ? 'Fechar' : 'Cancelar'}
+          </button>
+          {!campaign && (
+            <button
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm font-semibold transition-colors"
+            >
+              {submitting ? 'Criando…' : 'Criar campanha'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function LittersPage() {
@@ -1771,6 +1927,7 @@ export default function LittersPage() {
   const [modalLitter, setModalLitter] = useState<Litter | null | undefined>(undefined);
   const [puppiesTarget, setPuppiesTarget] = useState<Litter | null>(null);
   const [registrationTarget, setRegistrationTarget] = useState<Litter | null>(null);
+  const [promoteTarget, setPromoteTarget] = useState<Litter | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1865,6 +2022,7 @@ export default function LittersPage() {
               onEdit={() => handleEdit(litter)}
               onPuppies={() => handleOpenPuppies(litter)}
               onRegistration={() => handleOpenRegistration(litter)}
+              onPromote={() => setPromoteTarget(litter)}
             />
           ))}
         </div>
@@ -1891,6 +2049,13 @@ export default function LittersPage() {
         <RegistrationPdfModal
           litter={registrationTarget}
           onClose={() => setRegistrationTarget(null)}
+        />
+      )}
+
+      {promoteTarget && (
+        <PromoteModal
+          litter={promoteTarget}
+          onClose={() => setPromoteTarget(null)}
         />
       )}
     </div>

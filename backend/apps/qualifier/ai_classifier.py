@@ -541,6 +541,16 @@ class AILeadClassifier:
             except Exception as exc:
                 logger.warning(f'CAPI dispatch error (lead={self.lead.pk}): {exc}')
 
+            # Omni Ads — mesmo gatilho, feedback de qualificação para o Google Ads
+            if classification in ('HOT_LEAD', 'WARM_LEAD'):
+                try:
+                    from apps.advertising.services.conversion_service import ConversionService
+                    from apps.core.models import Organization
+                    org = Organization.objects.get(pk=self.lead.organization_id)
+                    ConversionService().record_event(organization=org, lead=self.lead, event_type='qualified_lead')
+                except Exception as exc:
+                    logger.warning(f'Omni Ads conversion dispatch error (lead={self.lead.pk}): {exc}')
+
     def _upsert_lead_profile(self, result: dict):
         """Cria ou atualiza LeadProfile e sincroniza tags automáticas."""
         try:

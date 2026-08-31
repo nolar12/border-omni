@@ -48,6 +48,7 @@ LOCAL_APPS = [
     'apps.contracts',
     'apps.notes',
     'apps.kennel',
+    'apps.advertising',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -238,6 +239,19 @@ META_CONFIG_ID_FACEBOOK = os.getenv('META_CONFIG_ID_FACEBOOK', '')
 META_CONFIG_ID_INSTAGRAM = os.getenv('META_CONFIG_ID_INSTAGRAM', '')
 # URL pública do backend — usada para registrar webhooks via API
 META_WEBHOOK_BASE_URL = os.getenv('META_WEBHOOK_BASE_URL', MEDIA_BASE_URL)
+
+# Google Ads — Omni Ads (integração de campanhas patrocinadas)
+# Console: console.cloud.google.com (OAuth client) + ads.google.com/aw/apicenter (developer token)
+GOOGLE_ADS_CLIENT_ID = os.getenv('GOOGLE_ADS_CLIENT_ID', '')
+GOOGLE_ADS_CLIENT_SECRET = os.getenv('GOOGLE_ADS_CLIENT_SECRET', '')
+GOOGLE_ADS_DEVELOPER_TOKEN = os.getenv('GOOGLE_ADS_DEVELOPER_TOKEN', '')
+GOOGLE_ADS_LOGIN_CUSTOMER_ID = os.getenv('GOOGLE_ADS_LOGIN_CUSTOMER_ID', '')
+GOOGLE_ADS_REDIRECT_URI = os.getenv('GOOGLE_ADS_REDIRECT_URI', '')
+GOOGLE_ADS_API_VERSION = os.getenv('GOOGLE_ADS_API_VERSION', 'v17')
+# Kill-switch global: enquanto False, nenhuma chamada de escrita real é feita à API.
+GOOGLE_ADS_ENABLED = os.getenv('GOOGLE_ADS_ENABLED', 'False') == 'True'
+# Enquanto True, o GoogleAdsProvider monta e loga o payload mas não chama a API real.
+GOOGLE_ADS_DRY_RUN = os.getenv('GOOGLE_ADS_DRY_RUN', 'True') == 'True'
 
 # Celery + Redis
 REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')

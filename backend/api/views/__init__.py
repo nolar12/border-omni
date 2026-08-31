@@ -1343,6 +1343,7 @@ class WhatsAppWebhookView(APIView):
                 )
                 if referral:
                     self._save_ad_referral(org=org, phone=from_phone, referral=referral)
+                self._match_ad_click_token(org=org, phone=from_phone, text=msg.get('caption', ''))
                 return response
 
             # ── Texto ─────────────────────────────────────────────────────────
@@ -1362,6 +1363,7 @@ class WhatsAppWebhookView(APIView):
         )
         if referral:
             self._save_ad_referral(org=org, phone=from_phone, referral=referral)
+        self._match_ad_click_token(org=org, phone=from_phone, text=text)
         return response
 
     def _handle_status_update(self, statuses):
@@ -1651,6 +1653,24 @@ class WhatsAppWebhookView(APIView):
             )
         except Exception as exc:
             logger.warning(f'_save_ad_referral error (phone={phone}): {exc}')
+
+    def _match_ad_click_token(self, org, phone: str, text: str):
+        """
+        Omni Ads — reconhece o código "(ref: XXXXXX)" que a landing page embute na
+        mensagem pré-preenchida do WhatsApp quando o visitante chega via Google Ads,
+        e liga o Lead à campanha/gclid correspondente. Nunca deve interromper o
+        processamento normal da mensagem (mesma cautela de _save_ad_referral).
+        """
+        try:
+            if not text or '(ref:' not in text:
+                return
+            from apps.advertising.services.attribution_service import AttributionService
+            lead = Lead.objects.filter(organization=org, phone=phone).first()
+            if not lead:
+                return
+            AttributionService().match_lead_to_click_token(organization=org, lead=lead, text=text)
+        except Exception as exc:
+            logger.warning(f'_match_ad_click_token error (phone={phone}): {exc}')
 
     def _handle_simulator_payload(self, data):
         """Processa o payload do simulador interno (testes sem Meta)."""
