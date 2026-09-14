@@ -85,7 +85,8 @@ class CampaignService:
 
         campaign.external_campaign_id = result.external_id
         campaign.status = 'active'
-        campaign.save(update_fields=['external_campaign_id', 'status'])
+        campaign.error_message = result.error_message
+        campaign.save(update_fields=['external_campaign_id', 'status', 'error_message'])
         return campaign
 
     def pause_campaign(self, organization, campaign_id: int) -> AdCampaign:

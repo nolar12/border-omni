@@ -33,6 +33,7 @@ class ProviderCampaign:
     external_id: str
     status: str
     raw: dict = field(default_factory=dict)
+    error_message: str = ''
 
 
 @dataclass

@@ -242,12 +242,17 @@ META_WEBHOOK_BASE_URL = os.getenv('META_WEBHOOK_BASE_URL', MEDIA_BASE_URL)
 
 # Google Ads — Omni Ads (integração de campanhas patrocinadas)
 # Console: console.cloud.google.com (OAuth client) + ads.google.com/aw/apicenter (developer token)
+# O fluxo de conexão usa Google Identity Services em popup (ux_mode: 'popup'),
+# igual ao FB.login() do Meta — não é necessário registrar um "redirect URI" no
+# Google Cloud Console, apenas as origens do frontend em "Authorized JavaScript origins".
 GOOGLE_ADS_CLIENT_ID = os.getenv('GOOGLE_ADS_CLIENT_ID', '')
 GOOGLE_ADS_CLIENT_SECRET = os.getenv('GOOGLE_ADS_CLIENT_SECRET', '')
 GOOGLE_ADS_DEVELOPER_TOKEN = os.getenv('GOOGLE_ADS_DEVELOPER_TOKEN', '')
 GOOGLE_ADS_LOGIN_CUSTOMER_ID = os.getenv('GOOGLE_ADS_LOGIN_CUSTOMER_ID', '')
-GOOGLE_ADS_REDIRECT_URI = os.getenv('GOOGLE_ADS_REDIRECT_URI', '')
-GOOGLE_ADS_API_VERSION = os.getenv('GOOGLE_ADS_API_VERSION', 'v17')
+# A Google Ads API descontinua versões com frequência (cadência mensal desde 2026) —
+# confira a versão atual em developers.google.com/google-ads/api/docs/concepts/versioning
+# antes de assumir que este default ainda é válido.
+GOOGLE_ADS_API_VERSION = os.getenv('GOOGLE_ADS_API_VERSION', 'v25')
 # Kill-switch global: enquanto False, nenhuma chamada de escrita real é feita à API.
 GOOGLE_ADS_ENABLED = os.getenv('GOOGLE_ADS_ENABLED', 'False') == 'True'
 # Enquanto True, o GoogleAdsProvider monta e loga o payload mas não chama a API real.

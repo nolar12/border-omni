@@ -15,7 +15,7 @@ from apps.advertising.models import (
 )
 from apps.advertising.providers import GoogleAdsProviderError, exchange_code_for_tokens, list_accessible_customers
 from apps.advertising.services.campaign_service import CampaignService
-from apps.advertising.services.copy_suggestions import suggest_ad_copy
+from apps.advertising.services.ai_copy_service import generate_ad_copy_with_fallback
 from apps.advertising.serializers import (
     AdvertisingAccountSerializer, AdCampaignSerializer, AdCampaignDetailSerializer,
     AdMetricSerializer, AdvertisingSettingsSerializer,
@@ -95,7 +95,12 @@ class AdCampaignViewSet(viewsets.ModelViewSet):
         data.setdefault('name', f'Ninhada {litter.name}' if litter else 'Campanha Google Ads')
         if not data.get('ad_headlines') and litter:
             profile = UserProfile.objects.filter(organization=org).first()
-            data.update(suggest_ad_copy(litter, profile))
+            audience_description = (request.data.get('audience_description') or '').strip()
+            openai_api_key = getattr(getattr(org, 'agent_config', None), 'openai_api_key', '') or ''
+            data.update(generate_ad_copy_with_fallback(
+                litter=litter, user_profile=profile,
+                audience_description=audience_description, openai_api_key=openai_api_key,
+            ))
 
         campaign = CampaignService().create_campaign(
             organization=org,
@@ -152,43 +157,33 @@ class AdvertisingSettingsView(APIView):
         return Response(serializer.data)
 
 
-class GoogleAdsOAuthStartView(APIView):
-    """Passo 1: devolve a URL de consentimento OAuth do Google para o frontend redirecionar/abrir."""
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        if not settings.GOOGLE_ADS_CLIENT_ID or not settings.GOOGLE_ADS_REDIRECT_URI:
-            return Response(
-                {'error': 'Integração Google Ads não configurada no servidor (GOOGLE_ADS_CLIENT_ID / GOOGLE_ADS_REDIRECT_URI).'},
-                status=503,
-            )
-        params = {
-            'client_id': settings.GOOGLE_ADS_CLIENT_ID,
-            'redirect_uri': settings.GOOGLE_ADS_REDIRECT_URI,
-            'response_type': 'code',
-            'scope': 'https://www.googleapis.com/auth/adwords',
-            'access_type': 'offline',
-            'prompt': 'consent',
-        }
-        query = '&'.join(f'{k}={v}' for k, v in params.items())
-        return Response({'authorization_url': f'https://accounts.google.com/o/oauth2/v2/auth?{query}'})
-
-
 class GoogleAdsOAuthDiscoverView(APIView):
-    """Passo 2: troca o code pelo refresh_token e lista as contas Google Ads acessíveis."""
+    """
+    Passo 1: troca o authorization code (obtido no frontend via Google Identity
+    Services, google.accounts.oauth2.initCodeClient com ux_mode: 'popup' — mesma
+    filosofia do FB.login() popup usado para o Meta, sem redirect de página cheia)
+    pelo refresh_token, e lista as contas Google Ads acessíveis.
+
+    Importante: no fluxo popup do GIS, o code exchange usa redirect_uri="postmessage"
+    (valor especial documentado pelo Google), não uma URL real — por isso não é
+    necessário registrar nenhum "URI de redirecionamento" no Google Cloud Console,
+    apenas a origem do frontend em "Authorized JavaScript origins".
+    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         code = request.data.get('code', '').strip()
         if not code:
             return Response({'error': 'code é obrigatório'}, status=400)
+        if not settings.GOOGLE_ADS_CLIENT_ID or not settings.GOOGLE_ADS_CLIENT_SECRET:
+            return Response({'error': 'Integração Google Ads não configurada no servidor (GOOGLE_ADS_CLIENT_ID / GOOGLE_ADS_CLIENT_SECRET).'}, status=503)
         if not settings.GOOGLE_ADS_DEVELOPER_TOKEN:
             return Response({'error': 'GOOGLE_ADS_DEVELOPER_TOKEN não configurado no servidor.'}, status=503)
 
         try:
             tokens = exchange_code_for_tokens(
                 code, settings.GOOGLE_ADS_CLIENT_ID, settings.GOOGLE_ADS_CLIENT_SECRET,
-                settings.GOOGLE_ADS_REDIRECT_URI,
+                redirect_uri='postmessage',
             )
             customers = list_accessible_customers(tokens['access_token'], settings.GOOGLE_ADS_DEVELOPER_TOKEN)
         except GoogleAdsProviderError as exc:
@@ -201,7 +196,7 @@ class GoogleAdsOAuthDiscoverView(APIView):
 
 
 class GoogleAdsOAuthFinalizeView(APIView):
-    """Passo 3: usuário escolheu o customer_id — persiste a AdvertisingAccount."""
+    """Passo 2: usuário escolheu o customer_id — persiste a AdvertisingAccount."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):

@@ -5,7 +5,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from apps.channels.views_meta_oauth import MetaOAuthDiscoverView, MetaOAuthFinalizeView
 from apps.advertising.views import (
     AdvertisingAccountViewSet, AdCampaignViewSet, AdvertisingSettingsView,
-    GoogleAdsOAuthStartView, GoogleAdsOAuthDiscoverView, GoogleAdsOAuthFinalizeView,
+    GoogleAdsOAuthDiscoverView, GoogleAdsOAuthFinalizeView,
     PublicAdClickTokenView,
 )
 
@@ -104,7 +104,6 @@ urlpatterns = [
 
     # Omni Ads — Google Ads
     path('advertising-settings/', AdvertisingSettingsView.as_view(), name='advertising_settings'),
-    path('advertising/google-ads/oauth/start/', GoogleAdsOAuthStartView.as_view(), name='google_ads_oauth_start'),
     path('advertising/google-ads/oauth/discover/', GoogleAdsOAuthDiscoverView.as_view(), name='google_ads_oauth_discover'),
     path('advertising/google-ads/oauth/finalize/', GoogleAdsOAuthFinalizeView.as_view(), name='google_ads_oauth_finalize'),
 

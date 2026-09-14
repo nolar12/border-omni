@@ -129,13 +129,85 @@ class GoogleAdsProvider(AdvertisingProvider):
             logger.info(f'[GOOGLE_ADS_DRY_RUN] create_campaign account={account.customer_id} spec={spec}')
             return ProviderCampaign(external_id=fake_id, status='active', raw={'dry_run': True})
 
+        # A Google Ads API exige que o orçamento (CampaignBudget) seja um recurso
+        # próprio, criado antes — não pode ser embutido inline na campanha.
+        budget_data = self._request(
+            'POST', account, f'customers/{account.customer_id}/campaignBudgets:mutate',
+            json={'operations': [{'create': {
+                'name': f'{spec.name} — Orçamento {uuid.uuid4().hex[:6]}',
+                'amountMicros': int(spec.daily_budget * 1_000_000),
+                'deliveryMethod': 'STANDARD',
+            }}]},
+        )
+        budget_resource_name = (budget_data.get('results') or [{}])[0].get('resourceName')
+        if not budget_resource_name:
+            raise GoogleAdsProviderError('Falha ao criar orçamento da campanha.', code='budget_creation_failed', raw=budget_data)
+
         data = self._request(
             'POST', account, f'customers/{account.customer_id}/campaigns:mutate',
-            json=self._build_campaign_payload(spec),
+            json=self._build_campaign_payload(spec, budget_resource_name),
         )
         result = (data.get('results') or [{}])[0]
-        external_id = (result.get('resourceName') or '').split('/')[-1] or ''
-        return ProviderCampaign(external_id=external_id, status='active', raw=data)
+        campaign_resource_name = result.get('resourceName') or ''
+        external_id = campaign_resource_name.split('/')[-1] or ''
+
+        # Grupo de anúncios + palavras-chave + anúncio ficam melhor esforço: se algo
+        # falhar aqui, a campanha (já criada de verdade no Google) não é perdida —
+        # só volta com um aviso, para o usuário completar manualmente se precisar.
+        content_error = ''
+        try:
+            ad_group_resource_name = self._create_ad_group(account, campaign_resource_name, spec)
+            if spec.keywords:
+                self._add_keywords(account, ad_group_resource_name, spec.keywords)
+            if spec.headlines and spec.descriptions:
+                self._create_responsive_search_ad(account, ad_group_resource_name, spec)
+        except GoogleAdsProviderError as exc:
+            logger.exception('GoogleAdsProvider: falha ao configurar grupo de anúncios/palavras-chave/anúncio')
+            content_error = f'Campanha criada, mas houve um problema ao configurar o anúncio: {exc.user_message}'
+
+        return ProviderCampaign(external_id=external_id, status='active', raw=data, error_message=content_error)
+
+    def _create_ad_group(self, account, campaign_resource_name: str, spec: CampaignSpec) -> str:
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/adGroups:mutate',
+            json={'operations': [{'create': {
+                'name': f'{spec.name} — Grupo 1',
+                'campaign': campaign_resource_name,
+                'status': 'PAUSED',
+                'type': 'SEARCH_STANDARD',
+            }}]},
+        )
+        resource_name = (data.get('results') or [{}])[0].get('resourceName')
+        if not resource_name:
+            raise GoogleAdsProviderError('Falha ao criar grupo de anúncios.', code='ad_group_creation_failed', raw=data)
+        return resource_name
+
+    def _add_keywords(self, account, ad_group_resource_name: str, keywords: list[str]) -> None:
+        operations = [{'create': {
+            'adGroup': ad_group_resource_name,
+            'status': 'ENABLED',
+            'keyword': {'text': kw, 'matchType': 'BROAD'},
+        }} for kw in keywords]
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/adGroupCriteria:mutate',
+            json={'operations': operations, 'partialFailure': True},
+        )
+
+    def _create_responsive_search_ad(self, account, ad_group_resource_name: str, spec: CampaignSpec) -> None:
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/adGroupAds:mutate',
+            json={'operations': [{'create': {
+                'adGroup': ad_group_resource_name,
+                'status': 'PAUSED',
+                'ad': {
+                    'finalUrls': [spec.landing_url] if spec.landing_url else [],
+                    'responsiveSearchAd': {
+                        'headlines': [{'text': h} for h in spec.headlines[:15]],
+                        'descriptions': [{'text': d} for d in spec.descriptions[:4]],
+                    },
+                },
+            }}]},
+        )
 
     def update_campaign(self, account, external_campaign_id: str, spec: CampaignSpec) -> ProviderCampaign:
         if not _is_live():
@@ -241,15 +313,28 @@ class GoogleAdsProvider(AdvertisingProvider):
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _build_campaign_payload(spec: CampaignSpec) -> dict:
-        """Monta o payload de criação de uma campanha Search simples de geração de leads."""
+    def _build_campaign_payload(spec: CampaignSpec, budget_resource_name: str) -> dict:
+        """Monta o payload de criação de uma campanha Search simples de geração de leads.
+
+        Nasce sempre PAUSED — nunca é ativada automaticamente pela integração,
+        precisa de uma ação explícita (resume) para começar a veicular e gastar.
+        """
         return {
             'operations': [{'create': {
                 'name': spec.name,
                 'advertisingChannelType': 'SEARCH',
                 'status': 'PAUSED',
-                'campaignBudget': {'amountMicros': int(spec.daily_budget * 1_000_000)},
+                'campaignBudget': budget_resource_name,
                 'manualCpc': {},
+                'networkSettings': {
+                    'targetGoogleSearch': True,
+                    'targetSearchNetwork': True,
+                    'targetContentNetwork': False,
+                    'targetPartnerSearchNetwork': False,
+                },
+                # Exigido pela Google (regulação de transparência de anúncios políticos da UE).
+                # Um canil vendendo filhotes nunca é publicidade política.
+                'containsEuPoliticalAdvertising': 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING',
             }}],
         }
 

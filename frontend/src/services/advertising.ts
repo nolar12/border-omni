@@ -1,4 +1,5 @@
 import api from './api';
+import type { PaginatedResponse } from '../types';
 
 export interface AdCampaign {
   id: number;
@@ -60,18 +61,36 @@ export interface PromoteLitterPayload {
   ad_headlines?: string[];
   ad_descriptions?: string[];
   ad_keywords?: string[];
+  audience_description?: string;
   client_request_id: string;
+}
+
+export interface GoogleAdsDiscoverResponse {
+  refresh_token: string;
+  accessible_customers: string[];
 }
 
 export const advertisingService = {
   async listAccounts(): Promise<AdvertisingAccount[]> {
-    const { data } = await api.get<AdvertisingAccount[]>('/advertising-accounts/');
+    const { data } = await api.get<PaginatedResponse<AdvertisingAccount> | AdvertisingAccount[]>('/advertising-accounts/');
+    return Array.isArray(data) ? data : data.results;
+  },
+
+  /** Passo 1: troca o code do popup do Google Identity Services pelo refresh_token + contas acessíveis. */
+  async googleAdsDiscover(code: string): Promise<GoogleAdsDiscoverResponse> {
+    const { data } = await api.post<GoogleAdsDiscoverResponse>('/advertising/google-ads/oauth/discover/', { code });
+    return data;
+  },
+
+  /** Passo 2: usuário escolheu o customer_id — persiste a AdvertisingAccount. */
+  async googleAdsFinalize(payload: { refresh_token: string; customer_id: string; login_customer_id?: string }): Promise<AdvertisingAccount> {
+    const { data } = await api.post<AdvertisingAccount>('/advertising/google-ads/oauth/finalize/', payload);
     return data;
   },
 
   async listCampaigns(): Promise<AdCampaign[]> {
-    const { data } = await api.get<AdCampaign[]>('/ad-campaigns/');
-    return data;
+    const { data } = await api.get<PaginatedResponse<AdCampaign> | AdCampaign[]>('/ad-campaigns/');
+    return Array.isArray(data) ? data : data.results;
   },
 
   async promoteLitter(payload: PromoteLitterPayload): Promise<AdCampaign> {
