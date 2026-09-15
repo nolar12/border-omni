@@ -151,10 +151,10 @@ class GoogleAdsProvider(AdvertisingProvider):
         campaign_resource_name = result.get('resourceName') or ''
         external_id = campaign_resource_name.split('/')[-1] or ''
 
-        # Grupo de anúncios + palavras-chave + anúncio ficam melhor esforço: se algo
-        # falhar aqui, a campanha (já criada de verdade no Google) não é perdida —
-        # só volta com um aviso, para o usuário completar manualmente se precisar.
-        content_error = ''
+        # Grupo de anúncios + palavras-chave + anúncio + segmentação geográfica ficam
+        # melhor esforço: se algo falhar aqui, a campanha (já criada de verdade no
+        # Google) não é perdida — só volta com um aviso, para completar manualmente.
+        warnings = []
         try:
             ad_group_resource_name = self._create_ad_group(account, campaign_resource_name, spec)
             if spec.keywords:
@@ -163,9 +163,69 @@ class GoogleAdsProvider(AdvertisingProvider):
                 self._create_responsive_search_ad(account, ad_group_resource_name, spec)
         except GoogleAdsProviderError as exc:
             logger.exception('GoogleAdsProvider: falha ao configurar grupo de anúncios/palavras-chave/anúncio')
-            content_error = f'Campanha criada, mas houve um problema ao configurar o anúncio: {exc.user_message}'
+            warnings.append(f'anúncio: {exc.user_message}')
 
+        if spec.region:
+            try:
+                self._add_location_targeting(account, campaign_resource_name, spec.region)
+            except GoogleAdsProviderError as exc:
+                logger.exception('GoogleAdsProvider: falha ao configurar segmentação geográfica')
+                warnings.append(f'região: {exc.user_message}')
+
+        content_error = f'Campanha criada, mas houve um problema — {"; ".join(warnings)}' if warnings else ''
         return ProviderCampaign(external_id=external_id, status='active', raw=data, error_message=content_error)
+
+    def suggest_geo_target_constants(self, account, location_names: list[str], country_code: str = 'BR', locale: str = 'pt-BR') -> list[str]:
+        """
+        Resolve nomes de cidade/região em resource names de GeoTargetConstant
+        (serviço global, não por customer). A Google retorna várias sugestões por
+        termo buscado (a própria cidade, bairros, CEPs, cidades homônimas em outros
+        estados) — pega só a melhor (tipo "City", a primeira da lista) por termo,
+        para não acabar segmentando bairros/CEPs irrelevantes junto.
+        """
+        if not location_names:
+            return []
+        data = self._request(
+            'POST', account, 'geoTargetConstants:suggest',
+            json={
+                'locale': locale,
+                'countryCode': country_code,
+                'locationNames': {'names': location_names[:25]},
+            },
+        )
+        best_by_term: dict[str, dict] = {}
+        for suggestion in data.get('geoTargetConstantSuggestions', []):
+            term = suggestion.get('searchTerm', '')
+            gtc = suggestion.get('geoTargetConstant', {})
+            current_best = best_by_term.get(term)
+            # Prioriza o tipo "City"; entre iguais, mantém o primeiro (mais relevante).
+            if current_best is None or (gtc.get('targetType') == 'City' and current_best.get('targetType') != 'City'):
+                best_by_term[term] = gtc
+
+        return [gtc['resourceName'] for gtc in best_by_term.values() if gtc.get('resourceName')]
+
+    def _add_location_targeting(self, account, campaign_resource_name: str, region: str) -> None:
+        """Segmentação geográfica de verdade (restritiva) — a campanha só é elegível a
+        aparecer para buscas originadas nas localidades informadas em `region`
+        (nomes separados por vírgula, ex.: "Camboriú, Balneário Camboriú")."""
+        location_names = [n.strip() for n in region.split(',') if n.strip()]
+        if not location_names:
+            return
+
+        geo_resource_names = self.suggest_geo_target_constants(account, location_names)
+        if not geo_resource_names:
+            raise GoogleAdsProviderError(
+                f'Nenhuma localização encontrada para "{region}".', code='geo_target_not_found',
+            )
+
+        operations = [{'create': {
+            'campaign': campaign_resource_name,
+            'location': {'geoTargetConstant': resource_name},
+        }} for resource_name in geo_resource_names]
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/campaignCriteria:mutate',
+            json={'operations': operations},
+        )
 
     def _create_ad_group(self, account, campaign_resource_name: str, spec: CampaignSpec) -> str:
         data = self._request(

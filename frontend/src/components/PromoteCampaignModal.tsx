@@ -331,11 +331,13 @@ export default function PromoteCampaignModal({ litter: fixedLitter, onClose, onC
                 <div className="mt-1 px-3 py-2 rounded-lg bg-slate-900/60 text-slate-300 text-sm">Google Ads (Pesquisa)</div>
               </div>
               <div>
-                <label className="text-xs text-slate-400">Região</label>
+                <label className="text-xs text-slate-400">
+                  Região <span className="text-slate-500">(cidades separadas por vírgula — restringe de verdade onde o anúncio aparece)</span>
+                </label>
                 <input
                   value={region}
                   onChange={e => setRegion(e.target.value)}
-                  placeholder="Ex: Florianópolis/SC"
+                  placeholder="Ex: Camboriú, Balneário Camboriú, Itajaí"
                   className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-white text-sm"
                 />
               </div>
