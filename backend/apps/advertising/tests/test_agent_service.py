@@ -1,13 +1,15 @@
 import json
 from unittest.mock import patch, MagicMock
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.core.models import Organization
+from apps.kennel.models import Litter
 from apps.advertising.models import (
     AdvertisingAccount, AdCampaign, AdChatMessage, AdvertisingSettings,
-    AdCampaignBriefing, AdAgentDecision,
+    AdCampaignBriefing, AdAgentDecision, AdCampaignPlan,
 )
+from apps.advertising.providers.base import ProviderCampaign
 from apps.advertising.services.agent_service import AdvertisingAgentService
 from apps.advertising.services.skill_service import load_skill, format_briefing
 
@@ -291,6 +293,81 @@ class AdvertisingAgentServiceTests(TestCase):
         self.assertEqual(tool_result['metrics_now']['cost'], 250.0)
         self.assertEqual(tool_result['delta']['cost'], 150.0)
         self.assertEqual(tool_result['delta']['impressions'], 1000)
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_propose_campaign_plan_never_creates_a_real_campaign(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'propose_campaign_plan', {'daily_budget': 30, 'region': 'Itajaí'})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Aqui está a proposta, posso executar?')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Crie uma campanha para esta ninhada', openai_api_key='sk-test')
+
+        self.assertEqual(AdCampaignPlan.objects.count(), 1)
+        self.assertEqual(AdCampaign.objects.count(), 1)  # só a campanha do setUp — nenhuma nova criada
+        plan = AdCampaignPlan.objects.get()
+        self.assertEqual(plan.status, 'proposed')
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_execute_campaign_plan_without_confirmation_does_not_execute(self, mock_openai_cls):
+        plan = AdCampaignPlan.objects.create(organization=self.org, daily_budget=20, name='Plano X')
+
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'execute_campaign_plan', {'plan_id': plan.id})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Você confirma a criação?')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Pode criar', openai_api_key='sk-test')
+
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, 'proposed')
+        self.assertEqual(AdCampaign.objects.count(), 1)  # só a do setUp
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=True)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.create_campaign')
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_execute_campaign_plan_with_confirmation_creates_the_campaign(self, mock_openai_cls, mock_create):
+        mock_create.return_value = ProviderCampaign(external_id='dryrun-plan-x', status='active')
+        plan = AdCampaignPlan.objects.create(organization=self.org, daily_budget=20, name='Plano Y')
+
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'execute_campaign_plan', {'plan_id': plan.id, 'confirmed': True})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Campanha criada com sucesso.')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Confirmo, pode criar', openai_api_key='sk-test')
+
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, 'executed')
+        self.assertEqual(AdCampaign.objects.filter(name='Plano Y').count(), 1)
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_propose_campaign_plan_defaults_to_current_campaign_litter(self, mock_openai_cls):
+        litter = Litter.objects.create(organization=self.org, name='Ninhada Atual')
+        self.campaign.litter = litter
+        self.campaign.save(update_fields=['litter'])
+
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'propose_campaign_plan', {'daily_budget': 20})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Proposta pronta.')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Crie uma campanha para esta ninhada', openai_api_key='sk-test')
+
+        plan = AdCampaignPlan.objects.get()
+        self.assertEqual(plan.litter_id, litter.id)
 
     @patch('apps.advertising.services.agent_service.OpenAI')
     def test_chat_history_is_persisted_in_order(self, mock_openai_cls):

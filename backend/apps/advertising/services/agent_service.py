@@ -22,10 +22,12 @@ import logging
 
 from openai import OpenAI
 
-from apps.advertising.models import AdChatMessage, AdvertisingSettings, AdAgentDecision
+from apps.kennel.models import Litter
+from apps.advertising.models import AdChatMessage, AdvertisingSettings, AdAgentDecision, AdCampaignPlan
 from apps.advertising.providers import GoogleAdsProviderError
 from apps.advertising.services.campaign_service import CampaignService
 from apps.advertising.services.metrics_service import MetricsService
+from apps.advertising.services.campaign_plan_service import CampaignPlanService
 from apps.advertising.services import lead_funnel_service
 from apps.advertising.services.skill_service import load_skill, format_briefing
 
@@ -61,7 +63,14 @@ Quando o usuário perguntar como uma mudança passada se saiu ("como foi aquela
 mudança?", "aquilo funcionou?"), use get_decision_history para achar a decisão
 e depois evaluate_decision para comparar antes/depois com números reais. Se a
 ferramenta indicar has_before_snapshot=false, diga claramente que não há dado
-histórico suficiente para essa decisão específica — nunca estime ou invente."""
+histórico suficiente para essa decisão específica — nunca estime ou invente.
+
+Quando o usuário pedir para CRIAR uma campanha nova (ex.: "crie uma campanha
+para esta ninhada"), NUNCA execute direto: primeiro chame propose_campaign_plan,
+apresente o plano retornado de forma legível (orçamento, região, anúncios,
+palavras-chave, estimativa/justificativa) e peça aprovação explícita. Só chame
+execute_campaign_plan com confirmed=true depois que o usuário concordar
+claramente; se ele recusar ou pedir para descartar, chame reject_campaign_plan."""
 
 TOOLS = [
     {'type': 'function', 'function': {
@@ -161,6 +170,55 @@ TOOLS = [
             'required': ['keywords'],
         },
     }},
+    {'type': 'function', 'function': {
+        'name': 'propose_campaign_plan',
+        'description': (
+            'Monta uma PROPOSTA de campanha nova (ex.: quando o usuário pedir "crie uma campanha para esta '
+            'ninhada") e a salva como rascunho — NUNCA cria a campanha de verdade. Retorna o plano completo '
+            '(nome, orçamento, região, headlines/descriptions/keywords, negativas, estimativa) para você '
+            'apresentar em português, de forma legível, e pedir aprovação explícita ao usuário antes de '
+            'chamar execute_campaign_plan. Se litter_id não for informado, assume a ninhada desta campanha atual.'
+        ),
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'daily_budget': {'type': 'number', 'description': 'Orçamento diário proposto em reais (R$).'},
+                'litter_id': {'type': 'integer', 'description': 'ID da ninhada a promover; se omitido, usa a ninhada da campanha atual (se houver).'},
+                'name': {'type': 'string'},
+                'region': {'type': 'string', 'description': 'Cidades separadas por vírgula.'},
+                'radius_km': {'type': 'integer'},
+                'audience_description': {'type': 'string', 'description': 'Público-alvo, para gerar headlines/descriptions por IA.'},
+                'negative_keywords': {'type': 'array', 'items': {'type': 'string'}},
+                'justification': {'type': 'string', 'description': 'Sua estimativa/justificativa para esta proposta — o porquê do orçamento, região e segmentação escolhidos.'},
+            },
+            'required': ['daily_budget'],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'execute_campaign_plan',
+        'description': (
+            'Executa de fato um plano de campanha já proposto (cria a campanha real no Google Ads, pausada, '
+            'reaproveitando o mesmo fluxo do botão "Nova Campanha"). SÓ chame com confirmed=true depois que o '
+            'usuário aprovar explicitamente o resumo do plano — nunca antecipe essa confirmação.'
+        ),
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'plan_id': {'type': 'integer'},
+                'confirmed': {'type': 'boolean', 'description': 'true somente após o usuário aprovar explicitamente o plano.'},
+            },
+            'required': ['plan_id'],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'reject_campaign_plan',
+        'description': 'Descarta um plano de campanha proposto que o usuário não quis aprovar.',
+        'parameters': {
+            'type': 'object',
+            'properties': {'plan_id': {'type': 'integer'}},
+            'required': ['plan_id'],
+        },
+    }},
 ]
 
 
@@ -215,6 +273,27 @@ class AdvertisingAgentService:
     def _max_auto_budget_change_percent(self) -> int:
         ad_settings = AdvertisingSettings.objects.filter(organization=self.organization).first()
         return ad_settings.max_auto_budget_change_percent if ad_settings else 20
+
+    @staticmethod
+    def _plan_payload(plan) -> dict:
+        return {
+            'plan_id': plan.id,
+            'status': plan.status,
+            'name': plan.name,
+            'litter_id': plan.litter_id,
+            'daily_budget': str(plan.daily_budget),
+            'region': plan.region,
+            'radius_km': plan.radius_km,
+            'bid_strategy': plan.bid_strategy,
+            'landing_url': plan.landing_url,
+            'headlines': plan.headlines,
+            'descriptions': plan.descriptions,
+            'keywords': plan.keywords,
+            'negative_keywords': plan.negative_keywords,
+            'conversions_tracked': plan.conversions_tracked,
+            'tracking_notes': plan.tracking_notes,
+            'justification': plan.justification,
+        }
 
     def _execute_tool(self, name: str, arguments: dict) -> dict:
         try:
@@ -350,6 +429,45 @@ class AdvertisingAgentService:
                 if blocked:
                     result['blocked_by_briefing'] = blocked
                 return result
+
+            if name == 'propose_campaign_plan':
+                litter_id = arguments.get('litter_id') or getattr(self.campaign, 'litter_id', None)
+                litter = Litter.objects.filter(organization=self.organization, id=litter_id).first() if litter_id else None
+                plan = CampaignPlanService().propose(
+                    organization=self.organization,
+                    litter=litter,
+                    data={
+                        'daily_budget': arguments['daily_budget'],
+                        'name': arguments.get('name', ''),
+                        'region': arguments.get('region', ''),
+                        'radius_km': arguments.get('radius_km'),
+                        'audience_description': arguments.get('audience_description', ''),
+                        'negative_keywords': arguments.get('negative_keywords', []),
+                    },
+                    justification=arguments.get('justification', ''),
+                )
+                return {'requires_approval': True, 'plan': self._plan_payload(plan)}
+
+            if name == 'execute_campaign_plan':
+                if not arguments.get('confirmed'):
+                    try:
+                        plan = AdCampaignPlan.objects.get(organization=self.organization, id=arguments['plan_id'])
+                    except AdCampaignPlan.DoesNotExist:
+                        return {'error': 'Plano não encontrado.'}
+                    return {
+                        'requires_approval': True,
+                        'plan': self._plan_payload(plan),
+                        'message': 'Peça confirmação explícita ao usuário antes de chamar esta ferramenta de novo com confirmed=true.',
+                    }
+                campaign = CampaignPlanService().execute(organization=self.organization, plan_id=arguments['plan_id'])
+                return {
+                    'status': campaign.status, 'campaign_id': campaign.id,
+                    'external_campaign_id': campaign.external_campaign_id, 'error_message': campaign.error_message,
+                }
+
+            if name == 'reject_campaign_plan':
+                plan = CampaignPlanService().reject(organization=self.organization, plan_id=arguments['plan_id'])
+                return {'status': plan.status}
 
             return {'error': f'Ferramenta desconhecida: {name}'}
         except GoogleAdsProviderError as exc:

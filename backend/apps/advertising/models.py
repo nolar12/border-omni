@@ -331,6 +331,58 @@ class AdCampaignBriefing(models.Model):
         return f'Briefing({self.campaign.name})'
 
 
+class AdCampaignPlan(models.Model):
+    """
+    Proposta de campanha nova gerada pelo agente (chat) — nunca executada
+    direto. O usuário vê um resumo legível e só depois de aprovar
+    explicitamente é que CampaignPlanService.execute() usa o mesmo
+    CampaignService.create_campaign já usado pelo fluxo manual (modal
+    "Promover"/"Nova Campanha").
+    """
+    STATUS_CHOICES = [
+        ('proposed', 'Proposta'),
+        ('executed', 'Executada'),
+        ('rejected', 'Rejeitada'),
+    ]
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='ad_campaign_plans')
+    litter = models.ForeignKey(
+        'kennel.Litter', on_delete=models.SET_NULL, null=True, blank=True, related_name='ad_campaign_plans'
+    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='proposed')
+    name = models.CharField(max_length=200)
+    objective = models.CharField(max_length=20, default='leads')
+    campaign_type = models.CharField(max_length=20, default='search')
+    daily_budget = models.DecimalField(max_digits=10, decimal_places=2)
+    region = models.CharField(max_length=200, blank=True, default='')
+    radius_km = models.PositiveIntegerField(null=True, blank=True)
+    bid_strategy = models.CharField(max_length=50, default='manual_cpc')
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    landing_url = models.URLField(max_length=500, blank=True, default='')
+    headlines = models.JSONField(default=list, blank=True)
+    descriptions = models.JSONField(default=list, blank=True)
+    keywords = models.JSONField(default=list, blank=True)
+    negative_keywords = models.JSONField(default=list, blank=True)
+    # Só informativo — o disparo de conversões já é automático via
+    # ConversionService assim que houver atribuição de clique para o lead.
+    conversions_tracked = models.JSONField(default=list, blank=True)
+    tracking_notes = models.TextField(blank=True, default='')
+    justification = models.TextField(blank=True, default='')
+    resulting_campaign = models.ForeignKey(
+        AdCampaign, on_delete=models.SET_NULL, null=True, blank=True, related_name='originating_plans'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'ad_campaign_plans'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Plan({self.name}) [{self.status}]'
+
+
 class AdAgentDecision(models.Model):
     """
     Memória de decisões do agente — toda ação que muda algo (orçamento, pausa,
