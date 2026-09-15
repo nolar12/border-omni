@@ -153,12 +153,12 @@ function CampaignRow({ campaign, onChanged }: { campaign: AdCampaign; onChanged:
         <div className="flex items-center gap-2 shrink-0">
           {campaign.external_campaign_id && !campaign.external_campaign_id.startsWith('dryrun-') && (
             <a
-              href={`https://ads.google.com/aw/campaigns/campaign?campaignid=${campaign.external_campaign_id}`}
+              href={`https://ads.google.com/aw/campaigns?campaignId=${campaign.external_campaign_id}`}
               target="_blank"
               rel="noopener noreferrer"
               className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
             >
-              Ver no Google Ads ↗
+              Ver campanhas no Google Ads ↗
             </a>
           )}
           <button

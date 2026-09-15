@@ -279,12 +279,12 @@ export default function PromoteCampaignModal({ litter: fixedLitter, onClose, onC
               </p>
               {campaign.external_campaign_id && !campaign.external_campaign_id.startsWith('dryrun-') && (
                 <a
-                  href={`https://ads.google.com/aw/campaigns/campaign?campaignid=${campaign.external_campaign_id}`}
+                  href={`https://ads.google.com/aw/campaigns?campaignId=${campaign.external_campaign_id}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-block px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
                 >
-                  Ver no Google Ads ↗
+                  Ver campanhas no Google Ads ↗
                 </a>
               )}
               {error && <p className="text-sm text-red-400">{error}</p>}
