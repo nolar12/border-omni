@@ -390,7 +390,21 @@ class GoogleAdsProvider(AdvertisingProvider):
         self._set_campaign_status(account, external_campaign_id, 'PAUSED')
 
     def resume_campaign(self, account, external_campaign_id: str) -> None:
+        """
+        Reativar a campanha sozinha NÃO basta: toda campanha/anúncio criado por
+        este sistema nasce PAUSED em todos os 3 níveis (campanha, grupo de
+        anúncios e o próprio anúncio) como proteção contra ativação acidental
+        (ver _build_campaign_payload/_create_ad_group/_create_responsive_search_ad).
+        Sem reativar também o grupo e o anúncio, a campanha fica com status
+        ENABLED mas o Google Ads mostra "Not eligible — all ad groups/ads are
+        paused" e nada é veiculado de fato.
+        """
         self._set_campaign_status(account, external_campaign_id, 'ENABLED')
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] resume ad groups/ads id={external_campaign_id}')
+            return
+        self._enable_paused_ad_groups(account, external_campaign_id)
+        self._enable_paused_ads(account, external_campaign_id)
 
     def _set_campaign_status(self, account, external_campaign_id: str, status: str) -> None:
         if not _is_live():
@@ -402,6 +416,44 @@ class GoogleAdsProvider(AdvertisingProvider):
                 'resourceName': f'customers/{account.customer_id}/campaigns/{external_campaign_id}',
                 'status': status,
             }, 'updateMask': 'status'}]},
+        )
+
+    def _enable_paused_ad_groups(self, account, external_campaign_id: str) -> None:
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': (
+                'SELECT ad_group.resource_name FROM ad_group '
+                f'WHERE campaign.id = {external_campaign_id} AND ad_group.status = PAUSED'
+            )},
+        )
+        resource_names = [row['adGroup']['resourceName'] for row in data.get('results') or []]
+        if not resource_names:
+            return
+        operations = [{'update': {
+            'resourceName': rn, 'status': 'ENABLED',
+        }, 'updateMask': 'status'} for rn in resource_names]
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/adGroups:mutate',
+            json={'operations': operations, 'partialFailure': True},
+        )
+
+    def _enable_paused_ads(self, account, external_campaign_id: str) -> None:
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': (
+                'SELECT ad_group_ad.resource_name FROM ad_group_ad '
+                f'WHERE campaign.id = {external_campaign_id} AND ad_group_ad.status = PAUSED'
+            )},
+        )
+        resource_names = [row['adGroupAd']['resourceName'] for row in data.get('results') or []]
+        if not resource_names:
+            return
+        operations = [{'update': {
+            'resourceName': rn, 'status': 'ENABLED',
+        }, 'updateMask': 'status'} for rn in resource_names]
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/adGroupAds:mutate',
+            json={'operations': operations, 'partialFailure': True},
         )
 
     # ── Leitura ──────────────────────────────────────────────────────────────

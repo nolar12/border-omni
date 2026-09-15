@@ -100,6 +100,73 @@ class SearchTermsAndNegativesTests(TestCase):
         self.assertEqual({op['create']['keyword']['text'] for op in operations}, {'grátis', 'adoção'})
 
 
+class ResumeCampaignTests(TestCase):
+    """
+    Toda campanha/grupo/anúncio criado por este sistema nasce PAUSED nos 3
+    níveis (segurança contra ativação acidental) — resume_campaign precisa
+    reativar TODOS os níveis, não só a campanha, senão o Google Ads mostra
+    "Not eligible: all ad groups/ads are paused" mesmo com campaign.status
+    ENABLED (bug real observado em produção).
+    """
+
+    def setUp(self):
+        self.org = Organization.objects.create(name='Canil Resume')
+        self.account = AdvertisingAccount.objects.create(organization=self.org, customer_id='2059070343')
+
+    def test_dry_run_does_not_call_the_api(self):
+        with patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request') as mock_request:
+            GoogleAdsProvider().resume_campaign(self.account, 'ext-1')
+        mock_request.assert_not_called()
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request')
+    def test_resume_enables_campaign_ad_groups_and_ads(self, mock_request):
+        def fake_request(method, account, path, **kwargs):
+            if path.endswith('campaigns:mutate'):
+                return {'results': [{}]}
+            if path.endswith('adGroups:mutate'):
+                return {'results': [{}]}
+            if path.endswith('adGroupAds:mutate'):
+                return {'results': [{}]}
+            if path.endswith('googleAds:search'):
+                query = kwargs['json']['query']
+                if 'FROM ad_group_ad' in query:
+                    return {'results': [{'adGroupAd': {'resourceName': 'customers/2059070343/adGroupAds/1~1'}}]}
+                if 'FROM ad_group ' in query:
+                    return {'results': [{'adGroup': {'resourceName': 'customers/2059070343/adGroups/1'}}]}
+            raise AssertionError(f'unexpected call: {path} {kwargs}')
+
+        mock_request.side_effect = fake_request
+        GoogleAdsProvider().resume_campaign(self.account, '123')
+
+        called_paths = [call.args[2] for call in mock_request.call_args_list]
+        self.assertIn('customers/2059070343/campaigns:mutate', called_paths)
+        self.assertIn('customers/2059070343/adGroups:mutate', called_paths)
+        self.assertIn('customers/2059070343/adGroupAds:mutate', called_paths)
+
+        ad_group_mutate = next(c for c in mock_request.call_args_list if c.args[2] == 'customers/2059070343/adGroups:mutate')
+        self.assertEqual(ad_group_mutate.kwargs['json']['operations'][0]['update']['status'], 'ENABLED')
+        ad_mutate = next(c for c in mock_request.call_args_list if c.args[2] == 'customers/2059070343/adGroupAds:mutate')
+        self.assertEqual(ad_mutate.kwargs['json']['operations'][0]['update']['status'], 'ENABLED')
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request')
+    def test_resume_skips_mutate_calls_when_nothing_is_paused(self, mock_request):
+        def fake_request(method, account, path, **kwargs):
+            if path.endswith('campaigns:mutate'):
+                return {'results': [{}]}
+            if path.endswith('googleAds:search'):
+                return {'results': []}  # nada PAUSED
+            raise AssertionError(f'unexpected call: {path}')
+
+        mock_request.side_effect = fake_request
+        GoogleAdsProvider().resume_campaign(self.account, '123')
+
+        called_paths = [call.args[2] for call in mock_request.call_args_list]
+        self.assertNotIn('customers/2059070343/adGroups:mutate', called_paths)
+        self.assertNotIn('customers/2059070343/adGroupAds:mutate', called_paths)
+
+
 class UploadConversionDataManagerTests(TestCase):
     """
     upload_conversion migrou de customers/{id}:uploadClickConversions (Google Ads
