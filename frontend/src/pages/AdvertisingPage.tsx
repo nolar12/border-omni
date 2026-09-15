@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { advertisingService, type AdCampaign, type AdMetric } from '../services/advertising';
+import PromoteCampaignModal from '../components/PromoteCampaignModal';
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Rascunho',
@@ -150,6 +151,16 @@ function CampaignRow({ campaign, onChanged }: { campaign: AdCampaign; onChanged:
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {campaign.external_campaign_id && !campaign.external_campaign_id.startsWith('dryrun-') && (
+            <a
+              href={`https://ads.google.com/aw/campaigns/campaign?campaignid=${campaign.external_campaign_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
+            >
+              Ver no Google Ads ↗
+            </a>
+          )}
           <button
             onClick={() => setExpanded(e => !e)}
             className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium"
@@ -175,6 +186,7 @@ function CampaignRow({ campaign, onChanged }: { campaign: AdCampaign; onChanged:
 export default function AdvertisingPage() {
   const [campaigns, setCampaigns] = useState<AdCampaign[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showNewCampaign, setShowNewCampaign] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -191,13 +203,28 @@ export default function AdvertisingPage() {
     setCampaigns(prev => prev.map(c => c.id === updated.id ? updated : c));
   }
 
+  function handleCreated() {
+    load();
+  }
+
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-white text-2xl font-bold">Anúncios (Google Ads)</h1>
-        <p className="text-slate-400 text-sm mt-0.5">
-          Campanhas criadas a partir de "Promover" em cada ninhada.
-        </p>
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 className="text-white text-2xl font-bold">Anúncios (Google Ads)</h1>
+          <p className="text-slate-400 text-sm mt-0.5">
+            Campanhas criadas a partir de "Promover" em cada ninhada, ou direto por aqui.
+          </p>
+        </div>
+        <button
+          onClick={() => setShowNewCampaign(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-sm font-semibold transition-colors"
+        >
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          Nova Campanha
+        </button>
       </div>
 
       {loading ? (
@@ -215,6 +242,13 @@ export default function AdvertisingPage() {
             <CampaignRow key={c.id} campaign={c} onChanged={handleChanged} />
           ))}
         </div>
+      )}
+
+      {showNewCampaign && (
+        <PromoteCampaignModal
+          onClose={() => setShowNewCampaign(false)}
+          onCreated={handleCreated}
+        />
       )}
     </div>
   );
