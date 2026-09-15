@@ -54,3 +54,50 @@ def funnel_summary(campaign) -> dict:
         'total_leads': attributions.count(),
         'stages': stage_counts,
     }
+
+
+def _grouped_stage_breakdown(campaign, group_key) -> list[dict]:
+    """
+    Agrupa os leads atribuídos a esta campanha pela chave `group_key(attribution)`
+    (cidade, keyword etc.) e conta por estágio comercial — mesma lógica de
+    funnel_summary, só que quebrada por dimensão em vez de agregada.
+
+    Não inclui gasto/cliques do Google Ads por grupo: essa quebra ainda não
+    existe (exigiria resolver geoTargetConstant/relatório por keyword no Google
+    Ads e cruzar com esta dimensão) — o agente deve deixar claro que só o lado
+    comercial (CRM) está quebrado por aqui, nunca inventar um custo por grupo.
+    """
+    attributions = campaign.lead_attributions.select_related('lead', 'lead__profile').all()
+    grouped: dict[str, dict[str, int]] = {}
+    for attribution in attributions:
+        key = (group_key(attribution) or '').strip() or 'Não informado'
+        stage_counts = grouped.setdefault(key, {stage: 0 for stage in FUNNEL_STAGES})
+        stage_counts[commercial_stage(attribution.lead)] += 1
+
+    result = []
+    for key, stages in grouped.items():
+        qualified = stages['QUALIFIED'] + stages['NEGOTIATING'] + stages['RESERVED'] + stages['SOLD']
+        reservations = stages['RESERVED'] + stages['SOLD']
+        result.append({
+            'group': key,
+            'total_leads': sum(stages.values()),
+            'qualified_leads': qualified,
+            'reservations': reservations,
+            'sales': stages['SOLD'],
+            'stages': stages,
+        })
+    return sorted(result, key=lambda row: -row['total_leads'])
+
+
+def breakdown_by_city(campaign) -> list[dict]:
+    """Quebra os leads atribuídos por cidade (Lead.city) — usado para responder
+    'qual cidade está performando melhor?' com dados reais do CRM."""
+    return _grouped_stage_breakdown(campaign, lambda attribution: attribution.lead.city)
+
+
+def breakdown_by_keyword(campaign) -> list[dict]:
+    """Quebra os leads atribuídos pela keyword do ValueTrack que gerou o clique
+    — usado para responder 'qual palavra-chave trouxe compradores?'. É a
+    keyword que casou o clique (ValueTrack), não o search_term literal digitado
+    pelo usuário — os dois nunca devem ser tratados como sinônimos."""
+    return _grouped_stage_breakdown(campaign, lambda attribution: attribution.keyword)

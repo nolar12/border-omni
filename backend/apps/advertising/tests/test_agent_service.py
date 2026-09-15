@@ -369,6 +369,52 @@ class AdvertisingAgentServiceTests(TestCase):
         plan = AdCampaignPlan.objects.get()
         self.assertEqual(plan.litter_id, litter.id)
 
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_get_city_breakdown_tool_returns_real_city_data(self, mock_openai_cls):
+        from apps.leads.models import Lead
+        from apps.advertising.models import AdLeadAttribution
+        lead = Lead.objects.create(organization=self.org, phone='554891115555', city='Itajaí', status='QUALIFIED')
+        AdLeadAttribution.objects.create(lead=lead, campaign=self.campaign, gclid='g1')
+
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'get_city_breakdown', {})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Itajaí está performando melhor.')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Qual cidade está melhor?', openai_api_key='sk-test')
+
+        tool_result = json.loads(mock_client.chat.completions.create.call_args_list[1][1]['messages'][-1]['content'])
+        self.assertEqual(tool_result['cities'][0]['group'], 'Itajaí')
+        self.assertEqual(tool_result['cities'][0]['qualified_leads'], 1)
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_get_keyword_breakdown_tool_never_confuses_keyword_with_search_term(self, mock_openai_cls):
+        from apps.leads.models import Lead, LeadProfile
+        from apps.advertising.models import AdLeadAttribution
+        lead = Lead.objects.create(organization=self.org, phone='554891116666')
+        LeadProfile.objects.create(lead=lead, is_reserved=True, is_purchased=True)
+        AdLeadAttribution.objects.create(
+            lead=lead, campaign=self.campaign, gclid='g1',
+            keyword='border collie filhote', search_term='quanto custa um filhote de border collie',
+        )
+
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'get_keyword_breakdown', {})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='A keyword "border collie filhote" trouxe uma venda.')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Qual keyword trouxe compradores?', openai_api_key='sk-test')
+
+        tool_result = json.loads(mock_client.chat.completions.create.call_args_list[1][1]['messages'][-1]['content'])
+        self.assertEqual(tool_result['keywords'][0]['group'], 'border collie filhote')
+        self.assertEqual(tool_result['keywords'][0]['sales'], 1)
+
     @patch('apps.advertising.services.docs_research_service.requests.get')
     @patch('apps.advertising.services.agent_service.OpenAI')
     def test_fetch_official_documentation_tool_is_read_only_and_not_logged_as_action(self, mock_openai_cls, mock_get):

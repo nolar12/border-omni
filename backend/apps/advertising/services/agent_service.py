@@ -71,7 +71,13 @@ para esta ninhada"), NUNCA execute direto: primeiro chame propose_campaign_plan,
 apresente o plano retornado de forma legível (orçamento, região, anúncios,
 palavras-chave, estimativa/justificativa) e peça aprovação explícita. Só chame
 execute_campaign_plan com confirmed=true depois que o usuário concordar
-claramente; se ele recusar ou pedir para descartar, chame reject_campaign_plan."""
+claramente; se ele recusar ou pedir para descartar, chame reject_campaign_plan.
+
+Para "qual cidade está melhor?" use get_city_breakdown; para "qual palavra-chave
+trouxe compradores/reservas?" use get_keyword_breakdown — lembre-se de que
+keyword (o termo do ValueTrack que casou o clique) e search_term (o texto real
+digitado, de get_search_terms) são coisas diferentes, nunca trate como
+sinônimos."""
 
 TOOLS = [
     {'type': 'function', 'function': {
@@ -96,6 +102,25 @@ TOOLS = [
     {'type': 'function', 'function': {
         'name': 'get_lead_funnel',
         'description': 'Retorna o funil comercial dos leads originados desta campanha (visitas, cliques no WhatsApp, e leads por estágio: NEW/CONTACTED/QUALIFIED/UNQUALIFIED/NEGOTIATING/RESERVED/SOLD/LOST) — dados reais do CRM, não do Google Ads.',
+        'parameters': {'type': 'object', 'properties': {}, 'required': []},
+    }},
+    {'type': 'function', 'function': {
+        'name': 'get_city_breakdown',
+        'description': (
+            'Quebra os leads desta campanha por cidade (dado real do CRM: quantos leads, qualificados, '
+            'reservas e vendas por cidade) — use para responder "qual cidade está performando melhor?". '
+            'Não inclui gasto por cidade (essa quebra de custo por localidade ainda não existe) — nunca '
+            'estime ou invente um custo por cidade; fale só do que a ferramenta retornar.'
+        ),
+        'parameters': {'type': 'object', 'properties': {}, 'required': []},
+    }},
+    {'type': 'function', 'function': {
+        'name': 'get_keyword_breakdown',
+        'description': (
+            'Quebra os leads desta campanha pela keyword do ValueTrack que casou o clique (não é o texto '
+            'literal que a pessoa buscou — isso é o search_term, de get_search_terms) — use para responder '
+            '"qual palavra-chave trouxe compradores/reservas/leads qualificados?".'
+        ),
         'parameters': {'type': 'object', 'properties': {}, 'required': []},
     }},
     {'type': 'function', 'function': {
@@ -330,6 +355,12 @@ class AdvertisingAgentService:
             if name == 'get_lead_funnel':
                 return lead_funnel_service.funnel_summary(self.campaign)
 
+            if name == 'get_city_breakdown':
+                return {'cities': lead_funnel_service.breakdown_by_city(self.campaign)}
+
+            if name == 'get_keyword_breakdown':
+                return {'keywords': lead_funnel_service.breakdown_by_keyword(self.campaign)}
+
             if name == 'get_decision_history':
                 limit = arguments.get('limit', 10)
                 decisions = AdAgentDecision.objects.filter(campaign=self.campaign)[:limit]
@@ -538,7 +569,11 @@ class AdvertisingAgentService:
             for tool_call in choice.tool_calls:
                 args = json.loads(tool_call.function.arguments or '{}')
                 result = self._execute_tool(tool_call.function.name, args)
-                if tool_call.function.name not in ('get_campaign_summary', 'sync_metrics', 'get_search_terms', 'get_lead_funnel', 'get_decision_history', 'evaluate_decision', 'fetch_official_documentation'):
+                if tool_call.function.name not in (
+                    'get_campaign_summary', 'sync_metrics', 'get_search_terms', 'get_lead_funnel',
+                    'get_city_breakdown', 'get_keyword_breakdown', 'get_decision_history',
+                    'evaluate_decision', 'fetch_official_documentation',
+                ):
                     actions_taken.append({'tool': tool_call.function.name, 'arguments': args, 'result': result})
                 messages.append({
                     'role': 'tool',
