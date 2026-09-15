@@ -37,12 +37,31 @@ class ConversionServiceTests(TestCase):
         ConversionService().record_event(organization=self.org, lead=self.lead, event_type='qualified_lead')
         self.assertEqual(AdConversionUpload.objects.count(), 0)
 
-    def test_qualified_lead_skipped_without_conversion_action_mapping(self):
+    def test_qualified_lead_auto_creates_conversion_action_when_missing(self):
+        """Sem conversion_action configurada, o sistema cria uma automaticamente (modo dry-run em testes)."""
         AdLeadAttribution.objects.create(lead=self.lead, campaign=self.campaign, gclid='gclid-1')
         AdvertisingSettings.objects.create(organization=self.org, is_enabled=True)
         ConversionService().record_event(organization=self.org, lead=self.lead, event_type='qualified_lead')
+
         upload = AdConversionUpload.objects.get()
-        self.assertEqual(upload.status, 'skipped')
+        self.assertEqual(upload.status, 'sent')
+        self.assertTrue(upload.conversion_action)
+
+        self.account.refresh_from_db()
+        self.assertIn('qualified_lead', self.account.metadata.get('conversion_actions', {}))
+
+    def test_qualified_lead_reuses_existing_conversion_action(self):
+        self.account.metadata = {'conversion_actions': {'qualified_lead': 'customers/1/conversionActions/9'}}
+        self.account.save(update_fields=['metadata'])
+        AdLeadAttribution.objects.create(lead=self.lead, campaign=self.campaign, gclid='gclid-1')
+        AdvertisingSettings.objects.create(organization=self.org, is_enabled=True)
+
+        with patch('apps.advertising.providers.google_ads.GoogleAdsProvider.create_conversion_action') as mock_create:
+            ConversionService().record_event(organization=self.org, lead=self.lead, event_type='qualified_lead')
+            mock_create.assert_not_called()
+
+        upload = AdConversionUpload.objects.get()
+        self.assertEqual(upload.conversion_action, 'customers/1/conversionActions/9')
 
     @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.upload_conversion')
     def test_qualified_lead_uploads_when_fully_configured(self, mock_upload):

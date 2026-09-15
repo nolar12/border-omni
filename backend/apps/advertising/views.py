@@ -15,6 +15,7 @@ from apps.advertising.models import (
 )
 from apps.advertising.providers import GoogleAdsProviderError, exchange_code_for_tokens, list_accessible_customers
 from apps.advertising.services.campaign_service import CampaignService
+from apps.advertising.services.metrics_service import MetricsService
 from apps.advertising.services.ai_copy_service import generate_ad_copy_with_fallback
 from apps.advertising.serializers import (
     AdvertisingAccountSerializer, AdCampaignSerializer, AdCampaignDetailSerializer,
@@ -133,6 +134,15 @@ class AdCampaignViewSet(viewsets.ModelViewSet):
     def metrics(self, request, pk=None):
         campaign = self.get_object()
         return Response(AdMetricSerializer(campaign.metrics.all(), many=True).data)
+
+    @action(detail=True, methods=['post'], url_path='sync_metrics')
+    def sync_metrics(self, request, pk=None):
+        campaign = self.get_object()
+        try:
+            synced = MetricsService().sync_campaign_metrics(campaign)
+        except GoogleAdsProviderError as exc:
+            return Response({'error': exc.user_message}, status=400)
+        return Response({'synced': synced, 'metrics': AdMetricSerializer(campaign.metrics.all(), many=True).data})
 
 
 class AdvertisingSettingsView(APIView):

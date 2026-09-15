@@ -22,6 +22,8 @@ const STATUS_COLORS: Record<string, string> = {
 function MetricsPanel({ campaignId }: { campaignId: number }) {
   const [metrics, setMetrics] = useState<AdMetric[] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     advertisingService.getMetrics(campaignId)
@@ -29,15 +31,43 @@ function MetricsPanel({ campaignId }: { campaignId: number }) {
       .finally(() => setLoading(false));
   }, [campaignId]);
 
+  async function handleSync() {
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const result = await advertisingService.syncMetrics(campaignId);
+      setMetrics(result.metrics);
+    } catch (err) {
+      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setSyncError(message || 'Não foi possível sincronizar agora.');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const syncButton = (
+    <button
+      onClick={handleSync}
+      disabled={syncing}
+      className="text-[11px] text-blue-400 hover:text-blue-300 disabled:opacity-50 font-medium"
+    >
+      {syncing ? 'Sincronizando…' : 'Sincronizar agora'}
+    </button>
+  );
+
   if (loading) {
     return <p className="text-xs text-slate-500 px-4 pb-3">Carregando métricas…</p>;
   }
 
   if (!metrics || metrics.length === 0) {
     return (
-      <p className="text-xs text-slate-500 px-4 pb-3">
-        Ainda sem métricas sincronizadas (a sincronização diária roda automaticamente enquanto a campanha estiver ativa).
-      </p>
+      <div className="px-4 pb-3 space-y-1">
+        <p className="text-xs text-slate-500">
+          Ainda sem métricas sincronizadas (a sincronização automática roda a cada 6 horas enquanto a campanha estiver ativa).
+        </p>
+        {syncButton}
+        {syncError && <p className="text-xs text-red-400">{syncError}</p>}
+      </div>
     );
   }
 
@@ -53,7 +83,12 @@ function MetricsPanel({ campaignId }: { campaignId: number }) {
   const cpl = totals.conversions > 0 ? totals.cost / totals.conversions : null;
 
   return (
-    <div className="px-4 pb-4 grid grid-cols-2 sm:grid-cols-5 gap-3">
+    <div className="px-4 pb-4 space-y-2">
+      <div className="flex items-center justify-between">
+        {syncButton}
+        {syncError && <p className="text-xs text-red-400">{syncError}</p>}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
       <div className="bg-slate-900/60 rounded-lg p-2.5">
         <p className="text-[10px] text-slate-500 uppercase">Investimento</p>
         <p className="text-white text-sm font-semibold">R$ {totals.cost.toFixed(2)}</p>
@@ -73,6 +108,7 @@ function MetricsPanel({ campaignId }: { campaignId: number }) {
       <div className="bg-slate-900/60 rounded-lg p-2.5">
         <p className="text-[10px] text-slate-500 uppercase">CPL</p>
         <p className="text-white text-sm font-semibold">{cpl !== null ? `R$ ${cpl.toFixed(2)}` : '—'}</p>
+      </div>
       </div>
     </div>
   );

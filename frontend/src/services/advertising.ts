@@ -112,4 +112,9 @@ export const advertisingService = {
     const { data } = await api.get<AdMetric[]>(`/ad-campaigns/${id}/metrics/`);
     return data;
   },
+
+  async syncMetrics(id: number): Promise<{ synced: number; metrics: AdMetric[] }> {
+    const { data } = await api.post<{ synced: number; metrics: AdMetric[] }>(`/ad-campaigns/${id}/sync_metrics/`);
+    return data;
+  },
 };

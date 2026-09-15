@@ -94,3 +94,8 @@ class AdvertisingProvider(ABC):
     @abstractmethod
     def upload_conversion(self, account, conversion: ConversionSpec) -> ProviderResult:
         ...
+
+    @abstractmethod
+    def create_conversion_action(self, account, name: str, category: str) -> str:
+        """Cria a ação de conversão no provedor e retorna seu identificador/resource name."""
+        ...

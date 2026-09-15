@@ -14,6 +14,20 @@ UPLOADABLE_EVENTS = {
     'sale': 'send_sale_events',
 }
 
+# Categoria da Conversion Action no Google Ads, por tipo de evento interno —
+# usada apenas na primeira vez, quando a ação ainda não existe e precisa ser criada.
+EVENT_CATEGORIES = {
+    'qualified_lead': 'QUALIFIED_LEAD',
+    'reservation': 'LEAD',
+    'sale': 'PURCHASE',
+}
+
+EVENT_LABELS = {
+    'qualified_lead': 'Lead Qualificado',
+    'reservation': 'Reserva',
+    'sale': 'Venda',
+}
+
 PROVIDERS = {
     'google_ads': GoogleAdsProvider,
 }
@@ -52,15 +66,21 @@ class ConversionService:
             return
 
         campaign = attribution.campaign
-        conversion_action = (campaign.advertising_account.metadata or {}).get('conversion_actions', {}).get(event.event_type)
-        if not conversion_action:
+        provider_cls = PROVIDERS.get(campaign.provider)
+        if not provider_cls:
             AdConversionUpload.objects.create(
-                organization=organization,
-                ad_event=event,
-                campaign=campaign,
-                gclid=attribution.gclid,
-                status='skipped',
-                error_message='Nenhuma conversion_action configurada para este tipo de evento.',
+                organization=organization, ad_event=event, campaign=campaign, gclid=attribution.gclid,
+                status='error', error_message=f'Provider "{campaign.provider}" não suportado.',
+            )
+            return
+
+        try:
+            conversion_action = self._ensure_conversion_action(campaign.advertising_account, event.event_type, provider_cls)
+        except GoogleAdsProviderError as exc:
+            logger.exception('ConversionService: falha ao criar conversion action')
+            AdConversionUpload.objects.create(
+                organization=organization, ad_event=event, campaign=campaign, gclid=attribution.gclid,
+                status='error', error_message=exc.user_message,
             )
             return
 
@@ -73,13 +93,6 @@ class ConversionService:
             conversion_value=value,
             status='pending',
         )
-
-        provider_cls = PROVIDERS.get(campaign.provider)
-        if not provider_cls:
-            upload.status = 'error'
-            upload.error_message = f'Provider "{campaign.provider}" não suportado.'
-            upload.save(update_fields=['status', 'error_message'])
-            return
 
         try:
             result = provider_cls().upload_conversion(
@@ -102,3 +115,25 @@ class ConversionService:
         upload.status = 'sent' if result.success else 'error'
         upload.error_message = result.error_message
         upload.save(update_fields=['response', 'status', 'error_message'])
+
+    def _ensure_conversion_action(self, account, event_type: str, provider_cls) -> str:
+        """
+        Retorna o resource name da Conversion Action para este tipo de evento,
+        criando-a automaticamente no provider na primeira vez que for necessária
+        (nenhuma configuração manual no Google Ads é exigida do usuário).
+        """
+        metadata = account.metadata or {}
+        conversion_actions = metadata.get('conversion_actions', {})
+        existing = conversion_actions.get(event_type)
+        if existing:
+            return existing
+
+        category = EVENT_CATEGORIES.get(event_type, 'LEAD')
+        label = EVENT_LABELS.get(event_type, event_type)
+        resource_name = provider_cls().create_conversion_action(account, f'Omni Ads — {label}', category)
+
+        conversion_actions[event_type] = resource_name
+        metadata['conversion_actions'] = conversion_actions
+        account.metadata = metadata
+        account.save(update_fields=['metadata'])
+        return resource_name

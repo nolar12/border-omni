@@ -310,6 +310,33 @@ class GoogleAdsProvider(AdvertisingProvider):
         except GoogleAdsProviderError as exc:
             return ProviderResult(success=False, raw=exc.raw, error_message=exc.user_message)
 
+    def create_conversion_action(self, account, name: str, category: str) -> str:
+        """
+        Cria uma Conversion Action (tipo UPLOAD_CLICKS, por gclid) no Google Ads.
+        Necessária antes de qualquer envio via upload_conversion — sem ela o
+        Google recusa o upload. `category` é um dos valores do enum
+        ConversionActionCategory (ex.: 'QUALIFIED_LEAD', 'LEAD', 'PURCHASE').
+        """
+        if not _is_live():
+            fake_id = f'dryrun-conversion-{uuid.uuid4().hex[:10]}'
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] create_conversion_action account={account.customer_id} name={name}')
+            return f'customers/{account.customer_id}/conversionActions/{fake_id}'
+
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/conversionActions:mutate',
+            json={'operations': [{'create': {
+                'name': name,
+                'type': 'UPLOAD_CLICKS',
+                'category': category,
+                'status': 'ENABLED',
+                'valueSettings': {'defaultValue': 0, 'alwaysUseDefaultValue': True},
+            }}]},
+        )
+        resource_name = (data.get('results') or [{}])[0].get('resourceName')
+        if not resource_name:
+            raise GoogleAdsProviderError('Falha ao criar ação de conversão.', code='conversion_action_creation_failed', raw=data)
+        return resource_name
+
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     @staticmethod
