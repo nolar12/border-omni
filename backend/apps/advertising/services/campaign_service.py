@@ -5,6 +5,7 @@ from django.conf import settings
 from apps.advertising.models import AdCampaign, AdAgentDecision
 from apps.advertising.providers import GoogleAdsProvider, GoogleAdsProviderError
 from apps.advertising.providers.base import CampaignSpec
+from apps.advertising.services.metrics_service import MetricsService
 
 logger = logging.getLogger('apps')
 
@@ -30,11 +31,12 @@ class CampaignService:
         return provider_cls()
 
     def _log_decision(self, campaign, action, before, after, *, reason='', hypothesis='',
-                       performed_by='user', approval_status='auto_executed'):
+                       performed_by='user', approval_status='auto_executed', metrics_snapshot=None):
         AdAgentDecision.objects.create(
             organization=campaign.organization, campaign=campaign, action=action,
             before=before, after=after, reason=reason, hypothesis=hypothesis,
             performed_by=performed_by, approval_status=approval_status,
+            metrics_snapshot=metrics_snapshot or {},
         )
 
     def create_campaign(self, *, organization, advertising_account, litter, data: dict, client_request_id: str | None = None) -> AdCampaign:
@@ -100,6 +102,7 @@ class CampaignService:
     def pause_campaign(self, organization, campaign_id: int, *, reason='', hypothesis='', performed_by='user') -> AdCampaign:
         campaign = AdCampaign.objects.get(organization=organization, id=campaign_id)
         before_status = campaign.status
+        snapshot = MetricsService().build_snapshot(campaign)
         try:
             self._provider(campaign.provider).pause_campaign(campaign.advertising_account, campaign.external_campaign_id)
             campaign.status = 'paused'
@@ -111,13 +114,14 @@ class CampaignService:
         if campaign.status != before_status:
             self._log_decision(
                 campaign, 'pause_campaign', {'status': before_status}, {'status': campaign.status},
-                reason=reason, hypothesis=hypothesis, performed_by=performed_by,
+                reason=reason, hypothesis=hypothesis, performed_by=performed_by, metrics_snapshot=snapshot,
             )
         return campaign
 
     def resume_campaign(self, organization, campaign_id: int, *, reason='', hypothesis='', performed_by='user') -> AdCampaign:
         campaign = AdCampaign.objects.get(organization=organization, id=campaign_id)
         before_status = campaign.status
+        snapshot = MetricsService().build_snapshot(campaign)
         try:
             self._provider(campaign.provider).resume_campaign(campaign.advertising_account, campaign.external_campaign_id)
             campaign.status = 'active'
@@ -129,7 +133,7 @@ class CampaignService:
         if campaign.status != before_status:
             self._log_decision(
                 campaign, 'resume_campaign', {'status': before_status}, {'status': campaign.status},
-                reason=reason, hypothesis=hypothesis, performed_by=performed_by,
+                reason=reason, hypothesis=hypothesis, performed_by=performed_by, metrics_snapshot=snapshot,
             )
         return campaign
 
@@ -137,6 +141,7 @@ class CampaignService:
                              reason='', hypothesis='', performed_by='user', approval_status='auto_executed') -> AdCampaign:
         campaign = AdCampaign.objects.get(organization=organization, id=campaign_id)
         before_budget = campaign.daily_budget
+        snapshot = MetricsService().build_snapshot(campaign)
         try:
             spec = CampaignSpec(name=campaign.name, daily_budget=float(new_daily_budget))
             self._provider(campaign.provider).update_campaign(campaign.advertising_account, campaign.external_campaign_id, spec)
@@ -151,6 +156,7 @@ class CampaignService:
                 campaign, 'update_daily_budget',
                 {'daily_budget': str(before_budget)}, {'daily_budget': str(campaign.daily_budget)},
                 reason=reason, hypothesis=hypothesis, performed_by=performed_by, approval_status=approval_status,
+                metrics_snapshot=snapshot,
             )
         return campaign
 
@@ -158,13 +164,14 @@ class CampaignService:
                                reason='', hypothesis='', performed_by='user') -> AdCampaign:
         campaign = AdCampaign.objects.get(organization=organization, id=campaign_id)
         campaign_resource_name = f'customers/{campaign.advertising_account.customer_id}/campaigns/{campaign.external_campaign_id}'
+        snapshot = MetricsService().build_snapshot(campaign)
         try:
             self._provider(campaign.provider).add_negative_keywords(campaign.advertising_account, campaign_resource_name, keywords)
             campaign.error_message = ''
             campaign.save(update_fields=['error_message'])
             self._log_decision(
                 campaign, 'add_negative_keywords', {}, {'negative_keywords_added': keywords},
-                reason=reason, hypothesis=hypothesis, performed_by=performed_by,
+                reason=reason, hypothesis=hypothesis, performed_by=performed_by, metrics_snapshot=snapshot,
             )
         except GoogleAdsProviderError as exc:
             logger.exception('CampaignService.add_negative_keywords failed')

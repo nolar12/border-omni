@@ -238,6 +238,61 @@ class AdvertisingAgentServiceTests(TestCase):
         self.assertEqual(reply.content, 'Você já pausou essa campanha antes.')
 
     @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_evaluate_decision_without_stored_snapshot_refuses_to_invent_numbers(self, mock_openai_cls):
+        decision = AdAgentDecision.objects.create(
+            organization=self.org, campaign=self.campaign, action='pause_campaign',
+            before={'status': 'active'}, after={'status': 'paused'}, reason='teste antigo',
+        )
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'evaluate_decision', {'decision_id': decision.id})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Não tenho dado histórico suficiente para essa decisão.')),
+        ]
+
+        reply = AdvertisingAgentService(self.campaign).chat(user_message='Como foi aquela pausa?', openai_api_key='sk-test')
+
+        tool_result = json.loads(mock_client.chat.completions.create.call_args_list[1][1]['messages'][-1]['content'])
+        self.assertFalse(tool_result['has_before_snapshot'])
+        self.assertEqual(reply.content, 'Não tenho dado histórico suficiente para essa decisão.')
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_evaluate_decision_with_stored_snapshot_computes_real_delta(self, mock_openai_cls):
+        decision = AdAgentDecision.objects.create(
+            organization=self.org, campaign=self.campaign, action='update_daily_budget',
+            before={'daily_budget': '20'}, after={'daily_budget': '30'}, reason='teste',
+            metrics_snapshot={
+                'cost': 100.0, 'impressions': 1000, 'clicks': 50, 'ctr': 0.05, 'average_cpc': 2.0,
+                'conversions': 2, 'conversion_rate': 0.04, 'total_leads': 2, 'cost_per_lead': 50.0,
+                'qualified_leads': 1, 'cost_per_qualified_lead': 100.0, 'negotiations': 0,
+                'reservations': 0, 'sales': 0, 'cac': None,
+            },
+        )
+
+        from apps.leads.models import Lead
+        from apps.advertising.models import AdMetric, AdLeadAttribution
+        AdMetric.objects.create(campaign=self.campaign, date='2026-09-01', impressions=2000, clicks=120, cost=250, conversions=5)
+        lead = Lead.objects.create(organization=self.org, phone='554891114444', status='QUALIFYING', lead_classification='HOT_LEAD')
+        AdLeadAttribution.objects.create(lead=lead, campaign=self.campaign, gclid='g1')
+
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'evaluate_decision', {'decision_id': decision.id})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='O custo por lead qualificado melhorou depois da mudança.')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Como foi aquele aumento de orçamento?', openai_api_key='sk-test')
+
+        tool_result = json.loads(mock_client.chat.completions.create.call_args_list[1][1]['messages'][-1]['content'])
+        self.assertTrue(tool_result['has_before_snapshot'])
+        self.assertEqual(tool_result['metrics_now']['cost'], 250.0)
+        self.assertEqual(tool_result['delta']['cost'], 150.0)
+        self.assertEqual(tool_result['delta']['impressions'], 1000)
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
     def test_chat_history_is_persisted_in_order(self, mock_openai_cls):
         mock_client = MagicMock()
         mock_openai_cls.return_value = mock_client

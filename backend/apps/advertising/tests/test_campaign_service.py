@@ -3,7 +3,7 @@ from unittest.mock import patch
 from django.test import TestCase, override_settings
 
 from apps.core.models import Organization
-from apps.advertising.models import AdvertisingAccount, AdCampaign
+from apps.advertising.models import AdvertisingAccount, AdCampaign, AdAgentDecision
 from apps.advertising.providers import GoogleAdsProviderError
 from apps.advertising.providers.base import ProviderCampaign
 from apps.advertising.services.campaign_service import CampaignService
@@ -77,3 +77,18 @@ class CampaignServiceTests(TestCase):
         resumed = service.resume_campaign(self.org, campaign.id)
         self.assertEqual(resumed.status, 'active')
         mock_resume.assert_called_once()
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=True)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.pause_campaign')
+    def test_pause_campaign_logs_decision_with_real_metrics_snapshot(self, mock_pause):
+        campaign = AdCampaign.objects.create(
+            organization=self.org, advertising_account=self.account, name='X',
+            daily_budget=10, status='active', external_campaign_id='ext-1',
+        )
+        CampaignService().pause_campaign(self.org, campaign.id, reason='teste')
+
+        decision = AdAgentDecision.objects.get(campaign=campaign, action='pause_campaign')
+        self.assertTrue(decision.metrics_snapshot)
+        self.assertIn('cost', decision.metrics_snapshot)
+        self.assertIn('qualified_leads', decision.metrics_snapshot)
+        self.assertEqual(decision.metrics_snapshot['campaign_id'], campaign.id)

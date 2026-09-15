@@ -55,7 +55,13 @@ SYSTEM_PROMPT_TEMPLATE = """{skill}
 Responda sempre em português do Brasil, de forma direta e objetiva. Use as
 ferramentas disponíveis para consultar dados reais — nunca invente métricas,
 número de leads, vendas ou qualquer estatística. Depois de executar uma ação,
-confirme claramente o que foi feito."""
+confirme claramente o que foi feito.
+
+Quando o usuário perguntar como uma mudança passada se saiu ("como foi aquela
+mudança?", "aquilo funcionou?"), use get_decision_history para achar a decisão
+e depois evaluate_decision para comparar antes/depois com números reais. Se a
+ferramenta indicar has_before_snapshot=false, diga claramente que não há dado
+histórico suficiente para essa decisão específica — nunca estime ou invente."""
 
 TOOLS = [
     {'type': 'function', 'function': {
@@ -126,6 +132,21 @@ TOOLS = [
                 'confirmed': {'type': 'boolean', 'description': 'true somente depois que o usuário confirmou explicitamente uma mudança acima do limite de auto-execução.'},
             },
             'required': ['daily_budget'],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'evaluate_decision',
+        'description': (
+            'Compara o estado ANTES e DEPOIS de uma decisão passada (pause/resume/orçamento/negativas), '
+            'usando o metrics_snapshot real gravado no momento da decisão + um snapshot novo de agora. '
+            'Use para responder perguntas como "como foi aquela mudança?" ou "aquilo funcionou?". '
+            'Se a decisão for antiga e não tiver metrics_snapshot salvo, a ferramenta avisa isso explicitamente '
+            '— nesse caso, diga ao usuário que não há dado histórico suficiente, NUNCA invente números.'
+        ),
+        'parameters': {
+            'type': 'object',
+            'properties': {'decision_id': {'type': 'integer', 'description': 'ID da decisão (retornado por get_decision_history).'}},
+            'required': ['decision_id'],
         },
     }},
     {'type': 'function', 'function': {
@@ -266,6 +287,54 @@ class AdvertisingAgentService:
                 self.campaign = campaign
                 return {'daily_budget': str(campaign.daily_budget), 'error_message': campaign.error_message}
 
+            if name == 'evaluate_decision':
+                try:
+                    decision = AdAgentDecision.objects.get(campaign=self.campaign, id=arguments['decision_id'])
+                except AdAgentDecision.DoesNotExist:
+                    return {'error': 'Decisão não encontrada para esta campanha.'}
+
+                before_snapshot = decision.metrics_snapshot or {}
+                if not before_snapshot:
+                    return {
+                        'has_before_snapshot': False,
+                        'message': (
+                            'Esta decisão não tem um snapshot de métricas gravado no momento em que foi tomada '
+                            '(decisão anterior à instrumentação de snapshots). Não é possível comparar antes/depois '
+                            'com dados reais — não invente números, apenas informe isso ao usuário.'
+                        ),
+                        'decision': {
+                            'action': decision.action, 'before': decision.before, 'after': decision.after,
+                            'reason': decision.reason, 'created_at': decision.created_at.isoformat(),
+                        },
+                    }
+
+                after_snapshot = MetricsService().build_snapshot(self.campaign)
+                numeric_keys = [
+                    'cost', 'impressions', 'clicks', 'ctr', 'average_cpc', 'conversions', 'conversion_rate',
+                    'total_leads', 'cost_per_lead', 'qualified_leads', 'cost_per_qualified_lead',
+                    'negotiations', 'reservations', 'sales', 'cac',
+                ]
+                deltas = {}
+                for key in numeric_keys:
+                    before_val = before_snapshot.get(key)
+                    after_val = after_snapshot.get(key)
+                    if before_val is None or after_val is None:
+                        deltas[key] = None
+                    else:
+                        deltas[key] = round(after_val - before_val, 2)
+
+                return {
+                    'has_before_snapshot': True,
+                    'decision': {
+                        'action': decision.action, 'before': decision.before, 'after': decision.after,
+                        'reason': decision.reason, 'hypothesis': decision.hypothesis,
+                        'created_at': decision.created_at.isoformat(),
+                    },
+                    'metrics_before': before_snapshot,
+                    'metrics_now': after_snapshot,
+                    'delta': deltas,
+                }
+
             if name == 'add_negative_keywords':
                 briefing = getattr(self.campaign, 'briefing', None)
                 protected = {kw.lower() for kw in (briefing.do_not_negate_keywords if briefing else [])}
@@ -329,7 +398,7 @@ class AdvertisingAgentService:
             for tool_call in choice.tool_calls:
                 args = json.loads(tool_call.function.arguments or '{}')
                 result = self._execute_tool(tool_call.function.name, args)
-                if tool_call.function.name not in ('get_campaign_summary', 'sync_metrics', 'get_search_terms', 'get_lead_funnel', 'get_decision_history'):
+                if tool_call.function.name not in ('get_campaign_summary', 'sync_metrics', 'get_search_terms', 'get_lead_funnel', 'get_decision_history', 'evaluate_decision'):
                     actions_taken.append({'tool': tool_call.function.name, 'arguments': args, 'result': result})
                 messages.append({
                     'role': 'tool',
