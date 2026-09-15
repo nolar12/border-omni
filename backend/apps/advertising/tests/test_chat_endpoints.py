@@ -56,3 +56,29 @@ class ChatEndpointTests(APITestCase):
     def test_transcribe_requires_audio_file(self):
         resp = self.client.post(f'/api/ad-campaigns/{self.campaign.id}/chat/transcribe/', {}, format='multipart')
         self.assertEqual(resp.status_code, 400)
+
+    @patch('apps.advertising.views.MetricsService.sync_campaign_metrics')
+    @patch('apps.advertising.views.AdvertisingAgentService.run_proactive_review')
+    def test_proactive_review_endpoint_returns_message_when_relevant(self, mock_review, mock_sync):
+        mock_review.return_value = AdChatMessage.objects.create(
+            organization=self.org, campaign=self.campaign, role='assistant',
+            content='Itajaí está indo bem.', is_proactive=True,
+        )
+        resp = self.client.post(f'/api/ad-campaigns/{self.campaign.id}/chat/proactive-review/')
+        self.assertEqual(resp.status_code, 201)
+        self.assertTrue(resp.data['is_proactive'])
+        mock_sync.assert_called_once()
+
+    @patch('apps.advertising.views.MetricsService.sync_campaign_metrics')
+    @patch('apps.advertising.views.AdvertisingAgentService.run_proactive_review')
+    def test_proactive_review_endpoint_returns_nothing_to_report(self, mock_review, mock_sync):
+        mock_review.return_value = None
+        resp = self.client.post(f'/api/ad-campaigns/{self.campaign.id}/chat/proactive-review/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['status'], 'nothing_to_report')
+
+    def test_proactive_review_without_openai_key_returns_503(self):
+        self.org.agent_config.openai_api_key = ''
+        self.org.agent_config.save()
+        resp = self.client.post(f'/api/ad-campaigns/{self.campaign.id}/chat/proactive-review/')
+        self.assertEqual(resp.status_code, 503)

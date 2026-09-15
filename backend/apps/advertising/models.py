@@ -264,6 +264,9 @@ class AdvertisingSettings(models.Model):
     # Limite (%) de variação de orçamento que o agente pode executar sozinho —
     # acima disso, precisa de confirmação explícita do usuário no chat.
     max_auto_budget_change_percent = models.PositiveIntegerField(default=20)
+    # Revisão periódica e autônoma do agente (só leitura, nunca executa
+    # mudança sozinho) — posta no chat da campanha quando há algo relevante.
+    proactive_review_enabled = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -291,6 +294,9 @@ class AdChatMessage(models.Model):
     role = models.CharField(max_length=10, choices=ROLE_CHOICES)
     content = models.TextField()
     actions_taken = models.JSONField(default=list, blank=True)
+    # True quando a mensagem veio da revisão periódica agendada (ninguém
+    # perguntou nada) — usado só para dar um tratamento visual diferente no chat.
+    is_proactive = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -460,3 +460,75 @@ class AdvertisingAgentServiceTests(TestCase):
         messages = list(AdChatMessage.objects.filter(campaign=self.campaign).order_by('created_at'))
         self.assertEqual([m.role for m in messages], ['user', 'assistant'])
         self.assertEqual(messages[0].content, 'oi')
+
+
+class ProactiveReviewTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name='Canil Proativo')
+        self.account = AdvertisingAccount.objects.create(organization=self.org, customer_id='9998887772')
+        self.campaign = AdCampaign.objects.create(
+            organization=self.org, advertising_account=self.account, name='Camp Proativa',
+            daily_budget=20, status='active', external_campaign_id='ext-1',
+        )
+
+    def _completion_with(self, message):
+        return MagicMock(choices=[MagicMock(message=message)])
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_sentinel_never_persists_a_chat_message(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = self._completion_with(_mock_message(content='NADA_A_REPORTAR'))
+
+        result = AdvertisingAgentService(self.campaign).run_proactive_review(openai_api_key='sk-test')
+
+        self.assertIsNone(result)
+        self.assertEqual(AdChatMessage.objects.filter(campaign=self.campaign).count(), 0)
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_relevant_finding_is_persisted_as_proactive(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = self._completion_with(
+            _mock_message(content='Itajaí está trazendo os leads mais qualificados esta semana.')
+        )
+
+        result = AdvertisingAgentService(self.campaign).run_proactive_review(openai_api_key='sk-test')
+
+        self.assertIsNotNone(result)
+        self.assertTrue(result.is_proactive)
+        self.assertEqual(result.role, 'assistant')
+        # Não cria uma mensagem "user" correspondente — ninguém perguntou nada.
+        self.assertEqual(AdChatMessage.objects.filter(campaign=self.campaign, role='user').count(), 0)
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_mutating_tools_are_not_offered_during_proactive_review(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = self._completion_with(_mock_message(content='NADA_A_REPORTAR'))
+
+        AdvertisingAgentService(self.campaign).run_proactive_review(openai_api_key='sk-test')
+
+        offered_tools = mock_client.chat.completions.create.call_args[1]['tools']
+        offered_names = {t['function']['name'] for t in offered_tools}
+        self.assertNotIn('pause_campaign', offered_names)
+        self.assertNotIn('update_daily_budget', offered_names)
+        self.assertNotIn('execute_campaign_plan', offered_names)
+        self.assertIn('get_lead_funnel', offered_names)
+
+    @patch('apps.advertising.services.campaign_service.CampaignService.pause_campaign')
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_agent_cannot_actually_execute_a_mutation_even_if_it_tried(self, mock_openai_cls, mock_pause):
+        """Defesa em profundidade: mesmo que o modelo tentasse chamar uma tool
+        fora da lista oferecida, _execute_tool não reconheceria o nome."""
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'pause_campaign', {'reason': 'tentativa indevida'})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='NADA_A_REPORTAR')),
+        ]
+
+        AdvertisingAgentService(self.campaign).run_proactive_review(openai_api_key='sk-test')
+
+        mock_pause.assert_not_called()

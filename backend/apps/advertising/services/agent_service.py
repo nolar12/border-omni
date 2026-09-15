@@ -79,6 +79,24 @@ keyword (o termo do ValueTrack que casou o clique) e search_term (o texto real
 digitado, de get_search_terms) são coisas diferentes, nunca trate como
 sinônimos."""
 
+PROACTIVE_REVIEW_INSTRUCTION = """Faça uma revisão periódica e autônoma desta campanha — ninguém está
+perguntando nada agora, isso roda sozinho, agendado. Sincronize métricas se fizer sentido, olhe o
+desempenho recente, o funil comercial (por cidade e por palavra-chave) e o histórico de decisões.
+
+Nesta revisão você só pode LER dados — nunca execute uma mudança (pausar, orçamento, negativas,
+criar campanha); no máximo, sugira e diga que o usuário pode pedir para executar no chat depois.
+
+Se houver algo relevante para o dono do canil saber (uma cidade ou keyword se destacando bem ou mal,
+desperdício de orçamento, um alerta de status, uma decisão anterior que já dá para avaliar), escreva
+um resumo curto e objetivo em português. Se, depois de olhar os dados, não houver nada novo ou
+relevante desde a última vez, responda EXATAMENTE com a palavra NADA_A_REPORTAR e mais nada."""
+
+READ_ONLY_TOOL_NAMES = {
+    'get_campaign_summary', 'sync_metrics', 'get_search_terms', 'get_lead_funnel',
+    'get_city_breakdown', 'get_keyword_breakdown', 'get_decision_history',
+    'evaluate_decision', 'fetch_official_documentation',
+}
+
 TOOLS = [
     {'type': 'function', 'function': {
         'name': 'get_campaign_summary',
@@ -264,6 +282,12 @@ TOOLS = [
         },
     }},
 ]
+
+# Subconjunto de TOOLS oferecido na revisão proativa (agendada, sem humano no
+# loop) — só leitura. A restrição é reforçada pela própria API da OpenAI (o
+# modelo não consegue chamar uma ferramenta que não está nesta lista), não só
+# pelo texto do prompt.
+PROACTIVE_TOOLS = [tool for tool in TOOLS if tool['function']['name'] in READ_ONLY_TOOL_NAMES]
 
 
 class AdvertisingAgentService:
@@ -529,37 +553,33 @@ class AdvertisingAgentService:
             logger.exception(f'AdvertisingAgentService tool "{name}" failed')
             return {'error': str(exc)}
 
-    def chat(self, *, user_message: str, openai_api_key: str) -> AdChatMessage:
-        AdChatMessage.objects.create(
-            organization=self.organization, campaign=self.campaign, role='user', content=user_message,
-        )
-
+    def _recent_history_messages(self) -> list[dict]:
         history = list(
             self.campaign.chat_messages.order_by('-created_at')[:MAX_HISTORY_MESSAGES].values('role', 'content')
         )[::-1]
+        return [{'role': m['role'], 'content': m['content']} for m in history]
 
-        messages = [{'role': 'system', 'content': self._build_system_prompt()}]
-        messages += [{'role': m['role'], 'content': m['content']} for m in history]
-
-        client = self._get_openai(openai_api_key)
+    def _run_completion_loop(self, *, messages: list[dict], tools: list[dict], client: OpenAI) -> tuple[str | None, list]:
+        """
+        Loop de tool-calling compartilhado por chat() (interativo) e
+        run_proactive_review() (agendado) — a única diferença entre os dois é
+        QUAIS tools são oferecidas e o que entra em `messages`, nunca a lógica
+        de execução em si. Retorna (texto_final_ou_None, ações_executadas).
+        """
+        allowed_names = {tool['function']['name'] for tool in tools}
         actions_taken = []
-
         for _ in range(MAX_TOOL_ROUNDTRIPS):
             response = client.chat.completions.create(
                 model='gpt-4o',
                 messages=messages,
-                tools=TOOLS,
+                tools=tools,
                 temperature=0.3,
                 max_tokens=800,
             )
             choice = response.choices[0].message
 
             if not choice.tool_calls:
-                reply_text = choice.content or ''
-                return AdChatMessage.objects.create(
-                    organization=self.organization, campaign=self.campaign, role='assistant',
-                    content=reply_text, actions_taken=actions_taken,
-                )
+                return choice.content or '', actions_taken
 
             messages.append({
                 'role': 'assistant',
@@ -568,21 +588,61 @@ class AdvertisingAgentService:
             })
             for tool_call in choice.tool_calls:
                 args = json.loads(tool_call.function.arguments or '{}')
-                result = self._execute_tool(tool_call.function.name, args)
-                if tool_call.function.name not in (
-                    'get_campaign_summary', 'sync_metrics', 'get_search_terms', 'get_lead_funnel',
-                    'get_city_breakdown', 'get_keyword_breakdown', 'get_decision_history',
-                    'evaluate_decision', 'fetch_official_documentation',
-                ):
-                    actions_taken.append({'tool': tool_call.function.name, 'arguments': args, 'result': result})
+                # Defesa em profundidade: nunca executa uma tool fora da lista
+                # oferecida nesta chamada — não confia só na OpenAI respeitar
+                # o `tools=` enviado (importante sobretudo na revisão proativa,
+                # que roda sem humano no loop e só pode ler dados).
+                if tool_call.function.name not in allowed_names:
+                    result = {'error': f'Ferramenta "{tool_call.function.name}" não está disponível neste contexto.'}
+                else:
+                    result = self._execute_tool(tool_call.function.name, args)
+                    if tool_call.function.name not in READ_ONLY_TOOL_NAMES:
+                        actions_taken.append({'tool': tool_call.function.name, 'arguments': args, 'result': result})
                 messages.append({
                     'role': 'tool',
                     'tool_call_id': tool_call.id,
                     'content': json.dumps(result, ensure_ascii=False),
                 })
 
+        return None, actions_taken
+
+    def chat(self, *, user_message: str, openai_api_key: str) -> AdChatMessage:
+        AdChatMessage.objects.create(
+            organization=self.organization, campaign=self.campaign, role='user', content=user_message,
+        )
+
+        messages = [{'role': 'system', 'content': self._build_system_prompt()}]
+        messages += self._recent_history_messages()
+
+        client = self._get_openai(openai_api_key)
+        reply_text, actions_taken = self._run_completion_loop(messages=messages, tools=TOOLS, client=client)
+
+        if reply_text is None:
+            reply_text = 'Desculpe, não consegui concluir essa solicitação agora. Pode tentar reformular?'
+
         return AdChatMessage.objects.create(
             organization=self.organization, campaign=self.campaign, role='assistant',
-            content='Desculpe, não consegui concluir essa solicitação agora. Pode tentar reformular?',
-            actions_taken=actions_taken,
+            content=reply_text, actions_taken=actions_taken,
+        )
+
+    def run_proactive_review(self, *, openai_api_key: str) -> AdChatMessage | None:
+        """
+        Revisão agendada, sem humano no loop — só ferramentas de LEITURA
+        (PROACTIVE_TOOLS). Não persiste nada se o modelo concluir que não há
+        nada relevante desde a última vez (sentinela NADA_A_REPORTAR), para
+        não poluir o chat com mensagens vazias toda semana.
+        """
+        messages = [{'role': 'system', 'content': self._build_system_prompt()}]
+        messages += self._recent_history_messages()
+        messages.append({'role': 'user', 'content': PROACTIVE_REVIEW_INSTRUCTION})
+
+        client = self._get_openai(openai_api_key)
+        reply_text, actions_taken = self._run_completion_loop(messages=messages, tools=PROACTIVE_TOOLS, client=client)
+
+        if not reply_text or reply_text.strip().upper().startswith('NADA_A_REPORTAR'):
+            return None
+
+        return AdChatMessage.objects.create(
+            organization=self.organization, campaign=self.campaign, role='assistant',
+            content=reply_text, actions_taken=actions_taken, is_proactive=True,
         )

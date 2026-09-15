@@ -56,7 +56,8 @@ class AdvertisingSettingsSerializer(serializers.ModelSerializer):
         model = AdvertisingSettings
         fields = [
             'is_enabled', 'send_qualified_events', 'send_reservation_events',
-            'send_sale_events', 'default_daily_budget', 'max_auto_budget_change_percent', 'updated_at',
+            'send_sale_events', 'default_daily_budget', 'max_auto_budget_change_percent',
+            'proactive_review_enabled', 'updated_at',
         ]
         read_only_fields = ['updated_at']
 
@@ -86,7 +87,7 @@ class AdClickTokenResponseSerializer(serializers.ModelSerializer):
 class AdChatMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdChatMessage
-        fields = ['id', 'role', 'content', 'actions_taken', 'created_at']
+        fields = ['id', 'role', 'content', 'actions_taken', 'is_proactive', 'created_at']
         read_only_fields = fields
 
 

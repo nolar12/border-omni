@@ -193,6 +193,28 @@ class AdCampaignViewSet(viewsets.ModelViewSet):
 
         return Response({'transcription': text})
 
+    @action(detail=True, methods=['post'], url_path='chat/proactive-review')
+    def proactive_review(self, request, pk=None):
+        """Dispara manualmente a mesma revisão que roda sozinha semanalmente
+        (só leitura) — útil para testar/forçar sem esperar o agendamento."""
+        campaign = self.get_object()
+        openai_api_key = getattr(getattr(campaign.organization, 'agent_config', None), 'openai_api_key', '') or ''
+        if not openai_api_key:
+            return Response(
+                {'error': 'Nenhuma OpenAI API key configurada para esta organização (Configurações → IA).'},
+                status=503,
+            )
+
+        try:
+            MetricsService().sync_campaign_metrics(campaign)
+        except GoogleAdsProviderError:
+            logger.warning('proactive_review: falha ao sincronizar métricas antes da revisão')
+
+        message = AdvertisingAgentService(campaign).run_proactive_review(openai_api_key=openai_api_key)
+        if not message:
+            return Response({'status': 'nothing_to_report'})
+        return Response(AdChatMessageSerializer(message).data, status=201)
+
     @action(detail=True, methods=['get', 'put'], url_path='briefing')
     def briefing(self, request, pk=None):
         campaign = self.get_object()

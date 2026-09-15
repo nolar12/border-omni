@@ -45,6 +45,7 @@ export interface AdChatMessage {
   role: 'user' | 'assistant';
   content: string;
   actions_taken: { tool: string; arguments: Record<string, unknown>; result: Record<string, unknown> }[];
+  is_proactive: boolean;
   created_at: string;
 }
 
@@ -142,6 +143,13 @@ export const advertisingService = {
     const { data } = await api.post<{ transcription: string }>(`/ad-campaigns/${id}/chat/transcribe/`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
+    return data;
+  },
+
+  /** Dispara manualmente a mesma revisão periódica e autônoma (só leitura) que
+   * roda sozinha semanalmente — útil para testar sem esperar o agendamento. */
+  async runProactiveReview(id: number): Promise<AdChatMessage | { status: 'nothing_to_report' }> {
+    const { data } = await api.post<AdChatMessage | { status: 'nothing_to_report' }>(`/ad-campaigns/${id}/chat/proactive-review/`);
     return data;
   },
 };

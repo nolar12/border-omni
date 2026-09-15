@@ -122,6 +122,7 @@ function ChatPanel({ campaign, onCampaignChanged }: { campaign: AdCampaign; onCa
   const [error, setError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -174,7 +175,7 @@ function ChatPanel({ campaign, onCampaignChanged }: { campaign: AdCampaign; onCa
     setError(null);
     setInput('');
     setMessages(prev => [...(prev ?? []), {
-      id: Date.now(), role: 'user', content: text, actions_taken: [], created_at: new Date().toISOString(),
+      id: Date.now(), role: 'user', content: text, actions_taken: [], is_proactive: false, created_at: new Date().toISOString(),
     }]);
     try {
       const reply = await advertisingService.sendChatMessage(campaign.id, text);
@@ -194,9 +195,37 @@ function ChatPanel({ campaign, onCampaignChanged }: { campaign: AdCampaign; onCa
     }
   }
 
+  async function handleRunReviewNow() {
+    setReviewing(true);
+    setError(null);
+    try {
+      const result = await advertisingService.runProactiveReview(campaign.id);
+      if ('status' in result && result.status === 'nothing_to_report') {
+        setError('Revisão rodou, mas não achou nada novo para reportar agora.');
+      } else {
+        setMessages(prev => [...(prev ?? []), result as AdChatMessage]);
+      }
+    } catch (err) {
+      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setError(message || 'Não foi possível rodar a revisão agora.');
+    } finally {
+      setReviewing(false);
+    }
+  }
+
   return (
     <div className="px-4 pb-4">
       <div className="bg-slate-900/60 rounded-lg p-3 flex flex-col gap-2 max-h-96">
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] text-slate-500">Revisão automática roda toda semana sozinha.</p>
+          <button
+            onClick={handleRunReviewNow}
+            disabled={reviewing}
+            className="text-[10px] text-violet-400 hover:text-violet-300 underline disabled:opacity-50"
+          >
+            {reviewing ? 'Revisando…' : 'Revisar agora'}
+          </button>
+        </div>
         <div className="flex-1 overflow-y-auto space-y-2 min-h-[120px]">
           {messages === null ? (
             <p className="text-xs text-slate-500">Carregando conversa…</p>
@@ -206,7 +235,19 @@ function ChatPanel({ campaign, onCampaignChanged }: { campaign: AdCampaign; onCa
             </p>
           ) : (
             messages.map(m => (
-              <div key={m.id} className={`text-xs rounded-lg px-3 py-2 max-w-[85%] ${m.role === 'user' ? 'bg-blue-600 text-white ml-auto' : 'bg-slate-700 text-slate-100'}`}>
+              <div
+                key={m.id}
+                className={`text-xs rounded-lg px-3 py-2 max-w-[85%] ${
+                  m.role === 'user'
+                    ? 'bg-blue-600 text-white ml-auto'
+                    : m.is_proactive
+                      ? 'bg-violet-900/50 border border-violet-700/50 text-slate-100'
+                      : 'bg-slate-700 text-slate-100'
+                }`}
+              >
+                {m.is_proactive && (
+                  <p className="mb-1 text-[10px] font-semibold text-violet-300 uppercase tracking-wide">🔄 Revisão automática</p>
+                )}
                 <p className="whitespace-pre-wrap">{m.content}</p>
                 {m.actions_taken?.length > 0 && (
                   <p className="mt-1 text-[10px] text-slate-300/80 italic">
