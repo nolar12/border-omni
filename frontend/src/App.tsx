@@ -20,6 +20,7 @@ import ContractPublicPage from './pages/ContractPublicPage';
 import NotesPage from './pages/NotesPage';
 import DogsPage from './pages/DogsPage';
 import LittersPage from './pages/LittersPage';
+import AdvertisingPage from './pages/AdvertisingPage';
 import ShareTargetPage from './pages/ShareTargetPage';
 
 export default function App() {
@@ -63,6 +64,7 @@ export default function App() {
           <Route path="notas" element={<NotesPage />} />
           <Route path="canil/caes" element={<DogsPage />} />
           <Route path="canil/ninhadas" element={<LittersPage />} />
+          <Route path="canil/anuncios" element={<AdvertisingPage />} />
         </Route>
         {/* Share Target — recebe fotos compartilhadas pelo SO */}
         <Route path="/share" element={<ShareTargetPage />} />

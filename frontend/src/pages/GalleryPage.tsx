@@ -191,7 +191,7 @@ export default function GalleryPage() {
     setSelected(new Set());
   }
 
-  const allDisplayedSelected = displayed => displayed.length > 0 && displayed.every((i: GalleryMedia) => selected.has(i.id));
+  const allDisplayedSelected = (displayed: GalleryMedia[]) => displayed.length > 0 && displayed.every((i: GalleryMedia) => selected.has(i.id));
 
   function toggleSelectAll(displayedItems: GalleryMedia[]) {
     if (allDisplayedSelected(displayedItems)) {

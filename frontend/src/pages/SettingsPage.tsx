@@ -187,8 +187,8 @@ export default function SettingsPage() {
     try {
       const updated = await settingsService.updateSettings({
         off_hours_enabled: offHoursEnabled,
-        off_hours_start: offHoursStart || null,
-        off_hours_end: offHoursEnd || null,
+        off_hours_start: offHoursStart || undefined,
+        off_hours_end: offHoursEnd || undefined,
         off_hours_message: offHoursMessage.trim(),
         off_hours_timezone: offHoursTimezone || 'America/Sao_Paulo',
       });
