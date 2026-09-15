@@ -269,6 +269,53 @@ class GoogleAdsProvider(AdvertisingProvider):
             }}]},
         )
 
+    def get_search_terms(self, account, external_campaign_id: str, days_back: int = 30) -> list[dict]:
+        """Termos de busca reais que dispararam o anúncio — base para negativação e novas keywords."""
+        if not _is_live():
+            return []
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': (
+                'SELECT search_term_view.search_term, segments.keyword.info.text, '
+                'segments.keyword.info.match_type, metrics.clicks, metrics.cost_micros, '
+                'metrics.conversions, metrics.impressions '
+                f'FROM search_term_view WHERE campaign.id = {external_campaign_id} '
+                f'AND segments.date DURING LAST_{days_back}_DAYS '
+                'ORDER BY metrics.cost_micros DESC LIMIT 100'
+            )},
+        )
+        results = []
+        for row in data.get('results') or []:
+            metrics = row.get('metrics', {})
+            segments = row.get('segments', {})
+            results.append({
+                'search_term': row.get('searchTermView', {}).get('searchTerm', ''),
+                'matched_keyword': segments.get('keyword', {}).get('info', {}).get('text', ''),
+                'match_type': segments.get('keyword', {}).get('info', {}).get('matchType', ''),
+                'impressions': int(metrics.get('impressions', 0)),
+                'clicks': int(metrics.get('clicks', 0)),
+                'cost': int(metrics.get('costMicros', 0)) / 1_000_000,
+                'conversions': float(metrics.get('conversions', 0)),
+            })
+        return results
+
+    def add_negative_keywords(self, account, campaign_resource_name: str, keywords: list[str], match_type: str = 'PHRASE') -> None:
+        """Negativas a nível de campanha — bloqueiam a busca inteira nessa campanha."""
+        if not keywords:
+            return
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] add_negative_keywords campaign={campaign_resource_name} keywords={keywords}')
+            return
+        operations = [{'create': {
+            'campaign': campaign_resource_name,
+            'negative': True,
+            'keyword': {'text': kw, 'matchType': match_type},
+        }} for kw in keywords]
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/campaignCriteria:mutate',
+            json={'operations': operations, 'partialFailure': True},
+        )
+
     def update_campaign(self, account, external_campaign_id: str, spec: CampaignSpec) -> ProviderCampaign:
         """Hoje só atualiza o orçamento diário. O orçamento é um recurso próprio
         (CampaignBudget) — não dá para mudar o valor direto no recurso da campanha,
@@ -434,6 +481,15 @@ class GoogleAdsProvider(AdvertisingProvider):
                 # Exigido pela Google (regulação de transparência de anúncios políticos da UE).
                 # Um canil vendendo filhotes nunca é publicidade política.
                 'containsEuPoliticalAdvertising': 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING',
+                # ValueTrack — a Google substitui esses placeholders no clique real,
+                # permitindo religar o lead ao grupo de anúncios/anúncio/keyword/busca
+                # exatos (AdLeadAttribution.ad_group_id/ad_id/keyword/search_term).
+                'finalUrlSuffix': (
+                    'gclid={gclid}&gbraid={gbraid}&wbraid={wbraid}'
+                    '&utm_source=google&utm_medium=cpc&utm_campaign={campaignid}'
+                    '&adgroupid={adgroupid}&adid={creative}'
+                    '&keyword={keyword}&matchtype={matchtype}&searchterm={searchterm}'
+                ),
             }}],
         }
 

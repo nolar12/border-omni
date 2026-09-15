@@ -54,10 +54,16 @@ class AttributionService:
             defaults={
                 'campaign': click_token.campaign,
                 'gclid': click_token.gclid,
+                'gbraid': click_token.gbraid,
+                'wbraid': click_token.wbraid,
                 'utm_source': click_token.utm_source,
                 'utm_medium': click_token.utm_medium,
                 'utm_campaign': click_token.utm_campaign,
                 'utm_content': click_token.utm_content,
+                'ad_group_id': click_token.ad_group_id,
+                'ad_id': click_token.ad_id,
+                'keyword': click_token.keyword,
+                'search_term': click_token.search_term,
             },
         )
 

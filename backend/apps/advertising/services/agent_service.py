@@ -3,41 +3,59 @@ Agente de IA conversacional sobre uma campanha específica (chat na tela de
 Anúncios). Usa a mesma OpenAI API key por tenant já usada pelo classificador de
 leads (apps/qualifier/ai_classifier.py).
 
+Arquitetura em camadas (ver apps/advertising/skills/google_ads_performance_manager.md
+para a metodologia completa):
+  1. SKILL — conhecimento permanente/universal (arquivo .md versionado).
+  2. BRIEFING — contexto comercial desta campanha (AdCampaignBriefing, no banco).
+  3. DADOS REAIS do Google Ads — via tools (get_campaign_summary, get_search_terms).
+  4. DADOS COMERCIAIS do nosso sistema — via tools (get_lead_funnel), reaproveitando
+     Lead.status/lead_classification/LeadProfile.is_reserved/is_purchased já existentes.
+  5. AÇÕES — sempre through CampaignService (nunca direto no banco/API).
+  6. MEMÓRIA — cada ação vira um AdAgentDecision, consultável via get_decision_history.
+
 Regra de segurança central: o agente NUNCA mexe direto no banco ou na API do
 Google — toda ação passa pelas mesmas CampaignService/MetricsService que a UI
-usa. O "tool calling" da OpenAI só decide QUAL método de serviço chamar; quem
-executa é sempre a camada de domínio já existente e testada.
+usa. O "tool calling" da OpenAI só decide QUAL método de serviço chamar.
 """
 import json
 import logging
 
 from openai import OpenAI
 
-from apps.advertising.models import AdChatMessage, AdMetric
+from apps.advertising.models import AdChatMessage, AdvertisingSettings, AdAgentDecision
 from apps.advertising.providers import GoogleAdsProviderError
 from apps.advertising.services.campaign_service import CampaignService
 from apps.advertising.services.metrics_service import MetricsService
+from apps.advertising.services import lead_funnel_service
+from apps.advertising.services.skill_service import load_skill, format_briefing
 
 logger = logging.getLogger('apps')
 
 MAX_HISTORY_MESSAGES = 20
+MAX_TOOL_ROUNDTRIPS = 6
 
-SYSTEM_PROMPT_TEMPLATE = """Você é o assistente de Omni Ads do Border Omni, ajudando o \
-responsável pelo canil a acompanhar e ajustar uma campanha de Google Ads (Pesquisa).
+SYSTEM_PROMPT_TEMPLATE = """{skill}
 
-Contexto atual da campanha:
+## Briefing desta campanha
+
+{briefing}
+
+## Contexto técnico atual da campanha
+
 - Nome: {name}
 - Status: {status}
 - Orçamento diário: R$ {daily_budget}
-- Região: {region}
+- Região configurada: {region}
 - Ninhada vinculada: {litter_name}
+- Limite de variação de orçamento que você pode executar sozinho: {max_auto_budget_change_percent}%
+  (acima disso, use update_daily_budget normalmente uma primeira vez — ela vai te
+  avisar que precisa de confirmação; explique a mudança ao usuário e só chame de
+  novo com confirmed=true depois que ele concordar explicitamente).
 
-Responda sempre em português do Brasil, de forma direta e objetiva. Use as \
-ferramentas disponíveis para consultar métricas reais ou executar ações — nunca \
-invente números de desempenho. Antes de aumentar orçamento de forma agressiva \
-(mais que o dobro) ou pausar a campanha, confirme com o usuário que é isso mesmo \
-que ele quer, a menos que ele já tenha pedido isso claramente na mensagem. Depois \
-de executar uma ação, confirme o que foi feito."""
+Responda sempre em português do Brasil, de forma direta e objetiva. Use as
+ferramentas disponíveis para consultar dados reais — nunca invente métricas,
+número de leads, vendas ou qualquer estatística. Depois de executar uma ação,
+confirme claramente o que foi feito."""
 
 TOOLS = [
     {'type': 'function', 'function': {
@@ -51,22 +69,75 @@ TOOLS = [
         'parameters': {'type': 'object', 'properties': {}, 'required': []},
     }},
     {'type': 'function', 'function': {
-        'name': 'pause_campaign',
-        'description': 'Pausa a campanha no Google Ads (para de gastar e de exibir anúncios).',
+        'name': 'get_search_terms',
+        'description': 'Lista os termos de busca reais (search terms) que dispararam o anúncio nos últimos N dias, com clique/custo/conversões — use para achar desperdício ou novas keywords.',
+        'parameters': {
+            'type': 'object',
+            'properties': {'days_back': {'type': 'integer', 'description': 'Janela em dias (padrão 30).'}},
+            'required': [],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'get_lead_funnel',
+        'description': 'Retorna o funil comercial dos leads originados desta campanha (visitas, cliques no WhatsApp, e leads por estágio: NEW/CONTACTED/QUALIFIED/UNQUALIFIED/NEGOTIATING/RESERVED/SOLD/LOST) — dados reais do CRM, não do Google Ads.',
         'parameters': {'type': 'object', 'properties': {}, 'required': []},
+    }},
+    {'type': 'function', 'function': {
+        'name': 'get_decision_history',
+        'description': 'Lista as últimas decisões/ações já tomadas nesta campanha (por você ou pelo usuário), com o motivo e a hipótese declarados na época — consulte antes de repetir uma otimização.',
+        'parameters': {
+            'type': 'object',
+            'properties': {'limit': {'type': 'integer', 'description': 'Quantas decisões recentes retornar (padrão 10).'}},
+            'required': [],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'pause_campaign',
+        'description': 'Pausa a campanha no Google Ads (para de gastar e de exibir anúncios). Ação estrutural relevante — confirme com o usuário antes, a menos que ele já tenha pedido isso claramente.',
+        'parameters': {
+            'type': 'object',
+            'properties': {'reason': {'type': 'string', 'description': 'Motivo da pausa, para registro histórico.'}},
+            'required': [],
+        },
     }},
     {'type': 'function', 'function': {
         'name': 'resume_campaign',
         'description': 'Reativa a campanha pausada no Google Ads.',
-        'parameters': {'type': 'object', 'properties': {}, 'required': []},
+        'parameters': {
+            'type': 'object',
+            'properties': {'reason': {'type': 'string'}},
+            'required': [],
+        },
     }},
     {'type': 'function', 'function': {
         'name': 'update_daily_budget',
-        'description': 'Altera o orçamento diário da campanha.',
+        'description': (
+            'Altera o orçamento diário da campanha. Se a variação exceder o limite de '
+            'auto-execução da organização, a ferramenta NÃO executa e retorna requires_approval=true — '
+            'nesse caso, explique a mudança ao usuário e só chame de novo com confirmed=true '
+            'depois que ele concordar explicitamente.'
+        ),
         'parameters': {
             'type': 'object',
-            'properties': {'daily_budget': {'type': 'number', 'description': 'Novo orçamento diário em reais (R$).'}},
+            'properties': {
+                'daily_budget': {'type': 'number', 'description': 'Novo orçamento diário em reais (R$).'},
+                'reason': {'type': 'string'},
+                'hypothesis': {'type': 'string', 'description': 'O que você espera que aconteça com essa mudança.'},
+                'confirmed': {'type': 'boolean', 'description': 'true somente depois que o usuário confirmou explicitamente uma mudança acima do limite de auto-execução.'},
+            },
             'required': ['daily_budget'],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'add_negative_keywords',
+        'description': 'Adiciona palavras-chave negativas de campanha (bloqueiam buscas irrelevantes). Use apenas para termos inequivocamente fora do propósito comercial — nunca negative termos do briefing marcados como "nunca negativar".',
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'keywords': {'type': 'array', 'items': {'type': 'string'}},
+                'reason': {'type': 'string'},
+            },
+            'required': ['keywords'],
         },
     }},
 ]
@@ -82,12 +153,19 @@ class AdvertisingAgentService:
 
     def _build_system_prompt(self) -> str:
         campaign = self.campaign
+        briefing = getattr(campaign, 'briefing', None)
+        ad_settings = AdvertisingSettings.objects.filter(organization=self.organization).first()
+        max_pct = ad_settings.max_auto_budget_change_percent if ad_settings else 20
+
         return SYSTEM_PROMPT_TEMPLATE.format(
+            skill=load_skill(),
+            briefing=format_briefing(briefing),
             name=campaign.name,
             status=campaign.status,
             daily_budget=campaign.daily_budget,
             region=campaign.region or 'não definida',
             litter_name=getattr(campaign.litter, 'name', None) or 'nenhuma (campanha geral)',
+            max_auto_budget_change_percent=max_pct,
         )
 
     def _campaign_summary_payload(self) -> dict:
@@ -113,6 +191,10 @@ class AdvertisingAgentService:
             ],
         }
 
+    def _max_auto_budget_change_percent(self) -> int:
+        ad_settings = AdvertisingSettings.objects.filter(organization=self.organization).first()
+        return ad_settings.max_auto_budget_change_percent if ad_settings else 20
+
     def _execute_tool(self, name: str, arguments: dict) -> dict:
         try:
             if name == 'get_campaign_summary':
@@ -122,22 +204,83 @@ class AdvertisingAgentService:
                 synced = MetricsService().sync_campaign_metrics(self.campaign)
                 return {'synced_days': synced, **self._campaign_summary_payload()}
 
+            if name == 'get_search_terms':
+                terms = CampaignService().get_search_terms(self.campaign, arguments.get('days_back', 30))
+                return {'search_terms': terms}
+
+            if name == 'get_lead_funnel':
+                return lead_funnel_service.funnel_summary(self.campaign)
+
+            if name == 'get_decision_history':
+                limit = arguments.get('limit', 10)
+                decisions = AdAgentDecision.objects.filter(campaign=self.campaign)[:limit]
+                return {'decisions': [{
+                    'timestamp': d.created_at.isoformat(),
+                    'action': d.action,
+                    'before': d.before,
+                    'after': d.after,
+                    'reason': d.reason,
+                    'hypothesis': d.hypothesis,
+                    'performed_by': d.performed_by,
+                    'approval_status': d.approval_status,
+                } for d in decisions]}
+
             if name == 'pause_campaign':
-                campaign = CampaignService().pause_campaign(self.organization, self.campaign.id)
+                campaign = CampaignService().pause_campaign(
+                    self.organization, self.campaign.id, reason=arguments.get('reason', ''), performed_by='agent',
+                )
                 self.campaign = campaign
                 return {'status': campaign.status, 'error_message': campaign.error_message}
 
             if name == 'resume_campaign':
-                campaign = CampaignService().resume_campaign(self.organization, self.campaign.id)
+                campaign = CampaignService().resume_campaign(
+                    self.organization, self.campaign.id, reason=arguments.get('reason', ''), performed_by='agent',
+                )
                 self.campaign = campaign
                 return {'status': campaign.status, 'error_message': campaign.error_message}
 
             if name == 'update_daily_budget':
+                new_budget = float(arguments['daily_budget'])
+                current_budget = float(self.campaign.daily_budget)
+                change_percent = abs(new_budget - current_budget) / current_budget * 100 if current_budget else 100
+                max_pct = self._max_auto_budget_change_percent()
+
+                if change_percent > max_pct and not arguments.get('confirmed'):
+                    return {
+                        'requires_approval': True,
+                        'change_percent': round(change_percent, 1),
+                        'max_auto_percent': max_pct,
+                        'message': (
+                            f'Mudar de R$ {current_budget:.2f} para R$ {new_budget:.2f} é uma variação de '
+                            f'{change_percent:.0f}%, acima do limite de auto-execução ({max_pct}%). '
+                            'Peça confirmação explícita ao usuário antes de chamar esta ferramenta de novo com confirmed=true.'
+                        ),
+                    }
+
                 campaign = CampaignService().update_daily_budget(
-                    self.organization, self.campaign.id, arguments['daily_budget'],
+                    self.organization, self.campaign.id, new_budget,
+                    reason=arguments.get('reason', ''), hypothesis=arguments.get('hypothesis', ''),
+                    performed_by='agent',
+                    approval_status='confirmed_by_user' if arguments.get('confirmed') else 'auto_executed',
                 )
                 self.campaign = campaign
                 return {'daily_budget': str(campaign.daily_budget), 'error_message': campaign.error_message}
+
+            if name == 'add_negative_keywords':
+                briefing = getattr(self.campaign, 'briefing', None)
+                protected = {kw.lower() for kw in (briefing.do_not_negate_keywords if briefing else [])}
+                requested = arguments.get('keywords', [])
+                blocked = [kw for kw in requested if kw.lower() in protected]
+                allowed = [kw for kw in requested if kw.lower() not in protected]
+                campaign = CampaignService().add_negative_keywords(
+                    self.organization, self.campaign.id, allowed,
+                    reason=arguments.get('reason', ''), performed_by='agent',
+                )
+                self.campaign = campaign
+                result = {'added': allowed, 'error_message': campaign.error_message}
+                if blocked:
+                    result['blocked_by_briefing'] = blocked
+                return result
 
             return {'error': f'Ferramenta desconhecida: {name}'}
         except GoogleAdsProviderError as exc:
@@ -161,13 +304,13 @@ class AdvertisingAgentService:
         client = self._get_openai(openai_api_key)
         actions_taken = []
 
-        for _ in range(5):  # limite de idas e vindas de tool-calling por mensagem
+        for _ in range(MAX_TOOL_ROUNDTRIPS):
             response = client.chat.completions.create(
                 model='gpt-4o',
                 messages=messages,
                 tools=TOOLS,
                 temperature=0.3,
-                max_tokens=700,
+                max_tokens=800,
             )
             choice = response.choices[0].message
 
@@ -186,7 +329,7 @@ class AdvertisingAgentService:
             for tool_call in choice.tool_calls:
                 args = json.loads(tool_call.function.arguments or '{}')
                 result = self._execute_tool(tool_call.function.name, args)
-                if tool_call.function.name != 'get_campaign_summary':
+                if tool_call.function.name not in ('get_campaign_summary', 'sync_metrics', 'get_search_terms', 'get_lead_funnel', 'get_decision_history'):
                     actions_taken.append({'tool': tool_call.function.name, 'arguments': args, 'result': result})
                 messages.append({
                     'role': 'tool',

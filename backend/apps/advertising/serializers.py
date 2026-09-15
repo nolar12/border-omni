@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from apps.advertising.models import (
     AdvertisingAccount, AdCampaign, AdMetric, AdvertisingSettings, AdClickToken, AdChatMessage,
+    AdCampaignBriefing, AdAgentDecision,
 )
 
 
@@ -55,7 +56,7 @@ class AdvertisingSettingsSerializer(serializers.ModelSerializer):
         model = AdvertisingSettings
         fields = [
             'is_enabled', 'send_qualified_events', 'send_reservation_events',
-            'send_sale_events', 'default_daily_budget', 'updated_at',
+            'send_sale_events', 'default_daily_budget', 'max_auto_budget_change_percent', 'updated_at',
         ]
         read_only_fields = ['updated_at']
 
@@ -63,10 +64,16 @@ class AdvertisingSettingsSerializer(serializers.ModelSerializer):
 class PublicAdClickTokenRequestSerializer(serializers.Serializer):
     org_id = serializers.IntegerField()
     gclid = serializers.CharField(required=False, allow_blank=True, default='')
+    gbraid = serializers.CharField(required=False, allow_blank=True, default='')
+    wbraid = serializers.CharField(required=False, allow_blank=True, default='')
     utm_source = serializers.CharField(required=False, allow_blank=True, default='')
     utm_medium = serializers.CharField(required=False, allow_blank=True, default='')
     utm_campaign = serializers.CharField(required=False, allow_blank=True, default='')
     utm_content = serializers.CharField(required=False, allow_blank=True, default='')
+    ad_group_id = serializers.CharField(required=False, allow_blank=True, default='')
+    ad_id = serializers.CharField(required=False, allow_blank=True, default='')
+    keyword = serializers.CharField(required=False, allow_blank=True, default='')
+    search_term = serializers.CharField(required=False, allow_blank=True, default='')
     litter_id = serializers.IntegerField(required=False, allow_null=True)
 
 
@@ -80,4 +87,25 @@ class AdChatMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdChatMessage
         fields = ['id', 'role', 'content', 'actions_taken', 'created_at']
+        read_only_fields = fields
+
+
+class AdCampaignBriefingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AdCampaignBriefing
+        fields = [
+            'product_description', 'objective', 'deadline', 'price_info',
+            'primary_conversion', 'priority_regions', 'positive_intent_keywords',
+            'negative_keywords', 'do_not_negate_keywords', 'notes', 'updated_at',
+        ]
+        read_only_fields = ['updated_at']
+
+
+class AdAgentDecisionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AdAgentDecision
+        fields = [
+            'id', 'action', 'before', 'after', 'reason', 'hypothesis',
+            'metrics_snapshot', 'performed_by', 'approval_status', 'created_at',
+        ]
         read_only_fields = fields

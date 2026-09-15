@@ -134,10 +134,16 @@ class AdClickToken(models.Model):
         'kennel.Litter', on_delete=models.SET_NULL, null=True, blank=True, related_name='ad_click_tokens'
     )
     gclid = models.CharField(max_length=200, blank=True, default='')
+    gbraid = models.CharField(max_length=200, blank=True, default='')
+    wbraid = models.CharField(max_length=200, blank=True, default='')
     utm_source = models.CharField(max_length=100, blank=True, default='')
     utm_medium = models.CharField(max_length=100, blank=True, default='')
     utm_campaign = models.CharField(max_length=150, blank=True, default='')
     utm_content = models.CharField(max_length=150, blank=True, default='')
+    ad_group_id = models.CharField(max_length=50, blank=True, default='')
+    ad_id = models.CharField(max_length=50, blank=True, default='')
+    keyword = models.CharField(max_length=200, blank=True, default='')
+    search_term = models.CharField(max_length=300, blank=True, default='')
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     consumed_at = models.DateTimeField(null=True, blank=True)
@@ -157,10 +163,18 @@ class AdLeadAttribution(models.Model):
         AdCampaign, on_delete=models.SET_NULL, null=True, blank=True, related_name='lead_attributions'
     )
     gclid = models.CharField(max_length=200, blank=True, default='')
+    gbraid = models.CharField(max_length=200, blank=True, default='')
+    wbraid = models.CharField(max_length=200, blank=True, default='')
     utm_source = models.CharField(max_length=100, blank=True, default='')
     utm_medium = models.CharField(max_length=100, blank=True, default='')
     utm_campaign = models.CharField(max_length=150, blank=True, default='')
     utm_content = models.CharField(max_length=150, blank=True, default='')
+    # Preenchidos via ValueTrack (finalUrlSuffix) quando disponível — permitem
+    # relacionar o lead ao grupo de anúncios/anúncio/keyword/busca exatos.
+    ad_group_id = models.CharField(max_length=50, blank=True, default='')
+    ad_id = models.CharField(max_length=50, blank=True, default='')
+    keyword = models.CharField(max_length=200, blank=True, default='')
+    search_term = models.CharField(max_length=300, blank=True, default='')
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -247,6 +261,9 @@ class AdvertisingSettings(models.Model):
     send_reservation_events = models.BooleanField(default=True)
     send_sale_events = models.BooleanField(default=True)
     default_daily_budget = models.DecimalField(max_digits=10, decimal_places=2, default=20)
+    # Limite (%) de variação de orçamento que o agente pode executar sozinho —
+    # acima disso, precisa de confirmação explícita do usuário no chat.
+    max_auto_budget_change_percent = models.PositiveIntegerField(default=20)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -282,3 +299,69 @@ class AdChatMessage(models.Model):
 
     def __str__(self):
         return f'{self.role}: {self.content[:50]}'
+
+
+class AdCampaignBriefing(models.Model):
+    """
+    Contexto comercial específico de UMA campanha — separado da skill (que é a
+    metodologia universal). O agente sempre combina skill + briefing + dados reais
+    para decidir; nunca decide só com a metodologia genérica.
+    """
+    campaign = models.OneToOneField(AdCampaign, on_delete=models.CASCADE, related_name='briefing')
+    product_description = models.TextField(blank=True, default='')
+    objective = models.TextField(blank=True, default='')
+    deadline = models.DateField(null=True, blank=True)
+    price_info = models.CharField(max_length=200, blank=True, default='')
+    primary_conversion = models.CharField(max_length=100, blank=True, default='lead/whatsapp')
+    # Regiões prioritárias em grupos (ex.: {"A": ["Florianópolis", ...], "B": [...]})
+    priority_regions = models.JSONField(default=dict, blank=True)
+    positive_intent_keywords = models.JSONField(default=list, blank=True)
+    negative_keywords = models.JSONField(default=list, blank=True)
+    # Termos que parecem negativáveis mas NÃO devem ser negativados sem análise
+    # (ex.: "preço", "criador") — evita falso positivo de negativação automática.
+    do_not_negate_keywords = models.JSONField(default=list, blank=True)
+    notes = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'ad_campaign_briefings'
+
+    def __str__(self):
+        return f'Briefing({self.campaign.name})'
+
+
+class AdAgentDecision(models.Model):
+    """
+    Memória de decisões do agente — toda ação que muda algo (orçamento, pausa,
+    negativas etc.) fica registrada aqui, para o agente conseguir consultar o que
+    já foi tentado e qual foi o resultado antes de repetir uma otimização.
+    """
+    APPROVAL_STATUS_CHOICES = [
+        ('auto_executed', 'Executado automaticamente'),
+        ('confirmed_by_user', 'Confirmado pelo usuário'),
+        ('rejected', 'Rejeitado'),
+    ]
+    PERFORMED_BY_CHOICES = [
+        ('agent', 'Agente'),
+        ('user', 'Usuário (via app)'),
+    ]
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='ad_agent_decisions')
+    campaign = models.ForeignKey(AdCampaign, on_delete=models.CASCADE, related_name='agent_decisions')
+    action = models.CharField(max_length=50)
+    before = models.JSONField(default=dict, blank=True)
+    after = models.JSONField(default=dict, blank=True)
+    reason = models.TextField(blank=True, default='')
+    hypothesis = models.TextField(blank=True, default='')
+    metrics_snapshot = models.JSONField(default=dict, blank=True)
+    performed_by = models.CharField(max_length=10, choices=PERFORMED_BY_CHOICES, default='agent')
+    approval_status = models.CharField(max_length=20, choices=APPROVAL_STATUS_CHOICES, default='auto_executed')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'ad_agent_decisions'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.action} @ {self.campaign_id} ({self.created_at:%Y-%m-%d})'

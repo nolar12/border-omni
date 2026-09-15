@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 from apps.core.models import Organization, UserProfile
 from apps.kennel.models import Litter
 from apps.advertising.models import (
-    AdvertisingAccount, AdCampaign, AdvertisingSettings, AdClickToken, AdEvent,
+    AdvertisingAccount, AdCampaign, AdvertisingSettings, AdClickToken, AdEvent, AdCampaignBriefing,
 )
 from apps.advertising.providers import GoogleAdsProviderError, exchange_code_for_tokens, list_accessible_customers
 from apps.advertising.services.campaign_service import CampaignService
@@ -19,10 +19,12 @@ from apps.advertising.services.metrics_service import MetricsService
 from apps.advertising.services.ai_copy_service import generate_ad_copy_with_fallback
 from apps.advertising.services.agent_service import AdvertisingAgentService
 from apps.advertising.services.transcription_service import transcribe_audio_file
+from apps.advertising.services import lead_funnel_service
 from apps.advertising.serializers import (
     AdvertisingAccountSerializer, AdCampaignSerializer, AdCampaignDetailSerializer,
     AdMetricSerializer, AdvertisingSettingsSerializer,
     PublicAdClickTokenRequestSerializer, AdClickTokenResponseSerializer, AdChatMessageSerializer,
+    AdCampaignBriefingSerializer, AdAgentDecisionSerializer,
 )
 
 logger = logging.getLogger('apps')
@@ -189,6 +191,29 @@ class AdCampaignViewSet(viewsets.ModelViewSet):
 
         return Response({'transcription': text})
 
+    @action(detail=True, methods=['get', 'put'], url_path='briefing')
+    def briefing(self, request, pk=None):
+        campaign = self.get_object()
+        obj, _ = AdCampaignBriefing.objects.get_or_create(campaign=campaign)
+
+        if request.method == 'GET':
+            return Response(AdCampaignBriefingSerializer(obj).data)
+
+        serializer = AdCampaignBriefingSerializer(obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'], url_path='decisions')
+    def decisions(self, request, pk=None):
+        campaign = self.get_object()
+        return Response(AdAgentDecisionSerializer(campaign.agent_decisions.all()[:50], many=True).data)
+
+    @action(detail=True, methods=['get'], url_path='funnel')
+    def funnel(self, request, pk=None):
+        campaign = self.get_object()
+        return Response(lead_funnel_service.funnel_summary(campaign))
+
 
 class AdvertisingSettingsView(APIView):
     """Mesmo padrão de AgentConfigView (api/views/__init__.py) — GET/PUT, get_or_create por org."""
@@ -302,10 +327,16 @@ class PublicAdClickTokenView(APIView):
         click_token = AdClickToken.objects.create(
             organization=org,
             gclid=data.get('gclid', ''),
+            gbraid=data.get('gbraid', ''),
+            wbraid=data.get('wbraid', ''),
             utm_source=data.get('utm_source', ''),
             utm_medium=data.get('utm_medium', ''),
             utm_campaign=data.get('utm_campaign', ''),
             utm_content=data.get('utm_content', ''),
+            ad_group_id=data.get('ad_group_id', ''),
+            ad_id=data.get('ad_id', ''),
+            keyword=data.get('keyword', ''),
+            search_term=data.get('search_term', ''),
             litter=litter,
         )
         AdEvent.objects.create(
