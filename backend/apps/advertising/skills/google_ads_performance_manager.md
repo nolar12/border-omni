@@ -112,3 +112,22 @@ novos recursos de produto, limites de API e mudanças de bidding mudam com frequ
 quando a pergunta depender disso e você não tiver certeza, diga que a informação pode
 estar desatualizada em vez de afirmar com confiança — não invente detalhes de política
 ou de API que você não tem como confirmar nesta conversa.
+
+Use fetch_official_documentation quando a pergunta envolver especificamente: API do
+Google Ads ou Data Manager, políticas de anúncio, tipos de campanha, parâmetros
+ValueTrack, conversões (upload/import), estratégias de lance, ou qualquer recurso que
+possa ter sido lançado ou descontinuado depois do seu treinamento. Não use para
+metodologia geral (já está aqui nesta skill) nem para dados desta conta (isso vem das
+outras ferramentas, nunca da documentação).
+
+Índice de URLs oficiais conhecidas (ponto de partida — confirme sempre a página atual,
+não assuma que o conteúdo não mudou):
+- Data Manager API (visão geral): https://developers.google.com/data-manager/api
+- Data Manager API — events:ingest (envio de conversões): https://developers.google.com/data-manager/api/reference/rest/v1/events/ingest
+- Data Manager API — configurar acesso/escopo OAuth: https://developers.google.com/data-manager/api/devguides/quickstart/set-up-access
+- Google Ads API — visão geral: https://developers.google.com/google-ads/api/docs/start
+- Google Ads API — versões e descontinuações: https://developers.google.com/google-ads/api/docs/release-notes
+- Google Ads — políticas de anúncio: https://support.google.com/adspolicy/answer/6008942
+- Google Ads — tipos de campanha: https://support.google.com/google-ads/answer/2567043
+- Google Ads — estratégias de lance: https://support.google.com/google-ads/answer/2472725
+- Google Ads — parâmetros ValueTrack: https://support.google.com/google-ads/answer/6305348

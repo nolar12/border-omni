@@ -28,6 +28,7 @@ from apps.advertising.providers import GoogleAdsProviderError
 from apps.advertising.services.campaign_service import CampaignService
 from apps.advertising.services.metrics_service import MetricsService
 from apps.advertising.services.campaign_plan_service import CampaignPlanService
+from apps.advertising.services.docs_research_service import fetch_official_documentation
 from apps.advertising.services import lead_funnel_service
 from apps.advertising.services.skill_service import load_skill, format_briefing
 
@@ -217,6 +218,24 @@ TOOLS = [
             'type': 'object',
             'properties': {'plan_id': {'type': 'integer'}},
             'required': ['plan_id'],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'fetch_official_documentation',
+        'description': (
+            'Busca o texto de UMA página de documentação oficial do Google (só developers.google.com ou '
+            'support.google.com — qualquer outro domínio é recusado). Use apenas quando a pergunta depender '
+            'de algo volátil que pode ter mudado desde o seu treinamento: API/Data Manager do Google Ads, '
+            'políticas de anúncio, tipos de campanha, ValueTrack, conversões, estratégias de lance, ou '
+            'recursos novos/descontinuados. Não use para metodologia geral (isso já está na sua skill) nem '
+            'para dados desta conta (isso vem das outras ferramentas).'
+        ),
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'url': {'type': 'string', 'description': 'URL completa da página de documentação oficial do Google.'},
+            },
+            'required': ['url'],
         },
     }},
 ]
@@ -469,6 +488,9 @@ class AdvertisingAgentService:
                 plan = CampaignPlanService().reject(organization=self.organization, plan_id=arguments['plan_id'])
                 return {'status': plan.status}
 
+            if name == 'fetch_official_documentation':
+                return fetch_official_documentation(arguments['url'])
+
             return {'error': f'Ferramenta desconhecida: {name}'}
         except GoogleAdsProviderError as exc:
             return {'error': exc.user_message}
@@ -516,7 +538,7 @@ class AdvertisingAgentService:
             for tool_call in choice.tool_calls:
                 args = json.loads(tool_call.function.arguments or '{}')
                 result = self._execute_tool(tool_call.function.name, args)
-                if tool_call.function.name not in ('get_campaign_summary', 'sync_metrics', 'get_search_terms', 'get_lead_funnel', 'get_decision_history', 'evaluate_decision'):
+                if tool_call.function.name not in ('get_campaign_summary', 'sync_metrics', 'get_search_terms', 'get_lead_funnel', 'get_decision_history', 'evaluate_decision', 'fetch_official_documentation'):
                     actions_taken.append({'tool': tool_call.function.name, 'arguments': args, 'result': result})
                 messages.append({
                     'role': 'tool',

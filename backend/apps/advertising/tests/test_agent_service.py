@@ -369,6 +369,40 @@ class AdvertisingAgentServiceTests(TestCase):
         plan = AdCampaignPlan.objects.get()
         self.assertEqual(plan.litter_id, litter.id)
 
+    @patch('apps.advertising.services.docs_research_service.requests.get')
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_fetch_official_documentation_tool_is_read_only_and_not_logged_as_action(self, mock_openai_cls, mock_get):
+        mock_get.return_value = MagicMock(status_code=200, text='<p>Conteúdo oficial sobre ValueTrack.</p>')
+
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'fetch_official_documentation', {'url': 'https://support.google.com/google-ads/answer/6305348'})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='O ValueTrack funciona assim...')),
+        ]
+
+        reply = AdvertisingAgentService(self.campaign).chat(user_message='Como funciona ValueTrack hoje?', openai_api_key='sk-test')
+
+        self.assertEqual(reply.actions_taken, [])  # ferramenta de leitura não conta como "ação"
+        tool_result = json.loads(mock_client.chat.completions.create.call_args_list[1][1]['messages'][-1]['content'])
+        self.assertIn('ValueTrack', tool_result['content'])
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_fetch_official_documentation_rejects_disallowed_domain(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'fetch_official_documentation', {'url': 'https://example.com/scam'})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Não posso consultar essa fonte.')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Veja em example.com', openai_api_key='sk-test')
+
+        tool_result = json.loads(mock_client.chat.completions.create.call_args_list[1][1]['messages'][-1]['content'])
+        self.assertIn('error', tool_result)
+
     @patch('apps.advertising.services.agent_service.OpenAI')
     def test_chat_history_is_persisted_in_order(self, mock_openai_cls):
         mock_client = MagicMock()
