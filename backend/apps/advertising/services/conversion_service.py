@@ -62,7 +62,8 @@ class ConversionService:
             return
 
         attribution = getattr(lead, 'ad_attribution', None)
-        if not attribution or not attribution.gclid or not attribution.campaign:
+        has_ad_click_id = attribution and (attribution.gclid or attribution.gbraid or attribution.wbraid)
+        if not has_ad_click_id or not attribution.campaign:
             return
 
         campaign = attribution.campaign
@@ -100,8 +101,11 @@ class ConversionService:
                 ConversionSpec(
                     conversion_action=conversion_action,
                     gclid=attribution.gclid,
+                    gbraid=attribution.gbraid,
+                    wbraid=attribution.wbraid,
                     conversion_value=float(value) if value is not None else None,
                     event_id=str(upload.event_id),
+                    phone=getattr(lead, 'phone', ''),
                 ),
             )
         except GoogleAdsProviderError as exc:

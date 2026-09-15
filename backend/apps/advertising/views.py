@@ -10,12 +10,14 @@ from rest_framework.views import APIView
 
 from apps.core.models import Organization, UserProfile
 from apps.kennel.models import Litter
+from apps.leads.models import Lead, LeadProfile
 from apps.advertising.models import (
     AdvertisingAccount, AdCampaign, AdvertisingSettings, AdClickToken, AdEvent, AdCampaignBriefing,
 )
 from apps.advertising.providers import GoogleAdsProviderError, exchange_code_for_tokens, list_accessible_customers
 from apps.advertising.services.campaign_service import CampaignService
 from apps.advertising.services.metrics_service import MetricsService
+from apps.advertising.services.conversion_service import ConversionService
 from apps.advertising.services.ai_copy_service import generate_ad_copy_with_fallback
 from apps.advertising.services.agent_service import AdvertisingAgentService
 from apps.advertising.services.transcription_service import transcribe_audio_file
@@ -345,3 +347,57 @@ class PublicAdClickTokenView(APIView):
         )
 
         return Response(AdClickTokenResponseSerializer(click_token).data, status=201)
+
+
+class LeadCommercialEventView(APIView):
+    """
+    Fecha o ciclo Google Ads → CRM → Google Ads: hoje é o ÚNICO lugar do sistema
+    que marca LeadProfile.is_reserved/is_purchased (usados pelo funil comercial
+    em lead_funnel_service e por essas mesmas duas flags aqui) — antes desta view
+    esses campos existiam no model mas nada os definia. Ao marcar reserva/venda,
+    dispara ConversionService.record_event, que envia o sinal de conversão
+    (RESERVED/SOLD) ao Google Ads via Data Manager API quando há atribuição de
+    clique (gclid/gbraid/wbraid) para o lead.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lead_id):
+        org = _get_org(request.user)
+        if not org:
+            return Response({'error': 'Organização não encontrada para este usuário.'}, status=400)
+
+        event_type = request.data.get('event_type')
+        if event_type not in ('reservation', 'sale'):
+            return Response({'error': 'event_type deve ser "reservation" ou "sale".'}, status=400)
+
+        try:
+            lead = Lead.objects.get(organization=org, id=lead_id)
+        except Lead.DoesNotExist:
+            return Response({'error': 'Lead não encontrado.'}, status=404)
+
+        profile, _ = LeadProfile.objects.get_or_create(lead=lead)
+        already_recorded = profile.is_purchased if event_type == 'sale' else profile.is_reserved
+        if already_recorded:
+            return Response({
+                'status': 'already_recorded', 'is_reserved': profile.is_reserved, 'is_purchased': profile.is_purchased,
+            })
+
+        if event_type == 'sale':
+            profile.is_reserved = True
+            profile.is_purchased = True
+            profile.save(update_fields=['is_reserved', 'is_purchased'])
+        else:
+            profile.is_reserved = True
+            profile.save(update_fields=['is_reserved'])
+
+        raw_value = request.data.get('value')
+        value = None
+        if raw_value not in (None, ''):
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                return Response({'error': 'value precisa ser um número.'}, status=400)
+
+        ConversionService().record_event(organization=org, lead=lead, event_type=event_type, value=value)
+
+        return Response({'status': 'recorded', 'is_reserved': profile.is_reserved, 'is_purchased': profile.is_purchased})

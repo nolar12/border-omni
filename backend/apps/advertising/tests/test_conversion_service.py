@@ -76,3 +76,20 @@ class ConversionServiceTests(TestCase):
         upload = AdConversionUpload.objects.get()
         self.assertEqual(upload.status, 'sent')
         mock_upload.assert_called_once()
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.upload_conversion')
+    def test_upload_passes_phone_and_click_identifiers_never_only_gclid(self, mock_upload):
+        """gbraid/wbraid (App/rede de parceiros) também devem disparar o upload, não só gclid."""
+        mock_upload.return_value = ProviderResult(success=True, raw={'ok': True})
+        self.account.metadata = {'conversion_actions': {'qualified_lead': 'customers/1/conversionActions/1'}}
+        self.account.save(update_fields=['metadata'])
+        AdLeadAttribution.objects.create(lead=self.lead, campaign=self.campaign, gbraid='gbraid-only')
+        AdvertisingSettings.objects.create(organization=self.org, is_enabled=True)
+
+        ConversionService().record_event(organization=self.org, lead=self.lead, event_type='qualified_lead')
+
+        mock_upload.assert_called_once()
+        spec = mock_upload.call_args[0][1]
+        self.assertEqual(spec.gbraid, 'gbraid-only')
+        self.assertEqual(spec.gclid, '')
+        self.assertEqual(spec.phone, self.lead.phone)

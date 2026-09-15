@@ -55,6 +55,12 @@ class ConversionSpec:
     conversion_value: float | None = None
     currency: str = 'BRL'
     event_id: str = ''
+    gbraid: str = ''
+    wbraid: str = ''
+    # Telefone bruto (não hasheado) do lead, se houver — cada provider aplica a
+    # normalização/hash exigida pela sua própria especificação (ex.: E.164 + SHA-256
+    # para o Google, formato diferente para outros providers no futuro).
+    phone: str = ''
 
 
 @dataclass

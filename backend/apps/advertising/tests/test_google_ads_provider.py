@@ -4,6 +4,7 @@ from django.test import TestCase, override_settings
 
 from apps.core.models import Organization
 from apps.advertising.models import AdvertisingAccount
+from apps.advertising.providers.base import ConversionSpec
 from apps.advertising.providers.google_ads import GoogleAdsProvider
 
 
@@ -97,3 +98,92 @@ class SearchTermsAndNegativesTests(TestCase):
         self.assertEqual(len(operations), 2)
         self.assertTrue(all(op['create']['negative'] is True for op in operations))
         self.assertEqual({op['create']['keyword']['text'] for op in operations}, {'grátis', 'adoção'})
+
+
+class UploadConversionDataManagerTests(TestCase):
+    """
+    upload_conversion migrou de customers/{id}:uploadClickConversions (Google Ads
+    API, descontinuada para novos adotantes desde 2026-06-15) para a Data Manager
+    API (events:ingest) — endpoint/host/payload completamente diferentes.
+    """
+
+    def setUp(self):
+        self.org = Organization.objects.create(name='Canil DM')
+        self.account = AdvertisingAccount.objects.create(
+            organization=self.org, customer_id='2059070343', login_customer_id='1717587348',
+        )
+
+    def test_dry_run_never_calls_data_manager(self):
+        with patch('apps.advertising.providers.google_ads.GoogleAdsProvider._data_manager_request') as mock_dm:
+            result = GoogleAdsProvider().upload_conversion(self.account, ConversionSpec(
+                conversion_action='customers/2059070343/conversionActions/111', gclid='g1',
+            ))
+        mock_dm.assert_not_called()
+        self.assertTrue(result.success)
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._data_manager_request')
+    def test_sends_events_ingest_with_numeric_conversion_action_and_login_account(self, mock_dm):
+        mock_dm.return_value = {'ok': True}
+        GoogleAdsProvider().upload_conversion(self.account, ConversionSpec(
+            conversion_action='customers/2059070343/conversionActions/111', gclid='g1',
+            conversion_value=250.0, currency='BRL', event_id='evt-1',
+        ))
+
+        args, kwargs = mock_dm.call_args
+        self.assertEqual(args[0], 'POST')
+        self.assertEqual(args[2], 'events:ingest')
+        payload = kwargs['json']
+        destination = payload['destinations'][0]
+        self.assertEqual(destination['productDestinationId'], '111')  # ID numérico, não o resource name
+        self.assertEqual(destination['operatingAccount'], {'accountType': 'GOOGLE_ADS', 'accountId': '2059070343'})
+        self.assertEqual(destination['loginAccount'], {'accountType': 'GOOGLE_ADS', 'accountId': '1717587348'})
+        event = payload['events'][0]
+        self.assertEqual(event['adIdentifiers'], {'gclid': 'g1'})
+        self.assertEqual(event['conversionValue'], 250.0)
+        self.assertEqual(event['transactionId'], 'evt-1')
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._data_manager_request')
+    def test_falls_back_to_gbraid_then_wbraid_when_no_gclid(self, mock_dm):
+        mock_dm.return_value = {'ok': True}
+        GoogleAdsProvider().upload_conversion(self.account, ConversionSpec(
+            conversion_action='customers/2059070343/conversionActions/111', gclid='', gbraid='gb-1', wbraid='wb-1',
+        ))
+        event = mock_dm.call_args[1]['json']['events'][0]
+        self.assertEqual(event['adIdentifiers'], {'gbraid': 'gb-1'})
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    def test_no_click_identifier_fails_without_calling_api(self):
+        with patch('apps.advertising.providers.google_ads.GoogleAdsProvider._data_manager_request') as mock_dm:
+            result = GoogleAdsProvider().upload_conversion(self.account, ConversionSpec(
+                conversion_action='customers/2059070343/conversionActions/111', gclid='',
+            ))
+        mock_dm.assert_not_called()
+        self.assertFalse(result.success)
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._data_manager_request')
+    def test_phone_is_never_sent_in_plain_text_always_hashed_after_e164_normalization(self, mock_dm):
+        import hashlib
+        mock_dm.return_value = {'ok': True}
+        GoogleAdsProvider().upload_conversion(self.account, ConversionSpec(
+            conversion_action='customers/2059070343/conversionActions/111', gclid='g1', phone='(48) 99999-1111',
+        ))
+        payload = mock_dm.call_args[1]['json']
+        expected_hash = hashlib.sha256('+5548999991111'.encode('utf-8')).hexdigest()
+        sent_phone = payload['events'][0]['userData']['userIdentifiers'][0]['phoneNumber']
+        self.assertEqual(sent_phone, expected_hash)
+        self.assertNotIn('99999-1111', str(payload))  # nunca em texto puro
+        self.assertEqual(payload['encoding'], 'HEX')
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._data_manager_request')
+    def test_no_login_account_when_operating_account_is_not_managed_by_mcc(self, mock_dm):
+        account = AdvertisingAccount.objects.create(organization=self.org, customer_id='9990001111')
+        mock_dm.return_value = {'ok': True}
+        GoogleAdsProvider().upload_conversion(account, ConversionSpec(
+            conversion_action='customers/9990001111/conversionActions/222', gclid='g1',
+        ))
+        destination = mock_dm.call_args[1]['json']['destinations'][0]
+        self.assertNotIn('loginAccount', destination)

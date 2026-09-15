@@ -10,12 +10,15 @@ chamadas de escrita reais, os métodos de escrita retornam uma resposta simulada
 (logada) em vez de chamar a API do Google — isso permite exercitar toda a camada de
 domínio (services/views/UI) sem developer token/conta real.
 """
+import hashlib
 import logging
+import re
 import uuid
 from datetime import date
 
 import requests
 from django.conf import settings
+from django.utils import timezone as django_timezone
 
 from .base import (
     AdvertisingProvider, CampaignSpec, ProviderCampaign, MetricSnapshot,
@@ -25,6 +28,14 @@ from .base import (
 logger = logging.getLogger('apps')
 
 OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token'
+
+# A partir de 15/06/2026 a Google Ads API não aceita mais novos adotantes em
+# uploadClickConversions — o caminho recomendado (e único, para quem não já
+# tinha esse fluxo funcionando antes do corte) é a Data Manager API, um produto
+# separado (lançado em 09/12/2025) com endpoint/host/autenticação próprios:
+# sem developer-token, sem login-customer-id no header (vai no corpo, em
+# Destination.loginAccount), escopo OAuth próprio (auth/datamanager).
+DATA_MANAGER_BASE_URL = 'https://datamanager.googleapis.com/v1'
 
 
 class GoogleAdsProviderError(Exception):
@@ -97,6 +108,29 @@ class GoogleAdsProvider(AdvertisingProvider):
             )
         return self._safe_json(resp)
 
+    def _data_manager_headers(self, account) -> dict:
+        # Data Manager API não usa developer-token nem login-customer-id no
+        # header — a conta de login/operação vai no corpo de cada Destination.
+        return {
+            'Authorization': f'Bearer {self._get_access_token(account)}',
+            'Content-Type': 'application/json',
+        }
+
+    def _data_manager_request(self, method: str, account, path: str, **kwargs) -> dict:
+        url = f'{DATA_MANAGER_BASE_URL}/{path}'
+        try:
+            resp = requests.request(method, url, headers=self._data_manager_headers(account), timeout=30, **kwargs)
+        except requests.RequestException as exc:
+            logger.exception('GoogleAdsProvider Data Manager request failed')
+            raise GoogleAdsProviderError('Erro de comunicação com a Data Manager API.', code='network_error') from exc
+
+        if resp.status_code >= 400:
+            logger.error(f'GoogleAdsProvider Data Manager API error: {resp.status_code} {resp.text}')
+            raise GoogleAdsProviderError(
+                self._friendly_error(resp), code=f'http_{resp.status_code}', raw=self._safe_json(resp)
+            )
+        return self._safe_json(resp)
+
     @staticmethod
     def _safe_json(resp) -> dict:
         try:
@@ -107,12 +141,22 @@ class GoogleAdsProvider(AdvertisingProvider):
     @staticmethod
     def _friendly_error(resp) -> str:
         data = GoogleAdsProvider._safe_json(resp)
-        errors = data.get('error', {}).get('details', []) or []
-        for detail in errors:
+        error_obj = data.get('error', {}) or {}
+        details = error_obj.get('details', []) or []
+        for detail in details:
             for err in detail.get('errors', []) or []:
                 message = err.get('message')
                 if message:
                     return message
+        # Formato padrão de erro de API do Google (usado pela Data Manager API,
+        # entre outras) — {"error": {"message": "...", "status": "..."}}.
+        if error_obj.get('message'):
+            if error_obj.get('status') == 'PERMISSION_DENIED' and 'scope' in error_obj['message'].lower():
+                return (
+                    'A conexão com o Google Ads não tem a permissão (escopo) necessária para esta operação. '
+                    'Reconecte a conta em Configurações.'
+                )
+            return error_obj['message']
         if resp.status_code == 401:
             return 'Autenticação com o Google Ads expirou.'
         if resp.status_code == 403:
@@ -407,24 +451,78 @@ class GoogleAdsProvider(AdvertisingProvider):
             ))
         return snapshots
 
+    @staticmethod
+    def _normalize_phone_e164(phone: str) -> str:
+        """E.164: '+' seguido só de dígitos, com DDI do Brasil quando ausente —
+        exigido pela Data Manager API antes do hash (diferente da normalização
+        sem '+' usada pela Meta Conversions API)."""
+        digits = re.sub(r'\D', '', phone or '')
+        if not digits:
+            return ''
+        if not digits.startswith('55'):
+            digits = '55' + digits
+        return f'+{digits}'
+
+    @staticmethod
+    def _sha256_hex(value: str) -> str:
+        return hashlib.sha256(value.encode('utf-8')).hexdigest()
+
     def upload_conversion(self, account, conversion: ConversionSpec) -> ProviderResult:
+        """
+        Envia o evento de conversão via Data Manager API (events:ingest) — a
+        Google Ads API uploadClickConversions está descontinuada para novos
+        adotantes desde 15/06/2026 e este projeto nunca teve upload funcionando
+        antes desse corte, então não há acesso legado a preservar.
+
+        productDestinationId precisa ser o ID NUMÉRICO da conversion action
+        (não o resource name) — ver conversion.conversion_action, que chega como
+        "customers/{id}/conversionActions/{numeric_id}".
+        """
         if not _is_live():
             logger.info(f'[GOOGLE_ADS_DRY_RUN] upload_conversion account={account.customer_id} conversion={conversion}')
             return ProviderResult(success=True, raw={'dry_run': True})
 
+        ad_identifiers = {}
+        if conversion.gclid:
+            ad_identifiers['gclid'] = conversion.gclid
+        elif conversion.gbraid:
+            ad_identifiers['gbraid'] = conversion.gbraid
+        elif conversion.wbraid:
+            ad_identifiers['wbraid'] = conversion.wbraid
+        if not ad_identifiers:
+            return ProviderResult(success=False, error_message='Nenhum identificador de clique (gclid/gbraid/wbraid) disponível.')
+
+        numeric_conversion_action_id = conversion.conversion_action.rstrip('/').split('/')[-1]
+
+        destination = {
+            'operatingAccount': {'accountType': 'GOOGLE_ADS', 'accountId': account.customer_id},
+            'productDestinationId': numeric_conversion_action_id,
+        }
+        if account.login_customer_id and account.login_customer_id != account.customer_id:
+            destination['loginAccount'] = {'accountType': 'GOOGLE_ADS', 'accountId': account.login_customer_id}
+
+        event = {
+            'adIdentifiers': ad_identifiers,
+            'currency': conversion.currency,
+            'eventTimestamp': django_timezone.now().isoformat(),
+            'transactionId': conversion.event_id,
+            'eventSource': 'WEB',
+        }
+        if conversion.conversion_value is not None:
+            event['conversionValue'] = conversion.conversion_value
+
+        payload = {'destinations': [destination], 'events': [event]}
+
+        # Dado pessoal (telefone) só entra hasheado (SHA-256, após normalização
+        # E.164) — nunca em texto puro, conforme a especificação da Data Manager API.
+        if conversion.phone:
+            normalized = self._normalize_phone_e164(conversion.phone)
+            if normalized:
+                event['userData'] = {'userIdentifiers': [{'phoneNumber': self._sha256_hex(normalized)}]}
+                payload['encoding'] = 'HEX'
+
         try:
-            data = self._request(
-                'POST', account, f'customers/{account.customer_id}:uploadClickConversions',
-                json={
-                    'conversions': [{
-                        'gclid': conversion.gclid,
-                        'conversionAction': conversion.conversion_action,
-                        'conversionValue': conversion.conversion_value or 0,
-                        'currencyCode': conversion.currency,
-                    }],
-                    'partialFailure': True,
-                },
-            )
+            data = self._data_manager_request('POST', account, 'events:ingest', json=payload)
             return ProviderResult(success=True, raw=data)
         except GoogleAdsProviderError as exc:
             return ProviderResult(success=False, raw=exc.raw, error_message=exc.user_message)
@@ -448,7 +546,10 @@ class GoogleAdsProvider(AdvertisingProvider):
                 'type': 'UPLOAD_CLICKS',
                 'category': category,
                 'status': 'ENABLED',
-                'valueSettings': {'defaultValue': 0, 'alwaysUseDefaultValue': True},
+                # alwaysUseDefaultValue=False é essencial para o evento "sale": sem
+                # isso, o Google ignoraria o valor real da venda e sempre reportaria 0,
+                # inviabilizando o bidding por valor/ROAS na conversão de maior peso.
+                'valueSettings': {'defaultValue': 0, 'alwaysUseDefaultValue': False},
             }}]},
         )
         resource_name = (data.get('results') or [{}])[0].get('resourceName')

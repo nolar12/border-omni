@@ -48,6 +48,15 @@ export const leadsService = {
     return data;
   },
 
+  /** Marca reserva/venda — fecha o loop Google Ads → CRM → Google Ads (envia o
+   * sinal de conversão RESERVED/SOLD quando o lead tem atribuição de clique). */
+  async markCommercialEvent(id: number, eventType: 'reservation' | 'sale', value?: number): Promise<{
+    status: string; is_reserved: boolean; is_purchased: boolean;
+  }> {
+    const { data } = await api.post(`/leads/${id}/ad-commercial-event/`, { event_type: eventType, value });
+    return data;
+  },
+
   async sendMessage(id: number, text: string): Promise<Message> {
     const { data } = await api.post<Message>(`/leads/${id}/send_message/`, { text });
     return data;

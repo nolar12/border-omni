@@ -92,7 +92,10 @@ export default function PromoteCampaignModal({ litter: fixedLitter, onClose, onC
     loadGoogleIdentityServices(() => {
       const client = window.google!.accounts.oauth2.initCodeClient({
         client_id: GOOGLE_ADS_CLIENT_ID,
-        scope: 'https://www.googleapis.com/auth/adwords',
+        // adwords: gestão de campanhas/métricas. datamanager: envio de conversões
+        // (QUALIFIED/RESERVED/SOLD) via Data Manager API — substituta da antiga
+        // uploadClickConversions, descontinuada para novos adotantes desde 2026-06-15.
+        scope: 'https://www.googleapis.com/auth/adwords https://www.googleapis.com/auth/datamanager',
         ux_mode: 'popup',
         callback: async (response) => {
           if (!response.code) {
@@ -206,10 +209,12 @@ export default function PromoteCampaignModal({ litter: fixedLitter, onClose, onC
             <div className="flex items-center justify-center py-8">
               <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
             </div>
-          ) : !hasAccount ? (
+          ) : !hasAccount || connectStep.status === 'selecting' ? (
             <div className="space-y-4">
               <p className="text-sm text-slate-300">
-                Nenhuma conta Google Ads conectada ainda. Conecte uma conta para poder criar a campanha.
+                {hasAccount
+                  ? 'Reconectando para atualizar as permissões da conta já vinculada.'
+                  : 'Nenhuma conta Google Ads conectada ainda. Conecte uma conta para poder criar a campanha.'}
               </p>
 
               {connectStep.status === 'selecting' ? (
@@ -311,6 +316,19 @@ export default function PromoteCampaignModal({ litter: fixedLitter, onClose, onC
             </div>
           ) : (
             <>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-emerald-400">✓ Conta Google Ads conectada</span>
+                <button
+                  type="button"
+                  onClick={startGoogleAdsConnect}
+                  disabled={connectStep.status === 'loading' || connectStep.status === 'finalizing'}
+                  className="text-slate-400 hover:text-amber-400 underline disabled:opacity-50"
+                  title="Reconecte se envio de conversões (leads qualificados/reservas/vendas) começar a falhar por permissão"
+                >
+                  {connectStep.status === 'loading' || connectStep.status === 'finalizing' ? 'Conectando…' : 'Atualizar permissões'}
+                </button>
+              </div>
+              {connectStep.status === 'error' && <p className="text-sm text-red-400">{connectStep.message}</p>}
               {!fixedLitter && (
                 <div>
                   <label className="text-xs text-slate-400">Ninhada (opcional)</label>

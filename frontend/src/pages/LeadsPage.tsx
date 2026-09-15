@@ -331,6 +331,8 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [msgText, setMsgText] = useState('');
   const [sending, setSending] = useState(false);
   const [assuming, setAssuming] = useState(false);
+  const [markingCommercial, setMarkingCommercial] = useState(false);
+  const [saleValueInput, setSaleValueInput] = useState('');
   const [noteText, setNoteText] = useState('');
   const [showQR, setShowQR] = useState(false);
   const [sendingFile, setSendingFile] = useState(false);
@@ -501,6 +503,20 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     if (!lead) return;
     const updated = await leadsService.releaseLead(lead.id);
     setLead(updated);
+  }
+
+  async function handleMarkCommercialEvent(eventType: 'reservation' | 'sale') {
+    if (!lead) return;
+    const value = eventType === 'sale' && saleValueInput ? Number(saleValueInput) : undefined;
+    setMarkingCommercial(true);
+    try {
+      await leadsService.markCommercialEvent(lead.id, eventType, value);
+      const updated = await leadsService.getLead(lead.id);
+      setLead(updated);
+      setSaleValueInput('');
+    } finally {
+      setMarkingCommercial(false);
+    }
   }
 
   async function openTemplateModal() {
@@ -1689,6 +1705,46 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
               )}
             </div>
           )}
+
+          {/* ── Reserva / Venda (fecha o loop de conversão com o Google Ads) ── */}
+          <div className="mt-4 pt-3 border-t border-gray-100">
+            <p className="text-xs text-gray-400 mb-2 uppercase tracking-wide font-semibold">Reserva / Venda</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {lead.profile?.is_purchased ? (
+                <span className="badge badge-sm bg-green-100 text-green-700 border-green-200">✓ Vendido</span>
+              ) : lead.profile?.is_reserved ? (
+                <span className="badge badge-sm bg-amber-100 text-amber-700 border-amber-200">✓ Reservado</span>
+              ) : (
+                <button
+                  onClick={() => handleMarkCommercialEvent('reservation')}
+                  disabled={markingCommercial}
+                  className="btn btn-outline btn-xs"
+                >
+                  Marcar reserva
+                </button>
+              )}
+              {!lead.profile?.is_purchased && (
+                <>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={saleValueInput}
+                    onChange={e => setSaleValueInput(e.target.value)}
+                    placeholder="Valor da venda (R$)"
+                    className="input input-xs input-bordered w-36"
+                  />
+                  <button
+                    onClick={() => handleMarkCommercialEvent('sale')}
+                    disabled={markingCommercial}
+                    className="btn btn-success btn-xs"
+                  >
+                    Marcar venda
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
 
           {/* ── Campanha Meta ── */}
           {(lead.ad_referral || lead.last_meta_event) && (
