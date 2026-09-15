@@ -135,4 +135,13 @@ export const advertisingService = {
     const { data } = await api.post<AdChatMessage>(`/ad-campaigns/${id}/chat/`, { message });
     return data;
   },
+
+  async transcribeAudio(id: number, audio: Blob): Promise<{ transcription: string }> {
+    const form = new FormData();
+    form.append('audio', audio, 'audio.webm');
+    const { data } = await api.post<{ transcription: string }>(`/ad-campaigns/${id}/chat/transcribe/`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
 };

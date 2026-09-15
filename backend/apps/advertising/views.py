@@ -18,6 +18,7 @@ from apps.advertising.services.campaign_service import CampaignService
 from apps.advertising.services.metrics_service import MetricsService
 from apps.advertising.services.ai_copy_service import generate_ad_copy_with_fallback
 from apps.advertising.services.agent_service import AdvertisingAgentService
+from apps.advertising.services.transcription_service import transcribe_audio_file
 from apps.advertising.serializers import (
     AdvertisingAccountSerializer, AdCampaignSerializer, AdCampaignDetailSerializer,
     AdMetricSerializer, AdvertisingSettingsSerializer,
@@ -165,6 +166,28 @@ class AdCampaignViewSet(viewsets.ModelViewSet):
 
         reply = AdvertisingAgentService(campaign).chat(user_message=message, openai_api_key=openai_api_key)
         return Response(AdChatMessageSerializer(reply).data, status=201)
+
+    @action(detail=True, methods=['post'], url_path='chat/transcribe')
+    def transcribe(self, request, pk=None):
+        campaign = self.get_object()
+        audio_file = request.FILES.get('audio')
+        if not audio_file:
+            return Response({'error': 'audio é obrigatório'}, status=400)
+
+        openai_api_key = getattr(getattr(campaign.organization, 'agent_config', None), 'openai_api_key', '') or ''
+        if not openai_api_key:
+            return Response(
+                {'error': 'Nenhuma OpenAI API key configurada para esta organização (Configurações → IA).'},
+                status=503,
+            )
+
+        try:
+            text = transcribe_audio_file(audio_file, openai_api_key)
+        except Exception as exc:
+            logger.exception('AdCampaignViewSet.transcribe failed')
+            return Response({'error': f'Falha ao transcrever áudio: {exc}'}, status=400)
+
+        return Response({'transcription': text})
 
 
 class AdvertisingSettingsView(APIView):

@@ -120,7 +120,44 @@ function ChatPanel({ campaign, onCampaignChanged }: { campaign: AdCampaign; onCa
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+
+  async function startRecording() {
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      chunksRef.current = [];
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop());
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        setTranscribing(true);
+        try {
+          const { transcription } = await advertisingService.transcribeAudio(campaign.id, blob);
+          setInput(prev => (prev ? `${prev} ${transcription}` : transcription));
+        } catch {
+          setError('Não foi possível transcrever o áudio.');
+        } finally {
+          setTranscribing(false);
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+    } catch {
+      setError('Não foi possível acessar o microfone (verifique a permissão do navegador).');
+    }
+  }
+
+  function stopRecording() {
+    mediaRecorderRef.current?.stop();
+    setRecording(false);
+  }
 
   useEffect(() => {
     advertisingService.getChatHistory(campaign.id).then(setMessages);
@@ -187,13 +224,21 @@ function ChatPanel({ campaign, onCampaignChanged }: { campaign: AdCampaign; onCa
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder="Ex: como está a performance? aumenta o orçamento pra R$30"
-            disabled={sending}
+            placeholder={transcribing ? 'Transcrevendo áudio…' : 'Ex: como está a performance? aumenta o orçamento pra R$30'}
+            disabled={sending || transcribing}
             className="flex-1 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-white text-xs disabled:opacity-50"
           />
           <button
+            onClick={recording ? stopRecording : startRecording}
+            disabled={sending || transcribing}
+            title={recording ? 'Parar gravação' : 'Gravar áudio'}
+            className={`px-3 py-2 rounded-lg text-white text-xs font-semibold disabled:opacity-50 ${recording ? 'bg-red-600 hover:bg-red-500 animate-pulse' : 'bg-slate-700 hover:bg-slate-600'}`}
+          >
+            {recording ? '⏹' : '🎤'}
+          </button>
+          <button
             onClick={handleSend}
-            disabled={sending || !input.trim()}
+            disabled={sending || transcribing || !input.trim()}
             className="px-3 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-semibold"
           >
             {sending ? '…' : 'Enviar'}
