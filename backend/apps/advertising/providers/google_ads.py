@@ -270,16 +270,28 @@ class GoogleAdsProvider(AdvertisingProvider):
         )
 
     def update_campaign(self, account, external_campaign_id: str, spec: CampaignSpec) -> ProviderCampaign:
+        """Hoje só atualiza o orçamento diário. O orçamento é um recurso próprio
+        (CampaignBudget) — não dá para mudar o valor direto no recurso da campanha,
+        é preciso descobrir qual orçamento ela usa e atualizar esse recurso."""
         if not _is_live():
             logger.info(f'[GOOGLE_ADS_DRY_RUN] update_campaign id={external_campaign_id} spec={spec}')
             return ProviderCampaign(external_id=external_campaign_id, status='active', raw={'dry_run': True})
 
+        lookup = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': f'SELECT campaign.campaign_budget FROM campaign WHERE campaign.id = {external_campaign_id}'},
+        )
+        rows = lookup.get('results') or []
+        budget_resource_name = rows[0]['campaign']['campaignBudget'] if rows else None
+        if not budget_resource_name:
+            raise GoogleAdsProviderError('Campanha ou orçamento não encontrado.', code='budget_not_found', raw=lookup)
+
         data = self._request(
-            'POST', account, f'customers/{account.customer_id}/campaigns:mutate',
+            'POST', account, f'customers/{account.customer_id}/campaignBudgets:mutate',
             json={'operations': [{'update': {
-                'resourceName': f'customers/{account.customer_id}/campaigns/{external_campaign_id}',
-                'campaignBudget': {'amountMicros': int(spec.daily_budget * 1_000_000)},
-            }, 'updateMask': 'campaignBudget'}]},
+                'resourceName': budget_resource_name,
+                'amountMicros': int(spec.daily_budget * 1_000_000),
+            }, 'updateMask': 'amountMicros'}]},
         )
         return ProviderCampaign(external_id=external_campaign_id, status='active', raw=data)
 

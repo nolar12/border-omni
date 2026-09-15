@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { advertisingService, type AdCampaign, type AdMetric } from '../services/advertising';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { advertisingService, type AdCampaign, type AdMetric, type AdChatMessage } from '../services/advertising';
 import PromoteCampaignModal from '../components/PromoteCampaignModal';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -115,8 +115,98 @@ function MetricsPanel({ campaignId }: { campaignId: number }) {
   );
 }
 
+function ChatPanel({ campaign, onCampaignChanged }: { campaign: AdCampaign; onCampaignChanged: (c: AdCampaign) => void }) {
+  const [messages, setMessages] = useState<AdChatMessage[] | null>(null);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    advertisingService.getChatHistory(campaign.id).then(setMessages);
+  }, [campaign.id]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!text || sending) return;
+    setSending(true);
+    setError(null);
+    setInput('');
+    setMessages(prev => [...(prev ?? []), {
+      id: Date.now(), role: 'user', content: text, actions_taken: [], created_at: new Date().toISOString(),
+    }]);
+    try {
+      const reply = await advertisingService.sendChatMessage(campaign.id, text);
+      setMessages(prev => [...(prev ?? []), reply]);
+      if (reply.actions_taken.length > 0) {
+        // Alguma ação (pausar/retomar/orçamento) pode ter mudado a campanha — recarrega o card.
+        advertisingService.listCampaigns().then(all => {
+          const updated = all.find(c => c.id === campaign.id);
+          if (updated) onCampaignChanged(updated);
+        });
+      }
+    } catch (err) {
+      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setError(message || 'Não foi possível enviar a mensagem agora.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="px-4 pb-4">
+      <div className="bg-slate-900/60 rounded-lg p-3 flex flex-col gap-2 max-h-96">
+        <div className="flex-1 overflow-y-auto space-y-2 min-h-[120px]">
+          {messages === null ? (
+            <p className="text-xs text-slate-500">Carregando conversa…</p>
+          ) : messages.length === 0 ? (
+            <p className="text-xs text-slate-500">
+              Pergunte sobre o desempenho da campanha, ou peça para pausar/retomar/ajustar o orçamento.
+            </p>
+          ) : (
+            messages.map(m => (
+              <div key={m.id} className={`text-xs rounded-lg px-3 py-2 max-w-[85%] ${m.role === 'user' ? 'bg-blue-600 text-white ml-auto' : 'bg-slate-700 text-slate-100'}`}>
+                <p className="whitespace-pre-wrap">{m.content}</p>
+                {m.actions_taken?.length > 0 && (
+                  <p className="mt-1 text-[10px] text-slate-300/80 italic">
+                    Ação: {m.actions_taken.map(a => a.tool).join(', ')}
+                  </p>
+                )}
+              </div>
+            ))
+          )}
+          <div ref={bottomRef} />
+        </div>
+        {error && <p className="text-xs text-red-400">{error}</p>}
+        <div className="flex gap-2">
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+            placeholder="Ex: como está a performance? aumenta o orçamento pra R$30"
+            disabled={sending}
+            className="flex-1 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-white text-xs disabled:opacity-50"
+          />
+          <button
+            onClick={handleSend}
+            disabled={sending || !input.trim()}
+            className="px-3 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-semibold"
+          >
+            {sending ? '…' : 'Enviar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CampaignRow({ campaign, onChanged }: { campaign: AdCampaign; onChanged: (c: AdCampaign) => void }) {
   const [expanded, setExpanded] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function togglePause() {
@@ -167,6 +257,12 @@ function CampaignRow({ campaign, onChanged }: { campaign: AdCampaign; onChanged:
           >
             {expanded ? 'Ocultar métricas' : 'Ver métricas'}
           </button>
+          <button
+            onClick={() => setChatOpen(o => !o)}
+            className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold"
+          >
+            {chatOpen ? 'Ocultar chat' : 'Chat com IA'}
+          </button>
           {(campaign.status === 'active' || campaign.status === 'paused') && (
             <button
               onClick={togglePause}
@@ -179,6 +275,7 @@ function CampaignRow({ campaign, onChanged }: { campaign: AdCampaign; onChanged:
         </div>
       </div>
       {expanded && <MetricsPanel campaignId={campaign.id} />}
+      {chatOpen && <ChatPanel campaign={campaign} onCampaignChanged={onChanged} />}
     </div>
   );
 }

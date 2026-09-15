@@ -17,10 +17,11 @@ from apps.advertising.providers import GoogleAdsProviderError, exchange_code_for
 from apps.advertising.services.campaign_service import CampaignService
 from apps.advertising.services.metrics_service import MetricsService
 from apps.advertising.services.ai_copy_service import generate_ad_copy_with_fallback
+from apps.advertising.services.agent_service import AdvertisingAgentService
 from apps.advertising.serializers import (
     AdvertisingAccountSerializer, AdCampaignSerializer, AdCampaignDetailSerializer,
     AdMetricSerializer, AdvertisingSettingsSerializer,
-    PublicAdClickTokenRequestSerializer, AdClickTokenResponseSerializer,
+    PublicAdClickTokenRequestSerializer, AdClickTokenResponseSerializer, AdChatMessageSerializer,
 )
 
 logger = logging.getLogger('apps')
@@ -143,6 +144,27 @@ class AdCampaignViewSet(viewsets.ModelViewSet):
         except GoogleAdsProviderError as exc:
             return Response({'error': exc.user_message}, status=400)
         return Response({'synced': synced, 'metrics': AdMetricSerializer(campaign.metrics.all(), many=True).data})
+
+    @action(detail=True, methods=['get', 'post'], url_path='chat')
+    def chat(self, request, pk=None):
+        campaign = self.get_object()
+
+        if request.method == 'GET':
+            return Response(AdChatMessageSerializer(campaign.chat_messages.all(), many=True).data)
+
+        message = (request.data.get('message') or '').strip()
+        if not message:
+            return Response({'error': 'message é obrigatório'}, status=400)
+
+        openai_api_key = getattr(getattr(campaign.organization, 'agent_config', None), 'openai_api_key', '') or ''
+        if not openai_api_key:
+            return Response(
+                {'error': 'Nenhuma OpenAI API key configurada para esta organização (Configurações → IA).'},
+                status=503,
+            )
+
+        reply = AdvertisingAgentService(campaign).chat(user_message=message, openai_api_key=openai_api_key)
+        return Response(AdChatMessageSerializer(reply).data, status=201)
 
 
 class AdvertisingSettingsView(APIView):

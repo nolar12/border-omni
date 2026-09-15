@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from apps.advertising.models import (
-    AdvertisingAccount, AdCampaign, AdMetric, AdvertisingSettings, AdClickToken,
+    AdvertisingAccount, AdCampaign, AdMetric, AdvertisingSettings, AdClickToken, AdChatMessage,
 )
 
 
@@ -74,3 +74,10 @@ class AdClickTokenResponseSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdClickToken
         fields = ['token']
+
+
+class AdChatMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AdChatMessage
+        fields = ['id', 'role', 'content', 'actions_taken', 'created_at']
+        read_only_fields = fields

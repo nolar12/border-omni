@@ -112,3 +112,16 @@ class CampaignService:
             campaign.error_message = exc.user_message
         campaign.save(update_fields=['status', 'error_message'])
         return campaign
+
+    def update_daily_budget(self, organization, campaign_id: int, new_daily_budget: float) -> AdCampaign:
+        campaign = AdCampaign.objects.get(organization=organization, id=campaign_id)
+        try:
+            spec = CampaignSpec(name=campaign.name, daily_budget=float(new_daily_budget))
+            self._provider(campaign.provider).update_campaign(campaign.advertising_account, campaign.external_campaign_id, spec)
+            campaign.daily_budget = new_daily_budget
+            campaign.error_message = ''
+        except GoogleAdsProviderError as exc:
+            logger.exception('CampaignService.update_daily_budget failed')
+            campaign.error_message = exc.user_message
+        campaign.save(update_fields=['daily_budget', 'error_message'])
+        return campaign

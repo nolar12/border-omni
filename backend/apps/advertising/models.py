@@ -255,3 +255,30 @@ class AdvertisingSettings(models.Model):
 
     def __str__(self):
         return f'AdvertisingSettings({self.organization.name})'
+
+
+class AdChatMessage(models.Model):
+    """
+    Histórico do chat com o agente de IA sobre uma campanha — perguntas, respostas
+    e um resumo do que o agente efetivamente fez (pausar, mudar orçamento etc.),
+    sempre executado através da mesma camada de serviço (CampaignService/
+    MetricsService), nunca direto no banco ou na API do Google.
+    """
+    ROLE_CHOICES = [
+        ('user', 'Usuário'),
+        ('assistant', 'Agente'),
+    ]
+
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='ad_chat_messages')
+    campaign = models.ForeignKey(AdCampaign, on_delete=models.CASCADE, related_name='chat_messages')
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES)
+    content = models.TextField()
+    actions_taken = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'ad_chat_messages'
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'{self.role}: {self.content[:50]}'

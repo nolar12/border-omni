@@ -40,6 +40,14 @@ export interface AdMetric {
   cost_per_conversion: string | null;
 }
 
+export interface AdChatMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  actions_taken: { tool: string; arguments: Record<string, unknown>; result: Record<string, unknown> }[];
+  created_at: string;
+}
+
 export interface AdvertisingAccount {
   id: number;
   provider: string;
@@ -115,6 +123,16 @@ export const advertisingService = {
 
   async syncMetrics(id: number): Promise<{ synced: number; metrics: AdMetric[] }> {
     const { data } = await api.post<{ synced: number; metrics: AdMetric[] }>(`/ad-campaigns/${id}/sync_metrics/`);
+    return data;
+  },
+
+  async getChatHistory(id: number): Promise<AdChatMessage[]> {
+    const { data } = await api.get<AdChatMessage[]>(`/ad-campaigns/${id}/chat/`);
+    return data;
+  },
+
+  async sendChatMessage(id: number, message: string): Promise<AdChatMessage> {
+    const { data } = await api.post<AdChatMessage>(`/ad-campaigns/${id}/chat/`, { message });
     return data;
   },
 };
