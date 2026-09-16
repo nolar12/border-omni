@@ -2,47 +2,8 @@ import { useState, useEffect } from 'react';
 import DateInput from './DateInput';
 import { advertisingService, type AdCampaign } from '../services/advertising';
 import { littersService } from '../services/litters';
+import { requestGoogleAdsAuthCode } from '../lib/googleAdsOAuth';
 import type { Litter } from '../types';
-
-// Minimal type declaration for the Google Identity Services popup code client
-// (google.accounts.oauth2.initCodeClient) — same "SDK popup → code → backend
-// discover/finalize" architecture already used for Meta via window.FB.login().
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        oauth2: {
-          initCodeClient(config: {
-            client_id: string;
-            scope: string;
-            ux_mode: 'popup';
-            callback: (response: { code?: string; error?: string }) => void;
-          }): { requestCode(): void };
-        };
-      };
-    };
-  }
-}
-
-const GOOGLE_ADS_CLIENT_ID = import.meta.env.VITE_GOOGLE_ADS_CLIENT_ID as string | undefined;
-let gisScriptLoading = false;
-
-function loadGoogleIdentityServices(onLoad: () => void) {
-  if (window.google?.accounts?.oauth2) { onLoad(); return; }
-  if (gisScriptLoading) {
-    const check = setInterval(() => {
-      if (window.google?.accounts?.oauth2) { clearInterval(check); onLoad(); }
-    }, 200);
-    return;
-  }
-  gisScriptLoading = true;
-  const script = document.createElement('script');
-  script.src = 'https://accounts.google.com/gsi/client';
-  script.async = true;
-  script.defer = true;
-  script.onload = onLoad;
-  document.body.appendChild(script);
-}
 
 type GoogleAdsConnectStep =
   | { status: 'idle' }
@@ -84,42 +45,26 @@ export default function PromoteCampaignModal({ litter: fixedLitter, onClose, onC
   }, []);
 
   function startGoogleAdsConnect() {
-    if (!GOOGLE_ADS_CLIENT_ID) {
-      setConnectStep({ status: 'error', message: 'VITE_GOOGLE_ADS_CLIENT_ID não configurado no .env do frontend.' });
-      return;
-    }
     setConnectStep({ status: 'loading' });
-    loadGoogleIdentityServices(() => {
-      const client = window.google!.accounts.oauth2.initCodeClient({
-        client_id: GOOGLE_ADS_CLIENT_ID,
-        // adwords: gestão de campanhas/métricas. datamanager: envio de conversões
-        // (QUALIFIED/RESERVED/SOLD) via Data Manager API — substituta da antiga
-        // uploadClickConversions, descontinuada para novos adotantes desde 2026-06-15.
-        scope: 'https://www.googleapis.com/auth/adwords https://www.googleapis.com/auth/datamanager',
-        ux_mode: 'popup',
-        callback: async (response) => {
-          if (!response.code) {
-            setConnectStep({ status: 'error', message: 'Autorização cancelada ou negada.' });
+    requestGoogleAdsAuthCode(
+      async (code) => {
+        try {
+          const discover = await advertisingService.googleAdsDiscover(code);
+          if (discover.accessible_customers.length === 0) {
+            setConnectStep({ status: 'error', message: 'Nenhuma conta Google Ads acessível encontrada para este login.' });
             return;
           }
-          try {
-            const discover = await advertisingService.googleAdsDiscover(response.code);
-            if (discover.accessible_customers.length === 0) {
-              setConnectStep({ status: 'error', message: 'Nenhuma conta Google Ads acessível encontrada para este login.' });
-              return;
-            }
-            setSelectedCustomerIdx(0);
-            setManualCustomerId(discover.accessible_customers[0] ?? '');
-            setManualLoginCustomerId('');
-            setConnectStep({ status: 'selecting', refreshToken: discover.refresh_token, customers: discover.accessible_customers });
-          } catch (e) {
-            const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Falha ao listar contas Google Ads.';
-            setConnectStep({ status: 'error', message: msg });
-          }
-        },
-      });
-      client.requestCode();
-    });
+          setSelectedCustomerIdx(0);
+          setManualCustomerId(discover.accessible_customers[0] ?? '');
+          setManualLoginCustomerId('');
+          setConnectStep({ status: 'selecting', refreshToken: discover.refresh_token, customers: discover.accessible_customers });
+        } catch (e) {
+          const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Falha ao listar contas Google Ads.';
+          setConnectStep({ status: 'error', message: msg });
+        }
+      },
+      (message) => setConnectStep({ status: 'error', message }),
+    );
   }
 
   async function finalizeGoogleAdsConnect() {

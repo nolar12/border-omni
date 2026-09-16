@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { advertisingService, type AdCampaign, type AdMetric, type AdChatMessage } from '../services/advertising';
+import { advertisingService, type AdCampaign, type AdMetric, type AdChatMessage, type AdvertisingAccount } from '../services/advertising';
 import PromoteCampaignModal from '../components/PromoteCampaignModal';
+import { requestGoogleAdsAuthCode } from '../lib/googleAdsOAuth';
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Rascunho',
@@ -366,6 +367,68 @@ function CampaignRow({ campaign, onChanged }: { campaign: AdCampaign; onChanged:
   );
 }
 
+/**
+ * Status da conexão Google Ads + reautorização — vive aqui (nível da página),
+ * não dentro do modal "Nova Campanha", porque conectar é uma coisa de conta
+ * (uma vez), não de campanha (toda vez). Reautorizar reusa o customer_id já
+ * salvo — não precisa escolher a conta de novo, só pedir o consentimento com
+ * o escopo atualizado (ex.: quando um novo escopo como datamanager é
+ * adicionado depois que a conta já tinha sido conectada).
+ */
+function GoogleAdsConnectionStatus() {
+  const [account, setAccount] = useState<AdvertisingAccount | null | undefined>(undefined); // undefined = carregando
+  const [status, setStatus] = useState<'idle' | 'connecting' | 'error' | 'done'>('idle');
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    advertisingService.listAccounts().then(accounts => setAccount(accounts[0] ?? null));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  function handleReauthorize() {
+    if (!account) return;
+    setStatus('connecting');
+    setError(null);
+    requestGoogleAdsAuthCode(
+      async (code) => {
+        try {
+          const discover = await advertisingService.googleAdsDiscover(code);
+          await advertisingService.googleAdsFinalize({
+            refresh_token: discover.refresh_token,
+            customer_id: account.customer_id,
+            login_customer_id: account.login_customer_id || undefined,
+          });
+          setStatus('done');
+          load();
+        } catch (e) {
+          const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Falha ao reautorizar a conta.';
+          setStatus('error');
+          setError(msg);
+        }
+      },
+      (message) => { setStatus('error'); setError(message); },
+    );
+  }
+
+  if (account === undefined || account === null) return null; // nada conectado ainda — o modal "Nova Campanha" cuida disso
+
+  return (
+    <div className="flex items-center gap-3 text-xs text-slate-400">
+      <span className="text-emerald-400">✓ Google Ads conectado ({account.customer_id})</span>
+      <button
+        onClick={handleReauthorize}
+        disabled={status === 'connecting'}
+        title="Reconecte se o envio de conversões (leads qualificados/reservas/vendas) começar a falhar por permissão"
+        className="text-slate-400 hover:text-amber-400 underline disabled:opacity-50"
+      >
+        {status === 'connecting' ? 'Conectando…' : status === 'done' ? 'Permissões atualizadas ✓' : 'Atualizar permissões'}
+      </button>
+      {error && <span className="text-red-400">{error}</span>}
+    </div>
+  );
+}
+
 export default function AdvertisingPage() {
   const [campaigns, setCampaigns] = useState<AdCampaign[]>([]);
   const [loading, setLoading] = useState(true);
@@ -398,6 +461,9 @@ export default function AdvertisingPage() {
           <p className="text-slate-400 text-sm mt-0.5">
             Campanhas criadas a partir de "Promover" em cada ninhada, ou direto por aqui.
           </p>
+          <div className="mt-2">
+            <GoogleAdsConnectionStatus />
+          </div>
         </div>
         <button
           onClick={() => setShowNewCampaign(true)}
