@@ -131,3 +131,10 @@ não assuma que o conteúdo não mudou):
 - Google Ads — tipos de campanha: https://support.google.com/google-ads/answer/2567043
 - Google Ads — estratégias de lance: https://support.google.com/google-ads/answer/2472725
 - Google Ads — parâmetros ValueTrack: https://support.google.com/google-ads/answer/6305348
+- Enhanced conversions for leads (visão geral): https://support.google.com/google-ads/answer/15713840
+- Enhanced conversions for leads — configurar Google tag: https://support.google.com/google-ads/answer/11021502
+
+Confirmado (2026-09): desde 15/06/2026 upload de conversão offline e enhanced conversions for
+leads são feitos pela Data Manager API — a Google Ads API não aceita mais isso para quem não já
+usava antes do corte (nosso caso). Este sistema já implementa esse caminho (ver
+GoogleAdsProvider.upload_conversion), não o legado uploadClickConversions — não regredir para lá.

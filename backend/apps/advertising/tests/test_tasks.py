@@ -28,6 +28,25 @@ class RunProactiveCampaignReviewsTaskTests(TestCase):
         mock_sync.assert_called_once()
         mock_review.assert_called_once()
 
+    @patch('apps.advertising.services.notify_service.notify_admins_of_ad_review')
+    @patch('apps.advertising.services.metrics_service.MetricsService.sync_campaign_metrics')
+    @patch('apps.advertising.services.agent_service.AdvertisingAgentService.run_proactive_review')
+    def test_notifies_admins_by_whatsapp_when_review_is_posted(self, mock_review, mock_sync, mock_notify):
+        message = AdChatMessage.objects.create(
+            organization=self.org, campaign=self.campaign, role='assistant', content='ok', is_proactive=True,
+        )
+        mock_review.return_value = message
+        run_proactive_campaign_reviews()
+        mock_notify.assert_called_once_with(self.org, self.campaign, message)
+
+    @patch('apps.advertising.services.notify_service.notify_admins_of_ad_review')
+    @patch('apps.advertising.services.agent_service.AdvertisingAgentService.run_proactive_review')
+    def test_does_not_notify_when_nothing_to_report(self, mock_review, mock_notify):
+        mock_review.return_value = None
+        with patch('apps.advertising.services.metrics_service.MetricsService.sync_campaign_metrics'):
+            run_proactive_campaign_reviews()
+        mock_notify.assert_not_called()
+
     @patch('apps.advertising.services.agent_service.AdvertisingAgentService.run_proactive_review')
     def test_skips_campaigns_without_openai_key(self, mock_review):
         self.org.agent_config.openai_api_key = ''

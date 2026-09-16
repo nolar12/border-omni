@@ -3,9 +3,10 @@ import logging
 from django.utils import timezone
 
 from apps.core.models import UserProfile
-from apps.advertising.models import AdCampaignPlan, AdvertisingAccount, AdAgentDecision
+from apps.advertising.models import AdCampaignPlan, AdvertisingAccount, AdAgentDecision, AdCampaignBriefing
 from apps.advertising.providers import GoogleAdsProviderError
 from apps.advertising.services.campaign_service import CampaignService
+from apps.advertising.services.metrics_service import MetricsService
 from apps.advertising.services.ai_copy_service import generate_ad_copy_with_fallback
 
 logger = logging.getLogger('apps')
@@ -24,11 +25,16 @@ class CampaignPlanService:
     """
 
     def propose(self, *, organization, litter, data: dict, justification: str = '') -> AdCampaignPlan:
+        ad_groups = data.get('ad_groups') or []
         headlines = data.get('headlines') or []
         descriptions = data.get('descriptions') or []
         keywords = data.get('keywords') or []
 
-        if litter and not (headlines and descriptions):
+        # Geração de copy por IA só entra no fluxo legado (1 ad group) — quando o agente já monta
+        # ad_groups estruturados (múltiplos grupos, keywords com match type, RSAs por grupo), ele
+        # mesmo é responsável pelo texto de cada grupo, não faz sentido gerar um resumo genérico
+        # por cima.
+        if litter and not ad_groups and not (headlines and descriptions):
             user_profile = UserProfile.objects.filter(organization=organization).first()
             openai_api_key = getattr(getattr(organization, 'agent_config', None), 'openai_api_key', '') or ''
             generated = generate_ad_copy_with_fallback(
@@ -39,6 +45,16 @@ class CampaignPlanService:
             descriptions = descriptions or generated['ad_descriptions']
             keywords = keywords or generated['ad_keywords']
 
+        if ad_groups:
+            # Resumo agregado nos campos legados — mesma lógica de CampaignService.create_campaign,
+            # só para exibição/compatibilidade (a estrutura real fica em ad_groups).
+            headlines = [h for ag in ad_groups for ad in ag.get('ads', []) for h in ad['headlines']]
+            descriptions = [d for ag in ad_groups for ad in ag.get('ads', []) for d in ad['descriptions']]
+            keywords = [
+                kw if isinstance(kw, str) else kw.get('text', '')
+                for ag in ad_groups for kw in ag.get('keywords', [])
+            ]
+
         return AdCampaignPlan.objects.create(
             organization=organization,
             litter=litter,
@@ -46,9 +62,11 @@ class CampaignPlanService:
             daily_budget=data['daily_budget'],
             region=data.get('region', ''),
             radius_km=data.get('radius_km'),
+            bid_strategy=data.get('bid_strategy', 'manual_cpc'),
             start_date=data.get('start_date'),
             end_date=data.get('end_date'),
             landing_url=data.get('landing_url', ''),
+            ad_groups=ad_groups,
             headlines=headlines,
             descriptions=descriptions,
             keywords=keywords,
@@ -96,30 +114,44 @@ class CampaignPlanService:
                 'start_date': plan.start_date,
                 'end_date': plan.end_date,
                 'landing_url': plan.landing_url,
+                'ad_groups': plan.ad_groups,
                 'ad_headlines': plan.headlines,
                 'ad_descriptions': plan.descriptions,
                 'ad_keywords': plan.keywords,
+                # Vai direto no CampaignSpec da criação (agrupado por match type lá dentro) — mais
+                # fiel que o follow-up separado de antes, que só suportava um match type por vez
+                # para o lote inteiro.
+                'negative_keywords': plan.negative_keywords,
+                'geo_target_type': 'PRESENCE',
             },
             # Idempotência: se execute() for chamado de novo para o mesmo plano
             # (ex.: reenvio do tool call), não cria uma segunda campanha.
             client_request_id=f'plan-{plan.id}',
         )
 
-        if plan.negative_keywords and campaign.external_campaign_id:
-            try:
-                CampaignService().add_negative_keywords(
-                    organization, campaign.id, plan.negative_keywords,
-                    reason='Negativas definidas no plano de campanha aprovado.', performed_by='agent',
-                )
-                campaign.refresh_from_db()
-            except GoogleAdsProviderError:
-                logger.exception('CampaignPlanService: falha ao aplicar negativas do plano')
+        if plan.litter_id:
+            AdCampaignBriefing.objects.update_or_create(
+                campaign=campaign,
+                defaults={
+                    'product_description': f'Filhotes — {plan.litter.name}' if plan.litter else '',
+                    'objective': plan.justification,
+                    'primary_conversion': ', '.join(plan.conversions_tracked) if plan.conversions_tracked else '',
+                    'negative_keywords': [
+                        kw if isinstance(kw, str) else kw.get('text', '') for kw in plan.negative_keywords
+                    ],
+                    'notes': plan.tracking_notes,
+                },
+            )
 
         plan.status = 'executed'
         plan.resulting_campaign = campaign
         plan.decided_at = timezone.now()
         plan.save(update_fields=['status', 'resulting_campaign', 'decided_at'])
 
+        # Snapshot no momento da criação = baseline (tudo zero/quase zero) — permite comparar
+        # "como a campanha evoluiu desde que foi criada" mais tarde via evaluate_decision, em vez
+        # de deixar metrics_snapshot vazio (o que forçaria o agente a inventar ou recusar comparar).
+        snapshot = MetricsService().build_snapshot(campaign)
         AdAgentDecision.objects.create(
             organization=organization,
             campaign=campaign,
@@ -130,5 +162,6 @@ class CampaignPlanService:
             hypothesis=plan.justification,
             performed_by='agent',
             approval_status='confirmed_by_user',
+            metrics_snapshot=snapshot,
         )
         return campaign

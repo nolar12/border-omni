@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { advertisingService, type AdCampaign, type AdMetric, type AdChatMessage, type AdvertisingAccount } from '../services/advertising';
+import { advertisingService, type AdCampaign, type AdDashboard, type AdFunnelBreakdownRow, type AdChatMessage, type AdvertisingAccount } from '../services/advertising';
 import PromoteCampaignModal from '../components/PromoteCampaignModal';
 import { requestGoogleAdsAuthCode } from '../lib/googleAdsOAuth';
 
@@ -21,24 +21,80 @@ const STATUS_COLORS: Record<string, string> = {
   ended: 'bg-slate-700 text-slate-300',
 };
 
+const PERIOD_OPTIONS = [7, 14, 30, 90];
+
+function money(value: number | null): string {
+  return value !== null && value !== undefined ? `R$ ${value.toFixed(2)}` : '—';
+}
+
+function StatTile({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="bg-slate-900/60 rounded-lg p-2.5">
+      <p className="text-[10px] text-slate-500 uppercase">{label}</p>
+      <p className="text-white text-sm font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function BreakdownTable({ title, rows, emptyHint }: { title: string; rows: AdFunnelBreakdownRow[]; emptyHint: string }) {
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <div className="bg-slate-900/60 rounded-lg p-3">
+      <p className="text-[10px] text-slate-500 uppercase mb-2">{title}</p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs text-slate-300">
+          <thead>
+            <tr className="text-slate-500 text-left">
+              <th className="pb-1 pr-3 font-normal">{emptyHint}</th>
+              <th className="pb-1 pr-3 font-normal text-right">Leads</th>
+              <th className="pb-1 pr-3 font-normal text-right">Qualificados</th>
+              <th className="pb-1 pr-3 font-normal text-right">Reservas</th>
+              <th className="pb-1 font-normal text-right">Vendas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(row => (
+              <tr key={row.group} className="border-t border-slate-800">
+                <td className="py-1 pr-3">{row.group}</td>
+                <td className="py-1 pr-3 text-right">{row.total_leads}</td>
+                <td className="py-1 pr-3 text-right">{row.qualified_leads}</td>
+                <td className="py-1 pr-3 text-right">{row.reservations}</td>
+                <td className="py-1 text-right">{row.sales}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function MetricsPanel({ campaignId }: { campaignId: number }) {
-  const [metrics, setMetrics] = useState<AdMetric[] | null>(null);
+  const [dashboard, setDashboard] = useState<AdDashboard | null>(null);
+  const [daysBack, setDaysBack] = useState(30);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
 
-  useEffect(() => {
-    advertisingService.getMetrics(campaignId)
-      .then(setMetrics)
+  const loadDashboard = useCallback(() => {
+    setLoading(true);
+    advertisingService.getDashboard(campaignId, daysBack)
+      .then(setDashboard)
       .finally(() => setLoading(false));
-  }, [campaignId]);
+  }, [campaignId, daysBack]);
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
 
   async function handleSync() {
     setSyncing(true);
     setSyncError(null);
     try {
-      const result = await advertisingService.syncMetrics(campaignId);
-      setMetrics(result.metrics);
+      await advertisingService.syncMetrics(campaignId);
+      loadDashboard();
     } catch (err) {
       const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
       setSyncError(message || 'Não foi possível sincronizar agora.');
@@ -47,71 +103,67 @@ function MetricsPanel({ campaignId }: { campaignId: number }) {
     }
   }
 
-  const syncButton = (
-    <button
-      onClick={handleSync}
-      disabled={syncing}
-      className="text-[11px] text-blue-400 hover:text-blue-300 disabled:opacity-50 font-medium"
-    >
-      {syncing ? 'Sincronizando…' : 'Sincronizar agora'}
-    </button>
+  const header = (
+    <div className="flex items-center justify-between gap-2 flex-wrap">
+      <div className="flex items-center gap-1">
+        {PERIOD_OPTIONS.map(days => (
+          <button
+            key={days}
+            onClick={() => setDaysBack(days)}
+            className={`text-[10px] px-2 py-0.5 rounded ${
+              daysBack === days ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            {days}d
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={handleSync}
+        disabled={syncing}
+        className="text-[11px] text-blue-400 hover:text-blue-300 disabled:opacity-50 font-medium"
+      >
+        {syncing ? 'Sincronizando…' : 'Sincronizar agora'}
+      </button>
+    </div>
   );
 
-  if (loading) {
+  if (loading && !dashboard) {
     return <p className="text-xs text-slate-500 px-4 pb-3">Carregando métricas…</p>;
   }
 
-  if (!metrics || metrics.length === 0) {
-    return (
-      <div className="px-4 pb-3 space-y-1">
-        <p className="text-xs text-slate-500">
-          Ainda sem métricas sincronizadas (a sincronização automática roda a cada 6 horas enquanto a campanha estiver ativa).
-        </p>
-        {syncButton}
-        {syncError && <p className="text-xs text-red-400">{syncError}</p>}
-      </div>
-    );
+  if (!dashboard) {
+    return null;
   }
 
-  const totals = metrics.reduce(
-    (acc, m) => ({
-      impressions: acc.impressions + m.impressions,
-      clicks: acc.clicks + m.clicks,
-      cost: acc.cost + Number(m.cost),
-      conversions: acc.conversions + m.conversions,
-    }),
-    { impressions: 0, clicks: 0, cost: 0, conversions: 0 },
-  );
-  const cpl = totals.conversions > 0 ? totals.cost / totals.conversions : null;
+  const { snapshot, city_breakdown, keyword_breakdown } = dashboard;
+  const noMetricsYet = snapshot.impressions === 0 && snapshot.clicks === 0 && snapshot.cost === 0;
 
   return (
-    <div className="px-4 pb-4 space-y-2">
-      <div className="flex items-center justify-between">
-        {syncButton}
-        {syncError && <p className="text-xs text-red-400">{syncError}</p>}
+    <div className="px-4 pb-4 space-y-3">
+      {header}
+      {syncError && <p className="text-xs text-red-400">{syncError}</p>}
+      {noMetricsYet && (
+        <p className="text-xs text-slate-500">
+          Ainda sem métricas do Google Ads sincronizadas neste período (a sincronização automática roda a cada 6 horas
+          enquanto a campanha estiver ativa) — os números de lead abaixo já vêm do CRM independentemente disso.
+        </p>
+      )}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+        <StatTile label="Investimento" value={money(snapshot.cost)} />
+        <StatTile label="Impressões" value={snapshot.impressions} />
+        <StatTile label="Cliques" value={snapshot.clicks} />
+        <StatTile label="Leads" value={snapshot.total_leads} />
+        <StatTile label="Leads qualificados" value={snapshot.qualified_leads} />
+        <StatTile label="Negociações" value={snapshot.negotiations} />
+        <StatTile label="Reservas" value={snapshot.reservations} />
+        <StatTile label="Vendas" value={snapshot.sales} />
+        <StatTile label="CPL" value={money(snapshot.cost_per_lead)} />
+        <StatTile label="CPL qualificado" value={money(snapshot.cost_per_qualified_lead)} />
+        <StatTile label="CAC" value={money(snapshot.cac)} />
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-      <div className="bg-slate-900/60 rounded-lg p-2.5">
-        <p className="text-[10px] text-slate-500 uppercase">Investimento</p>
-        <p className="text-white text-sm font-semibold">R$ {totals.cost.toFixed(2)}</p>
-      </div>
-      <div className="bg-slate-900/60 rounded-lg p-2.5">
-        <p className="text-[10px] text-slate-500 uppercase">Impressões</p>
-        <p className="text-white text-sm font-semibold">{totals.impressions}</p>
-      </div>
-      <div className="bg-slate-900/60 rounded-lg p-2.5">
-        <p className="text-[10px] text-slate-500 uppercase">Cliques</p>
-        <p className="text-white text-sm font-semibold">{totals.clicks}</p>
-      </div>
-      <div className="bg-slate-900/60 rounded-lg p-2.5">
-        <p className="text-[10px] text-slate-500 uppercase">Conversões</p>
-        <p className="text-white text-sm font-semibold">{totals.conversions}</p>
-      </div>
-      <div className="bg-slate-900/60 rounded-lg p-2.5">
-        <p className="text-[10px] text-slate-500 uppercase">CPL</p>
-        <p className="text-white text-sm font-semibold">{cpl !== null ? `R$ ${cpl.toFixed(2)}` : '—'}</p>
-      </div>
-      </div>
+      <BreakdownTable title="Por cidade (CRM)" rows={city_breakdown} emptyHint="Cidade" />
+      <BreakdownTable title="Por palavra-chave (CRM)" rows={keyword_breakdown} emptyHint="Keyword" />
     </div>
   );
 }

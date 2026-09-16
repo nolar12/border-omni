@@ -8,6 +8,19 @@ from apps.advertising.providers import GoogleAdsProviderError
 from apps.advertising.providers.base import ProviderCampaign
 from apps.advertising.services.campaign_service import CampaignService
 
+AD_GROUPS_DATA = [
+    {
+        'name': 'Comprar',
+        'keywords': [{'text': 'comprar border collie', 'match_type': 'EXACT'}],
+        'ads': [{'headlines': ['Filhotes Border Collie'], 'descriptions': ['Conheça a ninhada.']}],
+    },
+    {
+        'name': 'Preço',
+        'keywords': [{'text': 'border collie preço', 'match_type': 'EXACT'}],
+        'ads': [{'headlines': ['Consulte Disponibilidade'], 'descriptions': ['Veja fotos e informações.']}],
+    },
+]
+
 
 class CampaignServiceTests(TestCase):
     def setUp(self):
@@ -79,6 +92,100 @@ class CampaignServiceTests(TestCase):
         mock_resume.assert_called_once()
 
     @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=True)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.create_campaign')
+    def test_create_campaign_with_ad_groups_aggregates_legacy_flat_fields(self, mock_create):
+        mock_create.return_value = ProviderCampaign(external_id='dryrun-ag', status='active')
+        campaign = CampaignService().create_campaign(
+            organization=self.org, advertising_account=self.account, litter=None,
+            data={**self.data, 'ad_groups': AD_GROUPS_DATA},
+        )
+
+        self.assertEqual(set(campaign.ad_keywords), {'comprar border collie', 'border collie preço'})
+        self.assertEqual(set(campaign.ad_headlines), {'Filhotes Border Collie', 'Consulte Disponibilidade'})
+
+        spec = mock_create.call_args[0][1]
+        self.assertEqual(len(spec.ad_groups), 2)
+        self.assertEqual(spec.ad_groups[0].keywords[0].match_type, 'EXACT')
+        # Campos legados da spec ficam vazios quando ad_groups é usado — evita duplicar
+        # keywords/anúncios num "grupo fantasma" além dos definidos em ad_groups.
+        self.assertEqual(spec.keywords, [])
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=True)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.create_campaign')
+    def test_create_campaign_applies_safety_net_bid_when_none_given(self, mock_create):
+        mock_create.return_value = ProviderCampaign(external_id='dryrun-bid', status='active')
+        CampaignService().create_campaign(
+            organization=self.org, advertising_account=self.account, litter=None,
+            data={**self.data, 'ad_groups': AD_GROUPS_DATA},
+        )
+        spec = mock_create.call_args[0][1]
+        self.assertEqual(spec.default_cpc_bid, 1.0)
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=True)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.create_campaign')
+    def test_create_campaign_respects_explicit_default_cpc_bid(self, mock_create):
+        mock_create.return_value = ProviderCampaign(external_id='dryrun-bid2', status='active')
+        CampaignService().create_campaign(
+            organization=self.org, advertising_account=self.account, litter=None,
+            data={**self.data, 'ad_groups': AD_GROUPS_DATA, 'default_cpc_bid': 3.5},
+        )
+        spec = mock_create.call_args[0][1]
+        self.assertEqual(spec.default_cpc_bid, 3.5)
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=True)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.add_location_targeting')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_location_criteria')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.suggest_geo_target_constants')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.remove_location_criteria')
+    def test_update_geo_targeting_removes_and_adds_cities_and_logs_decision(
+        self, mock_remove, mock_suggest, mock_list_criteria, mock_add,
+    ):
+        campaign = AdCampaign.objects.create(
+            organization=self.org, advertising_account=self.account, name='X', daily_budget=40,
+            status='active', external_campaign_id='ext-1',
+            region='Florianópolis, Biguaçu, Itajaí',
+        )
+        mock_suggest.return_value = ['geoTargetConstants/9999']  # id de "Biguaçu"
+        mock_list_criteria.return_value = [
+            {'resource_name': 'customers/1/campaignCriteria/1~1', 'geo_target_constant': 'geoTargetConstants/9999'},
+            {'resource_name': 'customers/1/campaignCriteria/1~2', 'geo_target_constant': 'geoTargetConstants/1111'},
+        ]
+
+        result = CampaignService().update_geo_targeting(
+            self.org, campaign.id, remove_cities=['Biguaçu'], add_cities=['Itapema'],
+            reason='Alinhar com o playbook revisado.',
+        )
+
+        mock_remove.assert_called_once_with(self.account, ['customers/1/campaignCriteria/1~1'])
+        mock_add.assert_called_once_with(self.account, f'customers/{self.account.customer_id}/campaigns/ext-1', 'Itapema')
+        self.assertEqual(result.region, 'Florianópolis, Itajaí, Itapema')
+
+        decision = AdAgentDecision.objects.get(campaign=campaign, action='update_geo_targeting')
+        self.assertEqual(decision.before, {'region': 'Florianópolis, Biguaçu, Itajaí'})
+        self.assertEqual(decision.after, {'region': 'Florianópolis, Itajaí, Itapema'})
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=True)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.set_ad_group_cpc_bid')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_ad_groups')
+    def test_set_ad_group_cpc_bids_fixes_all_ad_groups_and_logs_decision(self, mock_list, mock_set_bid):
+        campaign = AdCampaign.objects.create(
+            organization=self.org, advertising_account=self.account, name='X',
+            daily_budget=40, status='active', external_campaign_id='ext-1',
+        )
+        mock_list.return_value = [
+            {'resource_name': 'customers/1/adGroups/1', 'name': 'Comprar', 'cpc_bid_micros': 10000},
+            {'resource_name': 'customers/1/adGroups/2', 'name': 'Preço', 'cpc_bid_micros': 10000},
+        ]
+
+        CampaignService().set_ad_group_cpc_bids(self.org, campaign.id, 2.5, reason='CPC estava em 1 centavo.')
+
+        self.assertEqual(mock_set_bid.call_count, 2)
+        mock_set_bid.assert_any_call(self.account, 'customers/1/adGroups/1', 2.5)
+        decision = AdAgentDecision.objects.get(campaign=campaign, action='set_ad_group_cpc_bids')
+        self.assertEqual(decision.before, {'Comprar': 0.01, 'Preço': 0.01})
+        self.assertEqual(decision.after, {'cpc_bid': 2.5})
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=True)
     @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.pause_campaign')
     def test_pause_campaign_logs_decision_with_real_metrics_snapshot(self, mock_pause):
         campaign = AdCampaign.objects.create(
@@ -92,3 +199,128 @@ class CampaignServiceTests(TestCase):
         self.assertIn('cost', decision.metrics_snapshot)
         self.assertIn('qualified_leads', decision.metrics_snapshot)
         self.assertEqual(decision.metrics_snapshot['campaign_id'], campaign.id)
+
+
+class WriteToolsTests(TestCase):
+    """add_keywords / set_keyword_status / create_ad_group / update_bidding_strategy — resolvem o
+    ad group/keyword alvo por nome via a API (não há AdGroup/Keyword local), e tratam ambiguidade
+    (mais de um match) como erro explícito em vez de adivinhar."""
+
+    def setUp(self):
+        self.org = Organization.objects.create(name='Canil W')
+        self.account = AdvertisingAccount.objects.create(organization=self.org, customer_id='1112223335')
+        self.campaign = AdCampaign.objects.create(
+            organization=self.org, advertising_account=self.account, name='Campanha X',
+            daily_budget=40, status='active', external_campaign_id='ext-1',
+        )
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.add_keywords')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_ad_groups')
+    def test_add_keywords_resolves_ad_group_by_partial_name(self, mock_list, mock_add):
+        mock_list.return_value = [
+            {'resource_name': 'customers/1/adGroups/1', 'name': 'Campanha X — Comprar', 'cpc_bid_micros': 2_500_000},
+            {'resource_name': 'customers/1/adGroups/2', 'name': 'Campanha X — Preço', 'cpc_bid_micros': 2_500_000},
+        ]
+        campaign = CampaignService().add_keywords(
+            self.org, self.campaign.id, 'Comprar', [{'text': 'border collie filhote', 'match_type': 'EXACT'}],
+        )
+        self.assertEqual(campaign.error_message, '')
+        mock_add.assert_called_once()
+        self.assertEqual(mock_add.call_args.args[1], 'customers/1/adGroups/1')
+        decision = AdAgentDecision.objects.get(campaign=self.campaign, action='add_keywords')
+        self.assertEqual(decision.after['ad_group'], 'Campanha X — Comprar')
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_ad_groups')
+    def test_add_keywords_ambiguous_name_is_reported_never_guessed(self, mock_list):
+        mock_list.return_value = [
+            {'resource_name': 'customers/1/adGroups/1', 'name': 'Campanha X — Comprar SC', 'cpc_bid_micros': 0},
+            {'resource_name': 'customers/1/adGroups/2', 'name': 'Campanha X — Comprar Preço', 'cpc_bid_micros': 0},
+        ]
+        campaign = CampaignService().add_keywords(self.org, self.campaign.id, 'Comprar', [{'text': 'x'}])
+        self.assertIn('Mais de um ad group', campaign.error_message)
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_ad_groups')
+    def test_add_keywords_no_match_is_reported(self, mock_list):
+        mock_list.return_value = []
+        campaign = CampaignService().add_keywords(self.org, self.campaign.id, 'Inexistente', [{'text': 'x'}])
+        self.assertIn('Nenhum ad group encontrado', campaign.error_message)
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.set_keyword_status')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_keywords')
+    def test_set_keyword_status_pauses_matched_keyword(self, mock_list, mock_set_status):
+        mock_list.return_value = [
+            {'resource_name': 'customers/1/adGroupCriteria/1~1', 'text': 'border collie preço',
+             'match_type': 'EXACT', 'status': 'ENABLED', 'ad_group_name': 'Preço'},
+        ]
+        campaign = CampaignService().set_keyword_status(self.org, self.campaign.id, 'border collie preço', 'PAUSED')
+        self.assertEqual(campaign.error_message, '')
+        mock_set_status.assert_called_once_with(self.account, 'customers/1/adGroupCriteria/1~1', 'PAUSED')
+        decision = AdAgentDecision.objects.get(campaign=self.campaign, action='set_keyword_status')
+        self.assertEqual(
+            decision.before,
+            {'keyword': 'border collie preço', 'keyword_id': '1~1', 'previous_status': 'ENABLED'},
+        )
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_keywords')
+    def test_set_keyword_status_ambiguous_without_match_type_is_reported(self, mock_list):
+        mock_list.return_value = [
+            {'resource_name': 'r1', 'text': 'border collie', 'match_type': 'EXACT', 'status': 'ENABLED', 'ad_group_name': 'A'},
+            {'resource_name': 'r2', 'text': 'border collie', 'match_type': 'PHRASE', 'status': 'ENABLED', 'ad_group_name': 'B'},
+        ]
+        campaign = CampaignService().set_keyword_status(self.org, self.campaign.id, 'border collie', 'PAUSED')
+        self.assertIn('Informe match_type', campaign.error_message)
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_keywords')
+    def test_set_keyword_status_match_type_disambiguates(self, mock_list):
+        mock_list.return_value = [
+            {'resource_name': 'r1', 'text': 'border collie', 'match_type': 'EXACT', 'status': 'ENABLED', 'ad_group_name': 'A'},
+            {'resource_name': 'r2', 'text': 'border collie', 'match_type': 'PHRASE', 'status': 'ENABLED', 'ad_group_name': 'B'},
+        ]
+        with patch('apps.advertising.providers.google_ads.GoogleAdsProvider.set_keyword_status') as mock_set_status:
+            campaign = CampaignService().set_keyword_status(
+                self.org, self.campaign.id, 'border collie', 'PAUSED', match_type='PHRASE',
+            )
+        self.assertEqual(campaign.error_message, '')
+        mock_set_status.assert_called_once_with(self.account, 'r2', 'PAUSED')
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.create_ad_group')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_ad_groups')
+    def test_create_ad_group_inherits_existing_cpc_bid_when_not_given(self, mock_list, mock_create):
+        mock_list.return_value = [
+            {'resource_name': 'customers/1/adGroups/1', 'name': 'Comprar', 'cpc_bid_micros': 2_500_000},
+        ]
+        mock_create.return_value = 'customers/1/adGroups/99'
+        campaign = CampaignService().create_ad_group(
+            self.org, self.campaign.id, 'Teste Curitiba',
+            keywords=[{'text': 'border collie curitiba', 'match_type': 'EXACT'}],
+            ads=[{'headlines': ['H1'], 'descriptions': ['D1']}],
+        )
+        self.assertEqual(campaign.error_message, '')
+        self.assertEqual(mock_create.call_args.kwargs['cpc_bid'], 2.5)
+        decision = AdAgentDecision.objects.get(campaign=self.campaign, action='create_ad_group')
+        self.assertEqual(decision.after['ad_group_name'], 'Teste Curitiba')
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.update_bidding_strategy')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.get_bidding_strategy_type')
+    def test_update_bidding_strategy_logs_before_and_after(self, mock_get_type, mock_update):
+        mock_get_type.return_value = 'MANUAL_CPC'
+        campaign = CampaignService().update_bidding_strategy(
+            self.org, self.campaign.id, 'MAXIMIZE_CONVERSIONS',
+            reason='Volume de conversão suficiente após 7 dias.', performed_by='agent',
+            approval_status='confirmed_by_user',
+        )
+        self.assertEqual(campaign.error_message, '')
+        mock_update.assert_called_once_with(self.account, 'ext-1', 'MAXIMIZE_CONVERSIONS', target_cpa=None)
+        decision = AdAgentDecision.objects.get(campaign=self.campaign, action='update_bidding_strategy')
+        self.assertEqual(decision.before, {'bidding_strategy_type': 'MANUAL_CPC'})
+        self.assertEqual(decision.after, {'bidding_strategy_type': 'MAXIMIZE_CONVERSIONS', 'target_cpa': None})
+        self.assertEqual(decision.approval_status, 'confirmed_by_user')
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.update_bidding_strategy')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.get_bidding_strategy_type')
+    def test_update_bidding_strategy_provider_error_is_captured(self, mock_get_type, mock_update):
+        mock_get_type.return_value = 'MANUAL_CPC'
+        mock_update.side_effect = GoogleAdsProviderError('Conta suspensa pelo Google.')
+        campaign = CampaignService().update_bidding_strategy(self.org, self.campaign.id, 'TARGET_CPA', target_cpa=20)
+        self.assertEqual(campaign.error_message, 'Conta suspensa pelo Google.')
+        self.assertFalse(AdAgentDecision.objects.filter(campaign=self.campaign, action='update_bidding_strategy').exists())

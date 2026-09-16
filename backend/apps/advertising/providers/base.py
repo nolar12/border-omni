@@ -13,6 +13,30 @@ from datetime import date
 
 
 @dataclass
+class KeywordSpec:
+    text: str
+    match_type: str = 'BROAD'  # 'EXACT' | 'PHRASE' | 'BROAD'
+
+
+@dataclass
+class AdContentSpec:
+    headlines: list[str]
+    descriptions: list[str]
+
+
+@dataclass
+class AdGroupSpec:
+    name: str
+    keywords: list[KeywordSpec]
+    ads: list[AdContentSpec] = field(default_factory=list)
+    # CPC máximo deste ad group (teto do leilão, não preço fixo). Sem isso, a Google Ads API
+    # cria o ad group com o mínimo técnico (1 centavo) — inelegível para competir em qualquer
+    # leilão real (bug observado na campanha "SC | Border Collie | Ninhada Atual | Search").
+    # Cai para CampaignSpec.default_cpc_bid quando None.
+    cpc_bid: float | None = None
+
+
+@dataclass
 class CampaignSpec:
     name: str
     daily_budget: float
@@ -26,6 +50,17 @@ class CampaignSpec:
     headlines: list[str] = field(default_factory=list)
     descriptions: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
+    # Estrutura multi-ad-group (opcional). Quando preenchida, create_campaign cria um ad group por
+    # item, cada um com suas próprias keywords/match types e >=1 RSA — em vez do fluxo legado de 1
+    # ad group com `keywords`/`headlines`/`descriptions` em Broad Match.
+    ad_groups: list[AdGroupSpec] = field(default_factory=list)
+    negative_keywords: list[KeywordSpec] = field(default_factory=list)
+    # CPC máximo aplicado a cada ad group que não definir o seu próprio `cpc_bid`.
+    default_cpc_bid: float | None = None
+    # 'PRESENCE' restringe a exibição a quem está/costuma estar nas localidades segmentadas;
+    # 'PRESENCE_OR_INTEREST' (padrão histórico do Google) também exibe para quem só demonstra
+    # interesse na região sem estar nela.
+    geo_target_type: str = 'PRESENCE'
 
 
 @dataclass

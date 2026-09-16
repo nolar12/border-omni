@@ -369,6 +369,10 @@ class AdCampaignPlan(models.Model):
     headlines = models.JSONField(default=list, blank=True)
     descriptions = models.JSONField(default=list, blank=True)
     keywords = models.JSONField(default=list, blank=True)
+    # Estrutura multi-ad-group (nome, keywords com match type, RSAs) — quando preenchida, execute()
+    # passa isso para CampaignService.create_campaign em vez do formato plano (1 grupo) acima, que
+    # keywords/headlines/descriptions continuam recebendo como resumo agregado (compatibilidade).
+    ad_groups = models.JSONField(default=list, blank=True)
     negative_keywords = models.JSONField(default=list, blank=True)
     # Só informativo — o disparo de conversões já é automático via
     # ConversionService assim que houver atribuição de clique para o lead.

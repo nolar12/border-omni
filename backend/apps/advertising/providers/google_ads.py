@@ -22,7 +22,7 @@ from django.utils import timezone as django_timezone
 
 from .base import (
     AdvertisingProvider, CampaignSpec, ProviderCampaign, MetricSnapshot,
-    ConversionSpec, ProviderResult,
+    ConversionSpec, ProviderResult, KeywordSpec, AdGroupSpec, AdContentSpec,
 )
 
 logger = logging.getLogger('apps')
@@ -195,19 +195,50 @@ class GoogleAdsProvider(AdvertisingProvider):
         campaign_resource_name = result.get('resourceName') or ''
         external_id = campaign_resource_name.split('/')[-1] or ''
 
-        # Grupo de anúncios + palavras-chave + anúncio + segmentação geográfica ficam
+        # Grupo(s) de anúncios + palavras-chave + anúncio(s) + segmentação geográfica ficam
         # melhor esforço: se algo falhar aqui, a campanha (já criada de verdade no
         # Google) não é perdida — só volta com um aviso, para completar manualmente.
         warnings = []
-        try:
-            ad_group_resource_name = self._create_ad_group(account, campaign_resource_name, spec)
-            if spec.keywords:
-                self._add_keywords(account, ad_group_resource_name, spec.keywords)
-            if spec.headlines and spec.descriptions:
-                self._create_responsive_search_ad(account, ad_group_resource_name, spec)
-        except GoogleAdsProviderError as exc:
-            logger.exception('GoogleAdsProvider: falha ao configurar grupo de anúncios/palavras-chave/anúncio')
-            warnings.append(f'anúncio: {exc.user_message}')
+        if spec.ad_groups:
+            for ad_group_spec in spec.ad_groups:
+                try:
+                    ad_group_resource_name = self._create_ad_group(
+                        account, campaign_resource_name, spec, ad_group_name=ad_group_spec.name,
+                        cpc_bid=ad_group_spec.cpc_bid if ad_group_spec.cpc_bid is not None else spec.default_cpc_bid,
+                    )
+                    if ad_group_spec.keywords:
+                        self._add_keywords(account, ad_group_resource_name, ad_group_spec.keywords)
+                    for ad_content in ad_group_spec.ads:
+                        self._create_responsive_search_ad(
+                            account, ad_group_resource_name, spec,
+                            headlines=ad_content.headlines, descriptions=ad_content.descriptions,
+                        )
+                except GoogleAdsProviderError as exc:
+                    logger.exception(f'GoogleAdsProvider: falha ao configurar ad group "{ad_group_spec.name}"')
+                    warnings.append(f'{ad_group_spec.name}: {exc.user_message}')
+        else:
+            try:
+                ad_group_resource_name = self._create_ad_group(account, campaign_resource_name, spec, cpc_bid=spec.default_cpc_bid)
+                if spec.keywords:
+                    self._add_keywords(account, ad_group_resource_name, spec.keywords)
+                if spec.headlines and spec.descriptions:
+                    self._create_responsive_search_ad(
+                        account, ad_group_resource_name, spec,
+                        headlines=spec.headlines, descriptions=spec.descriptions,
+                    )
+            except GoogleAdsProviderError as exc:
+                logger.exception('GoogleAdsProvider: falha ao configurar grupo de anúncios/palavras-chave/anúncio')
+                warnings.append(f'anúncio: {exc.user_message}')
+
+        if spec.negative_keywords:
+            try:
+                for match_type in ('EXACT', 'PHRASE', 'BROAD'):
+                    keywords_for_type = [kw.text for kw in spec.negative_keywords if kw.match_type == match_type]
+                    if keywords_for_type:
+                        self.add_negative_keywords(account, campaign_resource_name, keywords_for_type, match_type=match_type)
+            except GoogleAdsProviderError as exc:
+                logger.exception('GoogleAdsProvider: falha ao configurar negativas')
+                warnings.append(f'negativas: {exc.user_message}')
 
         if spec.region:
             try:
@@ -271,33 +302,105 @@ class GoogleAdsProvider(AdvertisingProvider):
             json={'operations': operations},
         )
 
-    def _create_ad_group(self, account, campaign_resource_name: str, spec: CampaignSpec) -> str:
+    def add_location_targeting(self, account, campaign_resource_name: str, region: str) -> None:
+        """Wrapper público de _add_location_targeting — para uso fora da criação da campanha
+        (ex.: CampaignService.update_geo_targeting, ao expandir para uma cidade nova numa
+        campanha já existente). _add_location_targeting em si não checa _is_live() (assume que
+        quem chama, como create_campaign, já checou) — como este é um ponto de entrada próprio,
+        precisa checar aqui."""
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] add_location_targeting campaign={campaign_resource_name} region={region}')
+            return
+        self._add_location_targeting(account, campaign_resource_name, region)
+
+    def list_location_criteria(self, account, external_campaign_id: str) -> list[dict]:
+        """Critérios de localização POSITIVOS (não-negativos) ativos na campanha — necessário
+        antes de remover algum, já que não existe "atualizar" localização, só criar/remover."""
+        if not _is_live():
+            return []
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': (
+                'SELECT campaign_criterion.resource_name, campaign_criterion.location.geo_target_constant '
+                f'FROM campaign_criterion WHERE campaign.id = {external_campaign_id} '
+                "AND campaign_criterion.type = 'LOCATION' AND campaign_criterion.negative = FALSE"
+            )},
+        )
+        return [
+            {
+                'resource_name': row['campaignCriterion']['resourceName'],
+                'geo_target_constant': row['campaignCriterion']['location']['geoTargetConstant'],
+            }
+            for row in data.get('results') or []
+        ]
+
+    def remove_location_criteria(self, account, resource_names: list[str]) -> None:
+        if not resource_names:
+            return
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] remove_location_criteria resource_names={resource_names}')
+            return
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/campaignCriteria:mutate',
+            json={'operations': [{'remove': rn} for rn in resource_names], 'partialFailure': True},
+        )
+
+    def _create_ad_group(
+        self, account, campaign_resource_name: str, spec: CampaignSpec, *,
+        ad_group_name: str = 'Grupo 1', cpc_bid: float | None = None,
+    ) -> str:
+        create_payload = {
+            'name': f'{spec.name} — {ad_group_name}',
+            'campaign': campaign_resource_name,
+            'status': 'PAUSED',
+            'type': 'SEARCH_STANDARD',
+        }
+        if cpc_bid is not None:
+            # Sem isso, a Google Ads API cria o ad group com o mínimo técnico (1 centavo) —
+            # inelegível para competir em qualquer leilão real.
+            create_payload['cpcBidMicros'] = int(cpc_bid * 1_000_000)
         data = self._request(
             'POST', account, f'customers/{account.customer_id}/adGroups:mutate',
-            json={'operations': [{'create': {
-                'name': f'{spec.name} — Grupo 1',
-                'campaign': campaign_resource_name,
-                'status': 'PAUSED',
-                'type': 'SEARCH_STANDARD',
-            }}]},
+            json={'operations': [{'create': create_payload}]},
         )
         resource_name = (data.get('results') or [{}])[0].get('resourceName')
         if not resource_name:
             raise GoogleAdsProviderError('Falha ao criar grupo de anúncios.', code='ad_group_creation_failed', raw=data)
         return resource_name
 
-    def _add_keywords(self, account, ad_group_resource_name: str, keywords: list[str]) -> None:
+    def set_ad_group_cpc_bid(self, account, ad_group_resource_name: str, cpc_bid: float) -> None:
+        """Corrige o lance de um ad group já existente (ex.: criado antes desta correção, com o
+        mínimo técnico de 1 centavo)."""
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] set_ad_group_cpc_bid ad_group={ad_group_resource_name} cpc_bid={cpc_bid}')
+            return
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/adGroups:mutate',
+            json={'operations': [{'update': {
+                'resourceName': ad_group_resource_name,
+                'cpcBidMicros': int(cpc_bid * 1_000_000),
+            }, 'updateMask': 'cpc_bid_micros'}]},
+        )
+
+    def _add_keywords(self, account, ad_group_resource_name: str, keywords: list[str] | list[KeywordSpec]) -> None:
+        keyword_specs = [
+            kw if isinstance(kw, KeywordSpec) else KeywordSpec(text=kw)
+            for kw in keywords
+        ]
         operations = [{'create': {
             'adGroup': ad_group_resource_name,
             'status': 'ENABLED',
-            'keyword': {'text': kw, 'matchType': 'BROAD'},
-        }} for kw in keywords]
+            'keyword': {'text': kw.text, 'matchType': kw.match_type},
+        }} for kw in keyword_specs]
         self._request(
             'POST', account, f'customers/{account.customer_id}/adGroupCriteria:mutate',
             json={'operations': operations, 'partialFailure': True},
         )
 
-    def _create_responsive_search_ad(self, account, ad_group_resource_name: str, spec: CampaignSpec) -> None:
+    def _create_responsive_search_ad(
+        self, account, ad_group_resource_name: str, spec: CampaignSpec, *,
+        headlines: list[str], descriptions: list[str],
+    ) -> None:
         self._request(
             'POST', account, f'customers/{account.customer_id}/adGroupAds:mutate',
             json={'operations': [{'create': {
@@ -306,11 +409,147 @@ class GoogleAdsProvider(AdvertisingProvider):
                 'ad': {
                     'finalUrls': [spec.landing_url] if spec.landing_url else [],
                     'responsiveSearchAd': {
-                        'headlines': [{'text': h} for h in spec.headlines[:15]],
-                        'descriptions': [{'text': d} for d in spec.descriptions[:4]],
+                        'headlines': [{'text': h} for h in headlines[:15]],
+                        'descriptions': [{'text': d} for d in descriptions[:4]],
                     },
                 },
             }}]},
+        )
+
+    def list_ad_groups(self, account, external_campaign_id: str) -> list[dict]:
+        if not _is_live():
+            return []
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': (
+                'SELECT ad_group.resource_name, ad_group.name, ad_group.cpc_bid_micros '
+                f'FROM ad_group WHERE campaign.id = {external_campaign_id}'
+            )},
+        )
+        return [
+            {
+                'resource_name': row['adGroup']['resourceName'],
+                'name': row['adGroup'].get('name', ''),
+                'cpc_bid_micros': int(row['adGroup'].get('cpcBidMicros', 0)),
+            }
+            for row in data.get('results') or []
+        ]
+
+    def create_ad_group(
+        self, account, campaign_resource_name: str, campaign_name: str, *,
+        ad_group_name: str, keywords: list[KeywordSpec], ads: list[AdContentSpec],
+        landing_url: str = '', cpc_bid: float | None = None,
+    ) -> str:
+        """Cria um ad group novo numa campanha JÁ EXISTENTE (fora do fluxo de create_campaign) —
+        ex.: testar um tema de keyword novo sem mexer nos grupos atuais. Reaproveita os mesmos
+        helpers internos usados na criação da campanha, via um CampaignSpec descartável só com
+        os campos que eles precisam (name/landing_url). Os helpers internos (_create_ad_group etc.)
+        não checam _is_live() sozinhos (assumem que create_campaign já checou) — como este é um
+        ponto de entrada próprio, precisa checar aqui."""
+        if not _is_live():
+            fake_id = f'dryrun-{uuid.uuid4().hex[:10]}'
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] create_ad_group campaign={campaign_resource_name} ad_group_name={ad_group_name}')
+            return f'{campaign_resource_name}/adGroups/{fake_id}'
+
+        throwaway_spec = CampaignSpec(name=campaign_name, daily_budget=0, landing_url=landing_url)
+        ad_group_resource_name = self._create_ad_group(
+            account, campaign_resource_name, throwaway_spec, ad_group_name=ad_group_name, cpc_bid=cpc_bid,
+        )
+        if keywords:
+            self._add_keywords(account, ad_group_resource_name, keywords)
+        for ad_content in ads:
+            self._create_responsive_search_ad(
+                account, ad_group_resource_name, throwaway_spec,
+                headlines=ad_content.headlines, descriptions=ad_content.descriptions,
+            )
+        return ad_group_resource_name
+
+    def add_keywords(self, account, ad_group_resource_name: str, keywords: list[KeywordSpec]) -> None:
+        """Wrapper público de _add_keywords — para adicionar keyword(s) a um ad group já
+        existente, fora do fluxo de criação da campanha. _add_keywords em si não checa _is_live()
+        (assume que quem chama, como create_campaign, já checou) — como este é um ponto de
+        entrada próprio, precisa checar aqui."""
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] add_keywords ad_group={ad_group_resource_name} keywords={[kw.text for kw in keywords]}')
+            return
+        self._add_keywords(account, ad_group_resource_name, keywords)
+
+    def list_keywords(self, account, external_campaign_id: str) -> list[dict]:
+        """Keywords configuradas (não confundir com search terms — o texto real digitado)."""
+        if not _is_live():
+            return []
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': (
+                'SELECT ad_group_criterion.resource_name, ad_group_criterion.keyword.text, '
+                'ad_group_criterion.keyword.match_type, ad_group_criterion.status, ad_group.name '
+                f'FROM keyword_view WHERE campaign.id = {external_campaign_id}'
+            )},
+        )
+        return [
+            {
+                'resource_name': row['adGroupCriterion']['resourceName'],
+                'text': row['adGroupCriterion']['keyword']['text'],
+                'match_type': row['adGroupCriterion']['keyword']['matchType'],
+                'status': row['adGroupCriterion']['status'],
+                'ad_group_name': row['adGroup'].get('name', ''),
+            }
+            for row in data.get('results') or []
+        ]
+
+    def set_keyword_status(self, account, ad_group_criterion_resource_name: str, status: str) -> None:
+        """`status` é 'ENABLED' ou 'PAUSED' — pausar/reativar uma keyword individual."""
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] set_keyword_status criterion={ad_group_criterion_resource_name} status={status}')
+            return
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/adGroupCriteria:mutate',
+            json={'operations': [{'update': {
+                'resourceName': ad_group_criterion_resource_name,
+                'status': status,
+            }, 'updateMask': 'status'}]},
+        )
+
+    def get_bidding_strategy_type(self, account, external_campaign_id: str) -> str:
+        if not _is_live():
+            return 'UNKNOWN'
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': (
+                'SELECT campaign.bidding_strategy_type FROM campaign '
+                f'WHERE campaign.id = {external_campaign_id}'
+            )},
+        )
+        rows = data.get('results') or []
+        return rows[0]['campaign']['biddingStrategyType'] if rows else 'UNKNOWN'
+
+    def update_bidding_strategy(
+        self, account, external_campaign_id: str, strategy: str, *, target_cpa: float | None = None,
+    ) -> None:
+        """`strategy` é 'MANUAL_CPC' | 'MAXIMIZE_CONVERSIONS' | 'TARGET_CPA'. bidding_strategy é um
+        campo "oneof" no recurso da campanha — o updateMask referencia só o novo campo, a Google
+        Ads API cuida de substituir o anterior."""
+        if strategy == 'MANUAL_CPC':
+            update_payload, mask = {'manualCpc': {}}, 'manual_cpc'
+        elif strategy == 'MAXIMIZE_CONVERSIONS':
+            update_payload, mask = {'maximizeConversions': {}}, 'maximize_conversions'
+        elif strategy == 'TARGET_CPA':
+            if not target_cpa:
+                raise GoogleAdsProviderError('target_cpa é obrigatório para a estratégia TARGET_CPA.', code='missing_target_cpa')
+            update_payload = {'targetCpa': {'targetCpaMicros': int(target_cpa * 1_000_000)}}
+            mask = 'target_cpa.target_cpa_micros'
+        else:
+            raise GoogleAdsProviderError(f'Estratégia de lance "{strategy}" não suportada.', code='unsupported_bidding_strategy')
+
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] update_bidding_strategy id={external_campaign_id} strategy={strategy}')
+            return
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/campaigns:mutate',
+            json={'operations': [{'update': {
+                'resourceName': f'customers/{account.customer_id}/campaigns/{external_campaign_id}',
+                **update_payload,
+            }, 'updateMask': mask}]},
         )
 
     def get_search_terms(self, account, external_campaign_id: str, days_back: int = 30) -> list[dict]:
@@ -455,6 +694,87 @@ class GoogleAdsProvider(AdvertisingProvider):
             'POST', account, f'customers/{account.customer_id}/adGroupAds:mutate',
             json={'operations': operations, 'partialFailure': True},
         )
+
+    def get_primary_ad_resource_name(self, account, external_campaign_id: str) -> str | None:
+        """Resource name do Ad (não do AdGroupAd) — é nele que se atualiza
+        headlines/descriptions, via customers/{id}/ads:mutate."""
+        if not _is_live():
+            return None
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': (
+                'SELECT ad_group_ad.ad.resource_name FROM ad_group_ad '
+                f'WHERE campaign.id = {external_campaign_id} LIMIT 1'
+            )},
+        )
+        rows = data.get('results') or []
+        if not rows:
+            return None
+        return rows[0]['adGroupAd']['ad']['resourceName']
+
+    def update_ad_content(self, account, ad_resource_name: str, headlines: list[str], descriptions: list[str]) -> None:
+        """Atualiza headlines/descriptions de um Responsive Search Ad já existente
+        (o Ad é mutável in-place — não precisa recriar o anúncio)."""
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] update_ad_content ad={ad_resource_name} headlines={len(headlines)} descriptions={len(descriptions)}')
+            return
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/ads:mutate',
+            json={'operations': [{
+                'update': {
+                    'resourceName': ad_resource_name,
+                    'responsiveSearchAd': {
+                        'headlines': [{'text': h} for h in headlines[:15]],
+                        'descriptions': [{'text': d} for d in descriptions[:4]],
+                    },
+                },
+                'updateMask': 'responsive_search_ad.headlines,responsive_search_ad.descriptions',
+            }]},
+        )
+
+    def get_campaign_diagnostics(self, account, external_campaign_id: str) -> dict:
+        """
+        O que a própria tela "Campaign diagnostics" do Google Ads mostra —
+        por que a campanha não está elegível a servir (primary_status_reasons),
+        e a força do anúncio (ad_strength) — para o agente conseguir responder
+        "por que não está funcionando" sem o usuário precisar abrir o Google Ads.
+        """
+        if not _is_live():
+            return {}
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': (
+                'SELECT campaign.status, campaign.primary_status, campaign.primary_status_reasons '
+                f'FROM campaign WHERE campaign.id = {external_campaign_id}'
+            )},
+        )
+        rows = data.get('results') or []
+        campaign_row = rows[0]['campaign'] if rows else {}
+
+        ad_data = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': (
+                'SELECT ad_group_ad.status, ad_group_ad.ad_strength, ad_group_ad.policy_summary.approval_status, '
+                'ad_group_ad.policy_summary.review_status FROM ad_group_ad '
+                f'WHERE campaign.id = {external_campaign_id}'
+            )},
+        )
+        ads = []
+        for row in ad_data.get('results') or []:
+            ad = row['adGroupAd']
+            ads.append({
+                'status': ad.get('status'),
+                'ad_strength': ad.get('adStrength'),
+                'policy_approval_status': ad.get('policySummary', {}).get('approvalStatus'),
+                'policy_review_status': ad.get('policySummary', {}).get('reviewStatus'),
+            })
+
+        return {
+            'campaign_status': campaign_row.get('status'),
+            'primary_status': campaign_row.get('primaryStatus'),
+            'primary_status_reasons': campaign_row.get('primaryStatusReasons', []),
+            'ads': ads,
+        }
 
     # ── Leitura ──────────────────────────────────────────────────────────────
 
@@ -625,6 +945,7 @@ class GoogleAdsProvider(AdvertisingProvider):
                 'status': 'PAUSED',
                 'campaignBudget': budget_resource_name,
                 'manualCpc': {},
+                'geoTargetTypeSetting': {'positiveGeoTargetType': spec.geo_target_type},
                 'networkSettings': {
                     'targetGoogleSearch': True,
                     'targetSearchNetwork': True,

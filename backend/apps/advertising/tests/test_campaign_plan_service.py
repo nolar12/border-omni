@@ -4,10 +4,19 @@ from django.test import TestCase, override_settings
 
 from apps.core.models import Organization
 from apps.kennel.models import Litter
-from apps.advertising.models import AdvertisingAccount, AdCampaign, AdCampaignPlan, AdAgentDecision
+from apps.advertising.models import AdvertisingAccount, AdCampaign, AdCampaignPlan, AdAgentDecision, AdCampaignBriefing
 from apps.advertising.providers import GoogleAdsProviderError
 from apps.advertising.providers.base import ProviderCampaign
 from apps.advertising.services.campaign_plan_service import CampaignPlanService
+
+AD_GROUPS_DATA = [{
+    'name': 'Comprar',
+    'keywords': [{'text': 'comprar border collie', 'match_type': 'EXACT'}],
+    'ads': [
+        {'headlines': ['Filhotes Border Collie'], 'descriptions': ['Conheça a ninhada.']},
+        {'headlines': ['Border Collie à Venda'], 'descriptions': ['Fale pelo WhatsApp.']},
+    ],
+}]
 
 
 class CampaignPlanServiceTests(TestCase):
@@ -70,6 +79,64 @@ class CampaignPlanServiceTests(TestCase):
 
         self.assertEqual(first.id, second.id)
         mock_create.assert_called_once()
+
+    def test_propose_with_ad_groups_aggregates_flat_fields_and_skips_ai_copy(self):
+        plan = CampaignPlanService().propose(
+            organization=self.org, litter=self.litter,
+            data={'daily_budget': 40, 'region': 'Florianópolis', 'ad_groups': AD_GROUPS_DATA},
+        )
+        self.assertEqual(plan.ad_groups, AD_GROUPS_DATA)
+        self.assertEqual(set(plan.headlines), {'Filhotes Border Collie', 'Border Collie à Venda'})
+        self.assertEqual(plan.keywords, ['comprar border collie'])
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=True)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.create_campaign')
+    def test_execute_passes_ad_groups_through_to_campaign_spec(self, mock_create):
+        mock_create.return_value = ProviderCampaign(external_id='dryrun-plan-ag', status='active')
+        plan = CampaignPlanService().propose(
+            organization=self.org, litter=self.litter,
+            data={'daily_budget': 40, 'region': 'Florianópolis', 'ad_groups': AD_GROUPS_DATA},
+        )
+
+        CampaignPlanService().execute(organization=self.org, plan_id=plan.id)
+
+        spec = mock_create.call_args[0][1]
+        self.assertEqual(len(spec.ad_groups), 1)
+        self.assertEqual(spec.ad_groups[0].name, 'Comprar')
+        self.assertEqual(len(spec.ad_groups[0].ads), 2)
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=True)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.create_campaign')
+    def test_execute_logs_decision_with_real_metrics_snapshot(self, mock_create):
+        """metrics_snapshot não pode ficar vazio — precisa dar pra comparar 'como a campanha
+        evoluiu desde a criação' mais tarde via evaluate_decision."""
+        mock_create.return_value = ProviderCampaign(external_id='dryrun-plan-snap', status='active')
+        plan = CampaignPlanService().propose(organization=self.org, litter=self.litter, data={'daily_budget': 25, 'region': 'Itajaí'})
+
+        campaign = CampaignPlanService().execute(organization=self.org, plan_id=plan.id)
+
+        decision = AdAgentDecision.objects.get(campaign=campaign, action='execute_campaign_plan')
+        self.assertTrue(decision.metrics_snapshot)
+        self.assertIn('cost', decision.metrics_snapshot)
+        self.assertIn('qualified_leads', decision.metrics_snapshot)
+        self.assertEqual(decision.metrics_snapshot['campaign_id'], campaign.id)
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=True)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.create_campaign')
+    def test_execute_creates_briefing_for_litter_campaigns(self, mock_create):
+        mock_create.return_value = ProviderCampaign(external_id='dryrun-plan-brief', status='active')
+        plan = CampaignPlanService().propose(
+            organization=self.org, litter=self.litter,
+            data={'daily_budget': 25, 'region': 'Itajaí', 'negative_keywords': ['grátis']},
+            justification='Alta intenção de compra nessas cidades.',
+        )
+
+        campaign = CampaignPlanService().execute(organization=self.org, plan_id=plan.id)
+
+        briefing = AdCampaignBriefing.objects.get(campaign=campaign)
+        self.assertIn('Ninhada Setembro', briefing.product_description)
+        self.assertEqual(briefing.objective, 'Alta intenção de compra nessas cidades.')
+        self.assertEqual(briefing.negative_keywords, ['grátis'])
 
     def test_reject_marks_plan_and_blocks_execution(self):
         plan = CampaignPlanService().propose(organization=self.org, litter=None, data={'daily_budget': 10})

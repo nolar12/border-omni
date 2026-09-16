@@ -2,7 +2,7 @@ from django.test import TestCase
 
 from apps.core.models import Organization
 from apps.leads.models import Lead
-from apps.advertising.models import AdClickToken, AdLeadAttribution
+from apps.advertising.models import AdClickToken, AdLeadAttribution, AdEvent
 from apps.advertising.services.attribution_service import AttributionService
 
 
@@ -54,3 +54,21 @@ class AttributionServiceTests(TestCase):
             organization=self.org, lead=self.lead, text='Olá! (ref: NAOEXISTE)',
         )
         self.assertIsNone(result)
+
+    def test_match_lead_to_click_token_fires_whatsapp_click_once(self):
+        click_token = AdClickToken.objects.create(
+            organization=self.org, gclid='Cj0KCQtest', utm_source='google', utm_medium='cpc',
+        )
+        service = AttributionService()
+        text = f'Olá! Quero saber mais.\n\n(ref: {click_token.token})'
+
+        service.match_lead_to_click_token(organization=self.org, lead=self.lead, text=text)
+        self.assertEqual(
+            AdEvent.objects.filter(lead=self.lead, event_type='whatsapp_click').count(), 1,
+        )
+
+        # Segunda mensagem citando o mesmo ref-token não deve duplicar o whatsapp_click.
+        service.match_lead_to_click_token(organization=self.org, lead=self.lead, text=text)
+        self.assertEqual(
+            AdEvent.objects.filter(lead=self.lead, event_type='whatsapp_click').count(), 1,
+        )

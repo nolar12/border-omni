@@ -41,6 +41,7 @@ def run_proactive_campaign_reviews(self):
     from apps.advertising.models import AdCampaign, AdvertisingSettings
     from apps.advertising.services.metrics_service import MetricsService
     from apps.advertising.services.agent_service import AdvertisingAgentService
+    from apps.advertising.services.notify_service import notify_admins_of_ad_review
 
     reviewed = 0
     posted = 0
@@ -68,6 +69,7 @@ def run_proactive_campaign_reviews(self):
             message = AdvertisingAgentService(campaign).run_proactive_review(openai_api_key=openai_api_key)
             if message:
                 posted += 1
+                notify_admins_of_ad_review(campaign.organization, campaign, message)
         except Exception as exc:
             errors += 1
             logger.warning(f'run_proactive_campaign_reviews error (campaign={campaign.id}): {exc}')

@@ -1,7 +1,8 @@
 """
-Settings para rodar a suíte de testes localmente sem depender de privilégio de
-CREATE DATABASE no MySQL gerenciado (RDS) usado em desenvolvimento/produção.
-Uso: DJANGO_SETTINGS_MODULE=config.settings_test python manage.py test
+Settings de teste local — roda a suíte contra SQLite em memória em vez do MySQL de
+produção (settings.py aponta para o RDS real via .env). Uso:
+
+    DJANGO_SETTINGS_MODULE=config.settings_test python manage.py test apps.advertising
 """
 from .settings import *  # noqa: F401,F403
 
@@ -11,10 +12,3 @@ DATABASES = {
         'NAME': ':memory:',
     }
 }
-
-# Testes nunca devem poder chamar a API real do Google Ads, independentemente
-# do que estiver configurado no .env local (que pode estar em modo "live" para
-# testes manuais). Casos que precisam exercitar o caminho "ligado" usam
-# @override_settings explicitamente.
-GOOGLE_ADS_ENABLED = False
-GOOGLE_ADS_DRY_RUN = True

@@ -67,13 +67,26 @@ class AttributionService:
             },
         )
 
-        if not click_token.consumed_at:
+        # Primeira mensagem que resgata este token = melhor proxy disponível para "clique no
+        # WhatsApp que virou conversa" (o clique real no botão acontece na landing externa,
+        # fora deste repositório, e não pode ser instrumentado por este código).
+        is_first_match = not click_token.consumed_at
+        if is_first_match:
             click_token.consumed_at = timezone.now()
             click_token.save(update_fields=['consumed_at'])
 
         if lead.source != 'GOOGLE_AD':
             lead.source = 'GOOGLE_AD'
             lead.save(update_fields=['source'])
+
+        if is_first_match:
+            AdEvent.objects.create(
+                organization=organization,
+                lead=lead,
+                campaign=click_token.campaign,
+                event_type='whatsapp_click',
+                metadata={'gclid': click_token.gclid, 'token': token_code},
+            )
 
         AdEvent.objects.create(
             organization=organization,

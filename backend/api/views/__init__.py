@@ -2761,6 +2761,7 @@ class MessageTemplateViewSet(viewsets.ModelViewSet):
             logger.warning(f'MessageTemplate {template.id}: canal sem credenciais Meta, pulando submissão.')
             return
 
+        import re
         import requests as http_requests
         url = f'https://graph.facebook.com/v22.0/{channel.business_account_id}/message_templates'
         components = []
@@ -2787,7 +2788,15 @@ class MessageTemplateViewSet(viewsets.ModelViewSet):
             if media_handle:
                 header_component['example'] = {'header_handle': [media_handle]}
             components.append(header_component)
-        components.append({'type': 'BODY', 'text': template.body_text})
+        body_component = {'type': 'BODY', 'text': template.body_text}
+        # A Meta rejeita (INVALID_FORMAT) templates com variáveis {{n}} no corpo sem um
+        # example.body_text — precisa de um valor de exemplo por variável, na ordem certa.
+        variable_count = len(set(re.findall(r'\{\{(\d+)\}\}', template.body_text)))
+        if variable_count:
+            body_component['example'] = {
+                'body_text': [[f'Exemplo{i}' for i in range(1, variable_count + 1)]],
+            }
+        components.append(body_component)
         if template.footer_text:
             components.append({'type': 'FOOTER', 'text': template.footer_text})
 

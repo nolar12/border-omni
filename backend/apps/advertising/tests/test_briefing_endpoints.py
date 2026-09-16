@@ -47,3 +47,21 @@ class BriefingEndpointTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn('stages', resp.data)
         self.assertIn('total_leads', resp.data)
+
+    def test_dashboard_endpoint_returns_snapshot_and_breakdowns(self):
+        resp = self.client.get(f'/api/ad-campaigns/{self.campaign.id}/dashboard/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('snapshot', resp.data)
+        self.assertIn('city_breakdown', resp.data)
+        self.assertIn('keyword_breakdown', resp.data)
+        for key in ('cost', 'qualified_leads', 'cost_per_qualified_lead', 'negotiations', 'reservations', 'sales', 'cac'):
+            self.assertIn(key, resp.data['snapshot'])
+
+    def test_dashboard_endpoint_respects_days_back(self):
+        resp = self.client.get(f'/api/ad-campaigns/{self.campaign.id}/dashboard/?days_back=7')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['snapshot']['period_days'], 7)
+
+    def test_dashboard_endpoint_rejects_invalid_days_back(self):
+        resp = self.client.get(f'/api/ad-campaigns/{self.campaign.id}/dashboard/?days_back=abc')
+        self.assertEqual(resp.status_code, 400)

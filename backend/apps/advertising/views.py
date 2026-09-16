@@ -238,6 +238,27 @@ class AdCampaignViewSet(viewsets.ModelViewSet):
         campaign = self.get_object()
         return Response(lead_funnel_service.funnel_summary(campaign))
 
+    @action(detail=True, methods=['get'], url_path='dashboard')
+    def dashboard(self, request, pk=None):
+        """
+        Visão consolidada pra tela de Anúncios: o mesmo snapshot (custo, leads,
+        qualificados, negociações, reservas, vendas, CPL/CPL qualificado/CAC) que
+        já alimenta as decisões do agente, mais a quebra por cidade e por
+        keyword (dado comercial do CRM — sem gasto por grupo, essa quebra não
+        existe no Google Ads ainda). `days_back` filtra o período (padrão 30).
+        """
+        campaign = self.get_object()
+        try:
+            days_back = int(request.query_params.get('days_back', 30))
+        except ValueError:
+            return Response({'error': 'days_back deve ser um número inteiro de dias.'}, status=400)
+
+        return Response({
+            'snapshot': MetricsService().build_snapshot(campaign, days_back=days_back),
+            'city_breakdown': lead_funnel_service.breakdown_by_city(campaign),
+            'keyword_breakdown': lead_funnel_service.breakdown_by_keyword(campaign),
+        })
+
 
 class AdvertisingSettingsView(APIView):
     """Mesmo padrão de AgentConfigView (api/views/__init__.py) — GET/PUT, get_or_create por org."""

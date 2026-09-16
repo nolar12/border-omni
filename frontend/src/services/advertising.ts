@@ -40,6 +40,42 @@ export interface AdMetric {
   cost_per_conversion: string | null;
 }
 
+export interface AdSnapshot {
+  period_days: number;
+  period_from: string;
+  period_to: string;
+  cost: number;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  average_cpc: number | null;
+  conversions: number;
+  conversion_rate: number | null;
+  total_leads: number;
+  cost_per_lead: number | null;
+  qualified_leads: number;
+  cost_per_qualified_lead: number | null;
+  negotiations: number;
+  reservations: number;
+  sales: number;
+  cac: number | null;
+}
+
+export interface AdFunnelBreakdownRow {
+  group: string;
+  total_leads: number;
+  qualified_leads: number;
+  reservations: number;
+  sales: number;
+  stages: Record<string, number>;
+}
+
+export interface AdDashboard {
+  snapshot: AdSnapshot;
+  city_breakdown: AdFunnelBreakdownRow[];
+  keyword_breakdown: AdFunnelBreakdownRow[];
+}
+
 export interface AdChatMessage {
   id: number;
   role: 'user' | 'assistant';
@@ -124,6 +160,11 @@ export const advertisingService = {
 
   async syncMetrics(id: number): Promise<{ synced: number; metrics: AdMetric[] }> {
     const { data } = await api.post<{ synced: number; metrics: AdMetric[] }>(`/ad-campaigns/${id}/sync_metrics/`);
+    return data;
+  },
+
+  async getDashboard(id: number, daysBack = 30): Promise<AdDashboard> {
+    const { data } = await api.get<AdDashboard>(`/ad-campaigns/${id}/dashboard/`, { params: { days_back: daysBack } });
     return data;
   },
 

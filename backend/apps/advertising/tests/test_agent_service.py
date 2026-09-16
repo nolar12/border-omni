@@ -76,6 +76,25 @@ class AdvertisingAgentServiceTests(TestCase):
         self.assertEqual(reply.content, 'A campanha está ativa e saudável.')
         self.assertEqual(AdChatMessage.objects.filter(campaign=self.campaign).count(), 2)  # user + assistant
 
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_get_campaign_summary_includes_the_same_snapshot_used_in_decisions(self, mock_openai_cls):
+        """'Quanto gastamos?'/'quantos leads qualificados?' devem usar os mesmos números (e a
+        mesma função) que ficam gravados em cada AdAgentDecision — nunca uma conta separada."""
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'get_campaign_summary', {})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Ainda sem gasto registrado.')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Quanto gastamos?', openai_api_key='sk-test')
+
+        tool_result = json.loads(mock_client.chat.completions.create.call_args_list[1][1]['messages'][-1]['content'])
+        self.assertIn('snapshot', tool_result)
+        for key in ('cost', 'qualified_leads', 'cost_per_qualified_lead', 'reservations', 'sales', 'cac'):
+            self.assertIn(key, tool_result['snapshot'])
+
     @patch('apps.advertising.services.campaign_service.CampaignService.pause_campaign')
     @patch('apps.advertising.services.agent_service.OpenAI')
     def test_pause_tool_call_goes_through_campaign_service_and_logs_decision(self, mock_openai_cls, mock_pause):
@@ -312,6 +331,26 @@ class AdvertisingAgentServiceTests(TestCase):
         self.assertEqual(plan.status, 'proposed')
 
     @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_propose_campaign_plan_with_ad_groups_stores_the_structure(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        ad_groups = [{
+            'name': 'Comprar',
+            'keywords': [{'text': 'comprar border collie', 'match_type': 'EXACT'}],
+            'ads': [{'headlines': ['H1'], 'descriptions': ['D1']}, {'headlines': ['H2'], 'descriptions': ['D2']}],
+        }]
+        tool_call = _mock_tool_call('call_1', 'propose_campaign_plan', {'daily_budget': 40, 'region': 'Itajaí', 'ad_groups': ad_groups})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Aqui está a proposta com 1 ad group, posso executar?')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Crie uma campanha para esta ninhada', openai_api_key='sk-test')
+
+        plan = AdCampaignPlan.objects.get()
+        self.assertEqual(plan.ad_groups, ad_groups)
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
     def test_execute_campaign_plan_without_confirmation_does_not_execute(self, mock_openai_cls):
         plan = AdCampaignPlan.objects.create(organization=self.org, daily_budget=20, name='Plano X')
 
@@ -531,4 +570,120 @@ class ProactiveReviewTests(TestCase):
 
         AdvertisingAgentService(self.campaign).run_proactive_review(openai_api_key='sk-test')
 
-        mock_pause.assert_not_called()
+
+class NewWriteToolsAgentTests(TestCase):
+    """add_keywords / set_keyword_status / create_ad_group / update_bidding_strategy via chat —
+    update_bidding_strategy é sempre REQUIRES_APPROVAL (skill: "alteração radical de estratégia
+    de lance"), as outras três executam direto (AUTO_EXECUTE, como add_negative_keywords)."""
+
+    def setUp(self):
+        self.org = Organization.objects.create(name='Canil W')
+        self.account = AdvertisingAccount.objects.create(organization=self.org, customer_id='9998887772')
+        self.campaign = AdCampaign.objects.create(
+            organization=self.org, advertising_account=self.account, name='Camp W',
+            daily_budget=20, status='active', external_campaign_id='ext-1',
+        )
+
+    def _completion_with(self, message):
+        return MagicMock(choices=[MagicMock(message=message)])
+
+    @patch('apps.advertising.services.campaign_service.CampaignService.add_keywords')
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_add_keywords_tool_executes_directly(self, mock_openai_cls, mock_add_keywords):
+        mock_add_keywords.return_value = self.campaign
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'add_keywords', {
+            'ad_group_name': 'Comprar', 'keywords': [{'text': 'border collie filhote', 'match_type': 'EXACT'}],
+        })
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Keyword adicionada.')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Adiciona "border collie filhote" no grupo Comprar', openai_api_key='sk-test')
+
+        mock_add_keywords.assert_called_once()
+        self.assertEqual(mock_add_keywords.call_args.args[2], 'Comprar')
+
+    @patch('apps.advertising.services.campaign_service.CampaignService.set_keyword_status')
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_set_keyword_status_tool_executes_directly(self, mock_openai_cls, mock_set_status):
+        mock_set_status.return_value = self.campaign
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'set_keyword_status', {'keyword_text': 'border collie grátis', 'status': 'PAUSED'})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Keyword pausada.')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Pausa a keyword border collie grátis', openai_api_key='sk-test')
+
+        mock_set_status.assert_called_once()
+
+    @patch('apps.advertising.services.campaign_service.CampaignService.create_ad_group')
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_create_ad_group_tool_executes_directly(self, mock_openai_cls, mock_create_ad_group):
+        mock_create_ad_group.return_value = self.campaign
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'create_ad_group', {
+            'name': 'Teste Curitiba',
+            'keywords': [{'text': 'border collie curitiba', 'match_type': 'EXACT'}],
+            'ads': [{'headlines': ['H1'], 'descriptions': ['D1']}],
+        })
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Grupo criado, pausado.')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Cria um grupo de teste pra Curitiba', openai_api_key='sk-test')
+
+        mock_create_ad_group.assert_called_once()
+        self.assertEqual(mock_create_ad_group.call_args.args[2], 'Teste Curitiba')
+
+    @patch('apps.advertising.services.campaign_service.CampaignService.update_bidding_strategy')
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_update_bidding_strategy_without_confirmation_requires_approval(self, mock_openai_cls, mock_update_strategy):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'update_bidding_strategy', {'strategy': 'MAXIMIZE_CONVERSIONS'})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Isso muda a estratégia de lance, você confirma?')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Troca pra Maximize Conversions', openai_api_key='sk-test')
+
+        mock_update_strategy.assert_not_called()
+
+    @patch('apps.advertising.services.campaign_service.CampaignService.update_bidding_strategy')
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_update_bidding_strategy_confirmed_executes(self, mock_openai_cls, mock_update_strategy):
+        mock_update_strategy.return_value = self.campaign
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        tool_call = _mock_tool_call('call_1', 'update_bidding_strategy', {'strategy': 'MAXIMIZE_CONVERSIONS', 'confirmed': True})
+        mock_client.chat.completions.create.side_effect = [
+            self._completion_with(_mock_message(content=None, tool_calls=[tool_call])),
+            self._completion_with(_mock_message(content='Estratégia trocada.')),
+        ]
+
+        AdvertisingAgentService(self.campaign).chat(user_message='Confirmo, troca pra Maximize Conversions', openai_api_key='sk-test')
+
+        mock_update_strategy.assert_called_once()
+
+    @patch('apps.advertising.services.agent_service.OpenAI')
+    def test_new_write_tools_are_not_offered_during_proactive_review(self, mock_openai_cls):
+        mock_client = MagicMock()
+        mock_openai_cls.return_value = mock_client
+        mock_client.chat.completions.create.return_value = self._completion_with(_mock_message(content='NADA_A_REPORTAR'))
+
+        AdvertisingAgentService(self.campaign).run_proactive_review(openai_api_key='sk-test')
+
+        offered_names = {t['function']['name'] for t in mock_client.chat.completions.create.call_args[1]['tools']}
+        self.assertNotIn('add_keywords', offered_names)
+        self.assertNotIn('set_keyword_status', offered_names)
+        self.assertNotIn('create_ad_group', offered_names)
+        self.assertNotIn('update_bidding_strategy', offered_names)

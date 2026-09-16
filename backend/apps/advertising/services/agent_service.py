@@ -94,7 +94,7 @@ relevante desde a última vez, responda EXATAMENTE com a palavra NADA_A_REPORTAR
 READ_ONLY_TOOL_NAMES = {
     'get_campaign_summary', 'sync_metrics', 'get_search_terms', 'get_lead_funnel',
     'get_city_breakdown', 'get_keyword_breakdown', 'get_decision_history',
-    'evaluate_decision', 'fetch_official_documentation',
+    'evaluate_decision', 'fetch_official_documentation', 'get_campaign_diagnostics',
 }
 
 TOOLS = [
@@ -115,6 +115,36 @@ TOOLS = [
             'type': 'object',
             'properties': {'days_back': {'type': 'integer', 'description': 'Janela em dias (padrão 30).'}},
             'required': [],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'get_campaign_diagnostics',
+        'description': (
+            'Traz o motivo REAL de a campanha não estar veiculando (campaign.primary_status_reasons — ex.: '
+            'AD_GROUP_ADS_PAUSED, PAUSED, PENDING_REVIEW, DISAPPROVED) e a força do anúncio (ad_strength: '
+            'POOR/AVERAGE/GOOD/EXCELLENT) e status de aprovação de política de cada anúncio — a mesma informação '
+            'que o painel "Campaign diagnostics" do Google Ads mostra. Use sempre que o usuário perguntar por que '
+            'a campanha está "not eligible"/parada/sem veicular, ou quando for investigar problemas por conta própria.'
+        ),
+        'parameters': {'type': 'object', 'properties': {}, 'required': []},
+    }},
+    {'type': 'function', 'function': {
+        'name': 'update_ad_content',
+        'description': (
+            'Atualiza as headlines e descriptions do anúncio (Responsive Search Ad) já publicado — use quando o '
+            'ad_strength estiver POOR/AVERAGE ou o usuário pedir para melhorar o texto do anúncio. Google recomenda '
+            'até 15 headlines (≤30 caracteres cada) e até 4 descriptions (≤90 caracteres cada), com variedade real '
+            '(não repita a mesma ideia com palavras diferentes) — inclua preço, localização, diferenciais, urgência, '
+            'chamada para ação. Pode executar direto, sem pedir confirmação — é conteúdo, não gasto.'
+        ),
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'headlines': {'type': 'array', 'items': {'type': 'string'}, 'description': '8 a 15 headlines, cada uma com no máximo 30 caracteres.'},
+                'descriptions': {'type': 'array', 'items': {'type': 'string'}, 'description': '2 a 4 descriptions, cada uma com no máximo 90 caracteres.'},
+                'reason': {'type': 'string'},
+            },
+            'required': ['headlines', 'descriptions'],
         },
     }},
     {'type': 'function', 'function': {
@@ -218,10 +248,12 @@ TOOLS = [
         'name': 'propose_campaign_plan',
         'description': (
             'Monta uma PROPOSTA de campanha nova (ex.: quando o usuário pedir "crie uma campanha para esta '
-            'ninhada") e a salva como rascunho — NUNCA cria a campanha de verdade. Retorna o plano completo '
-            '(nome, orçamento, região, headlines/descriptions/keywords, negativas, estimativa) para você '
-            'apresentar em português, de forma legível, e pedir aprovação explícita ao usuário antes de '
-            'chamar execute_campaign_plan. Se litter_id não for informado, assume a ninhada desta campanha atual.'
+            'ninhada") e a salva como rascunho — NUNCA cria a campanha de verdade. Prefira sempre `ad_groups` '
+            '(vários grupos temáticos, cada um com suas keywords em Exact/Phrase e ≥1 RSA) em vez de deixar '
+            'a IA gerar um único grupo genérico — só omita ad_groups se o usuário pedir algo muito simples '
+            'de propósito. Retorna o plano completo para você apresentar em português, de forma legível, e '
+            'pedir aprovação explícita ao usuário antes de chamar execute_campaign_plan. Se litter_id não for '
+            'informado, assume a ninhada desta campanha atual.'
         ),
         'parameters': {
             'type': 'object',
@@ -231,8 +263,53 @@ TOOLS = [
                 'name': {'type': 'string'},
                 'region': {'type': 'string', 'description': 'Cidades separadas por vírgula.'},
                 'radius_km': {'type': 'integer'},
-                'audience_description': {'type': 'string', 'description': 'Público-alvo, para gerar headlines/descriptions por IA.'},
-                'negative_keywords': {'type': 'array', 'items': {'type': 'string'}},
+                'audience_description': {'type': 'string', 'description': 'Público-alvo — usado só se ad_groups não for informado, para gerar headlines/descriptions por IA no formato legado (1 grupo).'},
+                'ad_groups': {
+                    'type': 'array',
+                    'description': 'Estrutura recomendada: vários ad groups temáticos (ex.: "Comprar", "Preço", "Localização").',
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'name': {'type': 'string'},
+                            'keywords': {
+                                'type': 'array',
+                                'items': {
+                                    'type': 'object',
+                                    'properties': {
+                                        'text': {'type': 'string'},
+                                        'match_type': {'type': 'string', 'enum': ['EXACT', 'PHRASE', 'BROAD']},
+                                    },
+                                    'required': ['text'],
+                                },
+                            },
+                            'ads': {
+                                'type': 'array',
+                                'description': '≥2 RSAs por grupo, com diversidade real de proposta.',
+                                'items': {
+                                    'type': 'object',
+                                    'properties': {
+                                        'headlines': {'type': 'array', 'items': {'type': 'string'}},
+                                        'descriptions': {'type': 'array', 'items': {'type': 'string'}},
+                                    },
+                                    'required': ['headlines', 'descriptions'],
+                                },
+                            },
+                        },
+                        'required': ['name', 'keywords', 'ads'],
+                    },
+                },
+                'negative_keywords': {
+                    'type': 'array',
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'text': {'type': 'string'},
+                            'match_type': {'type': 'string', 'enum': ['EXACT', 'PHRASE', 'BROAD']},
+                        },
+                        'required': ['text'],
+                    },
+                },
+                'bid_strategy': {'type': 'string', 'description': 'Informativo — campanhas novas sempre nascem em Manual CPC (ver skill: automatizado exige histórico).'},
                 'justification': {'type': 'string', 'description': 'Sua estimativa/justificativa para esta proposta — o porquê do orçamento, região e segmentação escolhidos.'},
             },
             'required': ['daily_budget'],
@@ -261,6 +338,114 @@ TOOLS = [
             'type': 'object',
             'properties': {'plan_id': {'type': 'integer'}},
             'required': ['plan_id'],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'add_keywords',
+        'description': (
+            'Adiciona palavra(s)-chave positivas a um ad group JÁ EXISTENTE desta campanha (nunca cria '
+            'ad group novo — use create_ad_group pra isso). Informe o nome (ou parte do nome) do ad '
+            'group de destino, exatamente como aparece nesta campanha.'
+        ),
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'ad_group_name': {'type': 'string', 'description': 'Nome (ou parte do nome) do ad group de destino.'},
+                'keywords': {
+                    'type': 'array',
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'text': {'type': 'string'},
+                            'match_type': {'type': 'string', 'enum': ['EXACT', 'PHRASE', 'BROAD']},
+                        },
+                        'required': ['text'],
+                    },
+                },
+                'reason': {'type': 'string'},
+            },
+            'required': ['ad_group_name', 'keywords'],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'set_keyword_status',
+        'description': (
+            'Pausa ou reativa uma keyword individual já configurada — não confunda com negativar '
+            '(isso não bloqueia buscas, só ativa/desativa a keyword como critério positivo).'
+        ),
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'keyword_text': {'type': 'string'},
+                'match_type': {
+                    'type': 'string', 'enum': ['EXACT', 'PHRASE', 'BROAD'],
+                    'description': 'Use para desambiguar se a mesma keyword existir em mais de um match type/ad group.',
+                },
+                'status': {'type': 'string', 'enum': ['ENABLED', 'PAUSED']},
+                'reason': {'type': 'string'},
+            },
+            'required': ['keyword_text', 'status'],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'create_ad_group',
+        'description': (
+            'Cria um ad group NOVO nesta campanha já existente (ex.: testar um tema/keyword diferente '
+            'sem mexer nos grupos atuais) — nasce PAUSED, precisa ser ativado manualmente depois. Não '
+            'cria campanha nova (use propose_campaign_plan pra isso).'
+        ),
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string', 'description': 'Nome do novo ad group (curto, descreve o tema).'},
+                'keywords': {
+                    'type': 'array',
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'text': {'type': 'string'},
+                            'match_type': {'type': 'string', 'enum': ['EXACT', 'PHRASE', 'BROAD']},
+                        },
+                        'required': ['text'],
+                    },
+                },
+                'ads': {
+                    'type': 'array',
+                    'description': '1 ou mais RSAs para o grupo.',
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'headlines': {'type': 'array', 'items': {'type': 'string'}},
+                            'descriptions': {'type': 'array', 'items': {'type': 'string'}},
+                        },
+                        'required': ['headlines', 'descriptions'],
+                    },
+                },
+                'reason': {'type': 'string'},
+                'hypothesis': {'type': 'string'},
+            },
+            'required': ['name'],
+        },
+    }},
+    {'type': 'function', 'function': {
+        'name': 'update_bidding_strategy',
+        'description': (
+            'Troca a estratégia de lance da campanha (Manual CPC / Maximize Conversions / Target CPA) — '
+            'SEMPRE mudança estrutural relevante, exige confirmação explícita do usuário. Sem '
+            'confirmed=true, a ferramenta NÃO executa e retorna requires_approval=true. Só recomende '
+            'Maximize Conversions/Target CPA quando já houver volume de conversão razoável (ver skill — '
+            'estratégias automatizadas com pouco histórico aprendem mal).'
+        ),
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'strategy': {'type': 'string', 'enum': ['MANUAL_CPC', 'MAXIMIZE_CONVERSIONS', 'TARGET_CPA']},
+                'target_cpa': {'type': 'number', 'description': 'Obrigatório só para TARGET_CPA (custo por aquisição alvo, em R$).'},
+                'reason': {'type': 'string'},
+                'hypothesis': {'type': 'string'},
+                'confirmed': {'type': 'boolean', 'description': 'true somente após o usuário confirmar explicitamente.'},
+            },
+            'required': ['strategy'],
         },
     }},
     {'type': 'function', 'function': {
@@ -336,6 +521,10 @@ class AdvertisingAgentService:
                  'cost_per_conversion': str(m['cost_per_conversion']) if m['cost_per_conversion'] is not None else None}
                 for m in metrics
             ],
+            # Mesmos números (e mesma função) usados em cada AdAgentDecision — "quanto gastamos",
+            # "quantos leads", "quantos qualificados/reservas/vendas" respondem com os dados reais
+            # já agregados, em vez de forçar somar recent_metrics na mão.
+            'snapshot': MetricsService().build_snapshot(campaign),
         }
 
     def _max_auto_budget_change_percent(self) -> int:
@@ -354,6 +543,7 @@ class AdvertisingAgentService:
             'radius_km': plan.radius_km,
             'bid_strategy': plan.bid_strategy,
             'landing_url': plan.landing_url,
+            'ad_groups': plan.ad_groups,
             'headlines': plan.headlines,
             'descriptions': plan.descriptions,
             'keywords': plan.keywords,
@@ -375,6 +565,21 @@ class AdvertisingAgentService:
             if name == 'get_search_terms':
                 terms = CampaignService().get_search_terms(self.campaign, arguments.get('days_back', 30))
                 return {'search_terms': terms}
+
+            if name == 'get_campaign_diagnostics':
+                return CampaignService().get_campaign_diagnostics(self.campaign)
+
+            if name == 'update_ad_content':
+                campaign = CampaignService().update_ad_content(
+                    self.organization, self.campaign.id,
+                    arguments['headlines'], arguments['descriptions'],
+                    reason=arguments.get('reason', ''), performed_by='agent',
+                )
+                self.campaign = campaign
+                return {
+                    'ad_headlines': campaign.ad_headlines, 'ad_descriptions': campaign.ad_descriptions,
+                    'error_message': campaign.error_message,
+                }
 
             if name == 'get_lead_funnel':
                 return lead_funnel_service.funnel_summary(self.campaign)
@@ -504,6 +709,59 @@ class AdvertisingAgentService:
                     result['blocked_by_briefing'] = blocked
                 return result
 
+            if name == 'add_keywords':
+                keywords = arguments.get('keywords', [])
+                campaign = CampaignService().add_keywords(
+                    self.organization, self.campaign.id, arguments['ad_group_name'], keywords,
+                    reason=arguments.get('reason', ''), performed_by='agent',
+                )
+                self.campaign = campaign
+                if campaign.error_message:
+                    return {'error_message': campaign.error_message}
+                return {'status': 'ok', 'ad_group_name': arguments['ad_group_name'], 'keywords_added': keywords}
+
+            if name == 'set_keyword_status':
+                campaign = CampaignService().set_keyword_status(
+                    self.organization, self.campaign.id, arguments['keyword_text'], arguments['status'],
+                    match_type=arguments.get('match_type'), reason=arguments.get('reason', ''), performed_by='agent',
+                )
+                self.campaign = campaign
+                if campaign.error_message:
+                    return {'error_message': campaign.error_message}
+                return {'status': arguments['status'], 'keyword_text': arguments['keyword_text']}
+
+            if name == 'create_ad_group':
+                campaign = CampaignService().create_ad_group(
+                    self.organization, self.campaign.id, arguments['name'],
+                    keywords=arguments.get('keywords', []), ads=arguments.get('ads', []),
+                    reason=arguments.get('reason', ''), hypothesis=arguments.get('hypothesis', ''), performed_by='agent',
+                )
+                self.campaign = campaign
+                if campaign.error_message:
+                    return {'error_message': campaign.error_message}
+                return {'status': 'created', 'ad_group_name': arguments['name']}
+
+            if name == 'update_bidding_strategy':
+                strategy = arguments['strategy']
+                if not arguments.get('confirmed'):
+                    return {
+                        'requires_approval': True,
+                        'message': (
+                            f'Trocar a estratégia de lance para {strategy} é sempre uma mudança estrutural '
+                            'relevante. Explique a mudança ao usuário e só chame esta ferramenta de novo '
+                            'com confirmed=true depois que ele concordar explicitamente.'
+                        ),
+                    }
+                campaign = CampaignService().update_bidding_strategy(
+                    self.organization, self.campaign.id, strategy, target_cpa=arguments.get('target_cpa'),
+                    reason=arguments.get('reason', ''), hypothesis=arguments.get('hypothesis', ''),
+                    performed_by='agent', approval_status='confirmed_by_user',
+                )
+                self.campaign = campaign
+                if campaign.error_message:
+                    return {'error_message': campaign.error_message}
+                return {'strategy': strategy, 'target_cpa': arguments.get('target_cpa')}
+
             if name == 'propose_campaign_plan':
                 litter_id = arguments.get('litter_id') or getattr(self.campaign, 'litter_id', None)
                 litter = Litter.objects.filter(organization=self.organization, id=litter_id).first() if litter_id else None
@@ -516,7 +774,9 @@ class AdvertisingAgentService:
                         'region': arguments.get('region', ''),
                         'radius_km': arguments.get('radius_km'),
                         'audience_description': arguments.get('audience_description', ''),
+                        'ad_groups': arguments.get('ad_groups', []),
                         'negative_keywords': arguments.get('negative_keywords', []),
+                        'bid_strategy': arguments.get('bid_strategy', 'manual_cpc'),
                     },
                     justification=arguments.get('justification', ''),
                 )
