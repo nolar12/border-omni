@@ -250,14 +250,18 @@ class KeywordAndAdGroupWriteToolsTests(TestCase):
         mock_request.return_value = {'results': [{
             'adGroupAd': {
                 'resourceName': 'customers/7778889990/adGroupAds/1~1', 'status': 'ENABLED',
-                'ad': {'responsiveSearchAd': {'headlines': [{'text': 'H1'}], 'descriptions': [{'text': 'D1'}]}},
+                'ad': {
+                    'resourceName': 'customers/7778889990/ads/1',
+                    'responsiveSearchAd': {'headlines': [{'text': 'H1'}], 'descriptions': [{'text': 'D1'}]},
+                },
             },
             'adGroup': {'name': 'Comprar', 'id': '1'},
         }]}
         result = GoogleAdsProvider().list_ads(self.account, 'ext-1')
         self.assertEqual(result, [{
-            'resource_name': 'customers/7778889990/adGroupAds/1~1', 'status': 'ENABLED',
-            'ad_group_name': 'Comprar', 'ad_group_id': '1', 'headlines': ['H1'], 'descriptions': ['D1'],
+            'resource_name': 'customers/7778889990/adGroupAds/1~1', 'ad_resource_name': 'customers/7778889990/ads/1',
+            'status': 'ENABLED', 'ad_group_name': 'Comprar', 'ad_group_id': '1',
+            'headlines': ['H1'], 'descriptions': ['D1'],
         }])
 
     @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)

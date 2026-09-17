@@ -515,6 +515,7 @@ class GoogleAdsProvider(AdvertisingProvider):
             'POST', account, f'customers/{account.customer_id}/googleAds:search',
             json={'query': (
                 'SELECT ad_group_ad.resource_name, ad_group_ad.status, ad_group.name, ad_group.id, '
+                'ad_group_ad.ad.resource_name, '
                 'ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions '
                 f'FROM ad_group_ad WHERE campaign.id = {external_campaign_id}'
             )},
@@ -524,7 +525,12 @@ class GoogleAdsProvider(AdvertisingProvider):
             ad = row['adGroupAd']
             rsa = ad.get('ad', {}).get('responsiveSearchAd', {})
             results.append({
+                # resource_name (AdGroupAd, formato "adGroupAds/{ad_group_id}~{ad_id}") é o que
+                # set_ad_status espera. ad_resource_name (Ad, formato "ads/{ad_id}") é o que
+                # update_ad_content espera — são endpoints/formatos diferentes, não intercambiáveis
+                # (erro real: RESOURCE_NAME_MALFORMED ao usar um no lugar do outro).
                 'resource_name': ad['resourceName'],
+                'ad_resource_name': ad.get('ad', {}).get('resourceName', ''),
                 'status': ad['status'],
                 'ad_group_name': row['adGroup'].get('name', ''),
                 'ad_group_id': row['adGroup'].get('id', ''),

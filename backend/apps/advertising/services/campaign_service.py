@@ -582,6 +582,35 @@ class CampaignService:
             )
         return campaign
 
+    def update_ad_content_by_resource(self, organization, campaign_id: int, ad_resource_name: str,
+                                       headlines: list[str], descriptions: list[str], *,
+                                       reason='', hypothesis='', performed_by='user') -> AdCampaign:
+        """Como update_ad_content, mas edita um anúncio ESPECÍFICO (por resource name) em vez de
+        'o anúncio principal' — necessário numa campanha com múltiplos ad groups/anúncios, onde
+        'o principal' é ambíguo. Não mexe nos campos agregados (ad_headlines/ad_descriptions),
+        que continuam representando só um resumo legado de todos os anúncios."""
+        campaign = AdCampaign.objects.get(organization=organization, id=campaign_id)
+        self._validate_asset_lengths(headlines, descriptions)
+        provider = self._provider(campaign.provider)
+        snapshot = MetricsService().build_snapshot(campaign)
+        try:
+            provider.update_ad_content(campaign.advertising_account, ad_resource_name, headlines, descriptions)
+            campaign.error_message = ''
+        except GoogleAdsProviderError as exc:
+            logger.exception('CampaignService.update_ad_content_by_resource failed')
+            campaign.error_message = exc.user_message
+            campaign.save(update_fields=['error_message'])
+            return campaign
+
+        campaign.save(update_fields=['error_message'])
+        self._log_decision(
+            campaign, 'update_ad_content_by_resource',
+            {'ad_resource_name': ad_resource_name},
+            {'ad_resource_name': ad_resource_name, 'headlines': headlines, 'descriptions': descriptions},
+            reason=reason, hypothesis=hypothesis, performed_by=performed_by, metrics_snapshot=snapshot,
+        )
+        return campaign
+
     def get_campaign_diagnostics(self, campaign: AdCampaign) -> dict:
         return self._provider(campaign.provider).get_campaign_diagnostics(
             campaign.advertising_account, campaign.external_campaign_id,

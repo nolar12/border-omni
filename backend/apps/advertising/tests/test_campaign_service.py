@@ -389,3 +389,24 @@ class WriteToolsTests(TestCase):
     def test_set_ad_status_paused_does_not_touch_the_ad_group(self, mock_set_group_status, mock_set_status):
         CampaignService().set_ad_status(self.org, self.campaign.id, 'customers/1112223335/adGroupAds/555~1', 'PAUSED')
         mock_set_group_status.assert_not_called()
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.update_ad_content')
+    def test_update_ad_content_by_resource_edits_a_specific_ad_and_logs_decision(self, mock_update):
+        campaign = CampaignService().update_ad_content_by_resource(
+            self.org, self.campaign.id, 'customers/1112223335/adGroupAds/555~1',
+            ['H1', 'H2'], ['D1'], reason='Melhorar Ad Strength (estava POOR).',
+        )
+        self.assertEqual(campaign.error_message, '')
+        mock_update.assert_called_once_with(self.account, 'customers/1112223335/adGroupAds/555~1', ['H1', 'H2'], ['D1'])
+        decision = AdAgentDecision.objects.get(campaign=self.campaign, action='update_ad_content_by_resource')
+        self.assertEqual(decision.after['headlines'], ['H1', 'H2'])
+        # Não mexe no resumo agregado legado da campanha.
+        self.campaign.refresh_from_db()
+        self.assertEqual(self.campaign.ad_headlines, [])
+
+    def test_update_ad_content_by_resource_rejects_headline_over_limit(self):
+        from apps.advertising.services.campaign_service import AssetLengthError
+        with self.assertRaises(AssetLengthError):
+            CampaignService().update_ad_content_by_resource(
+                self.org, self.campaign.id, 'customers/1112223335/adGroupAds/555~1', ['H' * 31], ['D1'],
+            )
