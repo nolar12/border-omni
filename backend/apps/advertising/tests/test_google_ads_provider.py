@@ -221,6 +221,73 @@ class KeywordAndAdGroupWriteToolsTests(TestCase):
 
     @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
     @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request')
+    def test_create_responsive_search_ad_adds_rsa_to_existing_group(self, mock_request):
+        mock_request.return_value = {'results': []}
+        GoogleAdsProvider().create_responsive_search_ad(
+            self.account, 'customers/7778889990/adGroups/1', 'https://example.com',
+            headlines=['H1', 'H2'], descriptions=['D1'],
+        )
+        op = mock_request.call_args.kwargs['json']['operations'][0]['create']
+        self.assertEqual(op['adGroup'], 'customers/7778889990/adGroups/1')
+        self.assertEqual(op['status'], 'PAUSED')
+        self.assertEqual([h['text'] for h in op['ad']['responsiveSearchAd']['headlines']], ['H1', 'H2'])
+        self.assertEqual(op['ad']['finalUrls'], ['https://example.com'])
+
+    def test_create_responsive_search_ad_noop_in_dry_run(self):
+        with patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request') as mock_request:
+            GoogleAdsProvider().create_responsive_search_ad(
+                self.account, 'customers/7778889990/adGroups/1', 'https://example.com',
+                headlines=['H1'], descriptions=['D1'],
+            )
+        mock_request.assert_not_called()
+
+    def test_list_ads_returns_empty_in_dry_run(self):
+        self.assertEqual(GoogleAdsProvider().list_ads(self.account, 'ext-1'), [])
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request')
+    def test_list_ads_parses_response(self, mock_request):
+        mock_request.return_value = {'results': [{
+            'adGroupAd': {
+                'resourceName': 'customers/7778889990/adGroupAds/1~1', 'status': 'ENABLED',
+                'ad': {'responsiveSearchAd': {'headlines': [{'text': 'H1'}], 'descriptions': [{'text': 'D1'}]}},
+            },
+            'adGroup': {'name': 'Comprar', 'id': '1'},
+        }]}
+        result = GoogleAdsProvider().list_ads(self.account, 'ext-1')
+        self.assertEqual(result, [{
+            'resource_name': 'customers/7778889990/adGroupAds/1~1', 'status': 'ENABLED',
+            'ad_group_name': 'Comprar', 'ad_group_id': '1', 'headlines': ['H1'], 'descriptions': ['D1'],
+        }])
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request')
+    def test_set_ad_status_sends_update(self, mock_request):
+        mock_request.return_value = {'results': []}
+        GoogleAdsProvider().set_ad_status(self.account, 'customers/7778889990/adGroupAds/1~1', 'PAUSED')
+        op = mock_request.call_args.kwargs['json']['operations'][0]['update']
+        self.assertEqual(op, {'resourceName': 'customers/7778889990/adGroupAds/1~1', 'status': 'PAUSED'})
+
+    def test_set_ad_status_noop_in_dry_run(self):
+        with patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request') as mock_request:
+            GoogleAdsProvider().set_ad_status(self.account, 'customers/7778889990/adGroupAds/1~1', 'PAUSED')
+        mock_request.assert_not_called()
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request')
+    def test_set_ad_group_status_sends_update(self, mock_request):
+        mock_request.return_value = {'results': []}
+        GoogleAdsProvider().set_ad_group_status(self.account, 'customers/7778889990/adGroups/1', 'ENABLED')
+        op = mock_request.call_args.kwargs['json']['operations'][0]['update']
+        self.assertEqual(op, {'resourceName': 'customers/7778889990/adGroups/1', 'status': 'ENABLED'})
+
+    def test_set_ad_group_status_noop_in_dry_run(self):
+        with patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request') as mock_request:
+            GoogleAdsProvider().set_ad_group_status(self.account, 'customers/7778889990/adGroups/1', 'ENABLED')
+        mock_request.assert_not_called()
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request')
     def test_update_bidding_strategy_manual_cpc(self, mock_request):
         mock_request.return_value = {'results': []}
         GoogleAdsProvider().update_bidding_strategy(self.account, 'ext-1', 'MANUAL_CPC')

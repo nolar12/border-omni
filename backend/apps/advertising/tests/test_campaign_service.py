@@ -324,3 +324,68 @@ class WriteToolsTests(TestCase):
         campaign = CampaignService().update_bidding_strategy(self.org, self.campaign.id, 'TARGET_CPA', target_cpa=20)
         self.assertEqual(campaign.error_message, 'Conta suspensa pelo Google.')
         self.assertFalse(AdAgentDecision.objects.filter(campaign=self.campaign, action='update_bidding_strategy').exists())
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.create_responsive_search_ad')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_ad_groups')
+    def test_add_responsive_search_ad_resolves_ad_group_and_logs_decision(self, mock_list, mock_create_rsa):
+        mock_list.return_value = [{'resource_name': 'customers/1/adGroups/1', 'name': 'Comprar', 'cpc_bid_micros': 2_500_000}]
+        campaign = CampaignService().add_responsive_search_ad(
+            self.org, self.campaign.id, 'Comprar', ['H1', 'H2'], ['D1'],
+            reason='Reposicionar mensagem para procedência/linhagem.',
+        )
+        self.assertEqual(campaign.error_message, '')
+        mock_create_rsa.assert_called_once_with(
+            self.account, 'customers/1/adGroups/1', self.campaign.landing_url, headlines=['H1', 'H2'], descriptions=['D1'],
+        )
+        decision = AdAgentDecision.objects.get(campaign=self.campaign, action='add_responsive_search_ad')
+        self.assertEqual(decision.after['ad_group'], 'Comprar')
+        self.assertEqual(decision.after['headlines'], ['H1', 'H2'])
+
+    def test_add_responsive_search_ad_rejects_headline_over_limit_without_truncating(self):
+        from apps.advertising.services.campaign_service import AssetLengthError
+        with self.assertRaises(AssetLengthError):
+            CampaignService().add_responsive_search_ad(
+                self.org, self.campaign.id, 'Comprar', ['H' * 31], ['D1'],
+            )
+
+    def test_add_responsive_search_ad_rejects_description_over_limit_without_truncating(self):
+        from apps.advertising.services.campaign_service import AssetLengthError
+        with self.assertRaises(AssetLengthError):
+            CampaignService().add_responsive_search_ad(
+                self.org, self.campaign.id, 'Comprar', ['H1'], ['D' * 91],
+            )
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_ad_groups')
+    def test_add_responsive_search_ad_no_matching_group_is_reported(self, mock_list):
+        mock_list.return_value = []
+        campaign = CampaignService().add_responsive_search_ad(self.org, self.campaign.id, 'Inexistente', ['H1'], ['D1'])
+        self.assertIn('Nenhum ad group encontrado', campaign.error_message)
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.set_ad_status')
+    def test_set_ad_status_logs_decision(self, mock_set_status):
+        campaign = CampaignService().set_ad_status(
+            self.org, self.campaign.id, 'customers/1/adGroupAds/1~1', 'PAUSED',
+            reason='Substituído por RSA com nova mensagem.',
+        )
+        self.assertEqual(campaign.error_message, '')
+        mock_set_status.assert_called_once_with(self.account, 'customers/1/adGroupAds/1~1', 'PAUSED')
+        decision = AdAgentDecision.objects.get(campaign=self.campaign, action='set_ad_status')
+        self.assertEqual(decision.after, {'ad_resource_name': 'customers/1/adGroupAds/1~1', 'status': 'PAUSED'})
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.set_ad_status')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.set_ad_group_status')
+    def test_set_ad_status_enabled_also_enables_the_ad_group(self, mock_set_group_status, mock_set_status):
+        """Regressão: um ad group novo (via create_ad_group) sempre nasce PAUSED — ativar só o
+        anúncio e esquecer do grupo deixa tudo parado silenciosamente (bug real observado)."""
+        campaign = CampaignService().set_ad_status(
+            self.org, self.campaign.id, 'customers/1112223335/adGroupAds/555~1', 'ENABLED',
+        )
+        self.assertEqual(campaign.error_message, '')
+        mock_set_group_status.assert_called_once_with(self.account, 'customers/1112223335/adGroups/555', 'ENABLED')
+        mock_set_status.assert_called_once_with(self.account, 'customers/1112223335/adGroupAds/555~1', 'ENABLED')
+
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.set_ad_status')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.set_ad_group_status')
+    def test_set_ad_status_paused_does_not_touch_the_ad_group(self, mock_set_group_status, mock_set_status):
+        CampaignService().set_ad_status(self.org, self.campaign.id, 'customers/1112223335/adGroupAds/555~1', 'PAUSED')
+        mock_set_group_status.assert_not_called()

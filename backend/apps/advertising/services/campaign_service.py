@@ -20,6 +20,14 @@ PROVIDERS = {
 # chamador futuro (chat, management command, o que for) possa reintroduzir o mesmo bug.
 MINIMUM_SAFE_CPC_BID = 1.0
 
+HEADLINE_MAX_LEN = 30
+DESCRIPTION_MAX_LEN = 90
+
+
+class AssetLengthError(Exception):
+    """Um headline/description passado excede o limite do Google Ads — nunca truncamos
+    silenciosamente (ver histórico: ai_copy_service já fazia isso e foi identificado como bug)."""
+
 
 class CampaignService:
     """
@@ -409,6 +417,87 @@ class CampaignService:
                 'keywords': [kw.text for kw in keyword_specs], 'ads_count': len(ad_specs), 'cpc_bid': cpc_bid,
             },
             reason=reason, hypothesis=hypothesis, performed_by=performed_by, metrics_snapshot=snapshot,
+        )
+        return campaign
+
+    @staticmethod
+    def _validate_asset_lengths(headlines: list[str], descriptions: list[str]) -> None:
+        violations = [f'headline {len(h)} chars (máx {HEADLINE_MAX_LEN}): "{h}"' for h in headlines if len(h) > HEADLINE_MAX_LEN]
+        violations += [f'description {len(d)} chars (máx {DESCRIPTION_MAX_LEN}): "{d}"' for d in descriptions if len(d) > DESCRIPTION_MAX_LEN]
+        if violations:
+            raise AssetLengthError('; '.join(violations))
+
+    def add_responsive_search_ad(self, organization, campaign_id: int, ad_group_name: str,
+                                  headlines: list[str], descriptions: list[str], *,
+                                  reason='', hypothesis='', performed_by='user') -> AdCampaign:
+        campaign = AdCampaign.objects.get(organization=organization, id=campaign_id)
+        self._validate_asset_lengths(headlines, descriptions)
+
+        provider = self._provider(campaign.provider)
+        account = campaign.advertising_account
+        ad_groups = provider.list_ad_groups(account, campaign.external_campaign_id)
+        matches = [ag for ag in ad_groups if ad_group_name.lower() in ag['name'].lower()]
+        if not matches:
+            campaign.error_message = f'Nenhum ad group encontrado com "{ad_group_name}" no nome.'
+            campaign.save(update_fields=['error_message'])
+            return campaign
+        if len(matches) > 1:
+            names = ', '.join(ag['name'] for ag in matches)
+            campaign.error_message = f'Mais de um ad group bate com "{ad_group_name}": {names}. Seja mais específico.'
+            campaign.save(update_fields=['error_message'])
+            return campaign
+
+        snapshot = MetricsService().build_snapshot(campaign)
+        try:
+            provider.create_responsive_search_ad(
+                account, matches[0]['resource_name'], campaign.landing_url,
+                headlines=headlines, descriptions=descriptions,
+            )
+            campaign.error_message = ''
+        except GoogleAdsProviderError as exc:
+            logger.exception('CampaignService.add_responsive_search_ad failed')
+            campaign.error_message = exc.user_message
+            campaign.save(update_fields=['error_message'])
+            return campaign
+
+        campaign.save(update_fields=['error_message'])
+        self._log_decision(
+            campaign, 'add_responsive_search_ad', {},
+            {'ad_group': matches[0]['name'], 'ad_group_id': self._resource_id(matches[0]['resource_name']),
+             'headlines': headlines, 'descriptions': descriptions},
+            reason=reason, hypothesis=hypothesis, performed_by=performed_by, metrics_snapshot=snapshot,
+        )
+        return campaign
+
+    def set_ad_status(self, organization, campaign_id: int, ad_resource_name: str, status: str, *,
+                       reason='', performed_by='user') -> AdCampaign:
+        campaign = AdCampaign.objects.get(organization=organization, id=campaign_id)
+        provider = self._provider(campaign.provider)
+        account = campaign.advertising_account
+        snapshot = MetricsService().build_snapshot(campaign)
+        try:
+            if status == 'ENABLED':
+                # O status do ad group prevalece sobre o do anúncio — um ad group criado PAUSED
+                # (ex.: via create_ad_group, que sempre nasce assim) nunca veicula mesmo com o
+                # anúncio ENABLED. Bug real observado: ativar só o anúncio e esquecer do grupo
+                # deixa tudo parado silenciosamente. Cascateia aqui, como resume_campaign já faz
+                # entre campanha/ad group/anúncio.
+                ad_group_id = ad_resource_name.split('/adGroupAds/')[-1].split('~')[0]
+                ad_group_resource_name = f'customers/{account.customer_id}/adGroups/{ad_group_id}'
+                provider.set_ad_group_status(account, ad_group_resource_name, 'ENABLED')
+            provider.set_ad_status(account, ad_resource_name, status)
+            campaign.error_message = ''
+        except GoogleAdsProviderError as exc:
+            logger.exception('CampaignService.set_ad_status failed')
+            campaign.error_message = exc.user_message
+            campaign.save(update_fields=['error_message'])
+            return campaign
+
+        campaign.save(update_fields=['error_message'])
+        self._log_decision(
+            campaign, 'set_ad_status', {'ad_resource_name': ad_resource_name},
+            {'ad_resource_name': ad_resource_name, 'status': status},
+            reason=reason, performed_by=performed_by, metrics_snapshot=snapshot,
         )
         return campaign
 

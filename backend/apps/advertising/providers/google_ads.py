@@ -368,6 +368,23 @@ class GoogleAdsProvider(AdvertisingProvider):
             raise GoogleAdsProviderError('Falha ao criar grupo de anúncios.', code='ad_group_creation_failed', raw=data)
         return resource_name
 
+    def set_ad_group_status(self, account, ad_group_resource_name: str, status: str) -> None:
+        """`status` é 'ENABLED' ou 'PAUSED'. Todo ad group criado por este sistema (create_campaign
+        ou create_ad_group) nasce PAUSED — sem chamar isto depois, o ad group nunca veicula mesmo
+        que o(s) anúncio(s) dentro dele estejam ENABLED (status do ad group prevalece sobre o do
+        anúncio). Bug real observado: criar um ad group novo e só ativar o anúncio, esquecendo do
+        grupo em si, deixa tudo dentro dele parado silenciosamente."""
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] set_ad_group_status ad_group={ad_group_resource_name} status={status}')
+            return
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/adGroups:mutate',
+            json={'operations': [{'update': {
+                'resourceName': ad_group_resource_name,
+                'status': status,
+            }, 'updateMask': 'status'}]},
+        )
+
     def set_ad_group_cpc_bid(self, account, ad_group_resource_name: str, cpc_bid: float) -> None:
         """Corrige o lance de um ad group já existente (ex.: criado antes desta correção, com o
         mínimo técnico de 1 centavo)."""
@@ -473,6 +490,61 @@ class GoogleAdsProvider(AdvertisingProvider):
             logger.info(f'[GOOGLE_ADS_DRY_RUN] add_keywords ad_group={ad_group_resource_name} keywords={[kw.text for kw in keywords]}')
             return
         self._add_keywords(account, ad_group_resource_name, keywords)
+
+    def create_responsive_search_ad(
+        self, account, ad_group_resource_name: str, landing_url: str, *,
+        headlines: list[str], descriptions: list[str],
+    ) -> None:
+        """Wrapper público de _create_responsive_search_ad — adiciona um RSA NOVO a um ad group
+        já existente (mantendo os RSAs atuais, se houver — pausar os antigos é uma chamada
+        separada via set_ad_status). Nasce PAUSED, como todo anúncio criado por este sistema."""
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] create_responsive_search_ad ad_group={ad_group_resource_name} headlines={len(headlines)}')
+            return
+        throwaway_spec = CampaignSpec(name='', daily_budget=0, landing_url=landing_url)
+        self._create_responsive_search_ad(
+            account, ad_group_resource_name, throwaway_spec, headlines=headlines, descriptions=descriptions,
+        )
+
+    def list_ads(self, account, external_campaign_id: str) -> list[dict]:
+        """RSAs atuais de todos os ad groups da campanha — necessário para saber o que pausar
+        antes de trocar a mensagem de um ad group."""
+        if not _is_live():
+            return []
+        data = self._request(
+            'POST', account, f'customers/{account.customer_id}/googleAds:search',
+            json={'query': (
+                'SELECT ad_group_ad.resource_name, ad_group_ad.status, ad_group.name, ad_group.id, '
+                'ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions '
+                f'FROM ad_group_ad WHERE campaign.id = {external_campaign_id}'
+            )},
+        )
+        results = []
+        for row in data.get('results') or []:
+            ad = row['adGroupAd']
+            rsa = ad.get('ad', {}).get('responsiveSearchAd', {})
+            results.append({
+                'resource_name': ad['resourceName'],
+                'status': ad['status'],
+                'ad_group_name': row['adGroup'].get('name', ''),
+                'ad_group_id': row['adGroup'].get('id', ''),
+                'headlines': [h.get('text') for h in rsa.get('headlines', [])],
+                'descriptions': [d.get('text') for d in rsa.get('descriptions', [])],
+            })
+        return results
+
+    def set_ad_status(self, account, ad_group_ad_resource_name: str, status: str) -> None:
+        """`status` é 'ENABLED' ou 'PAUSED' — pausar/reativar um anúncio (RSA) específico."""
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] set_ad_status ad={ad_group_ad_resource_name} status={status}')
+            return
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/adGroupAds:mutate',
+            json={'operations': [{'update': {
+                'resourceName': ad_group_ad_resource_name,
+                'status': status,
+            }, 'updateMask': 'status'}]},
+        )
 
     def list_keywords(self, account, external_campaign_id: str) -> list[dict]:
         """Keywords configuradas (não confundir com search terms — o texto real digitado)."""
