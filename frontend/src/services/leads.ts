@@ -74,12 +74,15 @@ export const leadsService = {
     }
   },
 
-  async sendFile(id: number, file: File, caption?: string): Promise<Message> {
+  async sendFile(id: number, file: File, caption?: string, onProgress?: (pct: number) => void): Promise<Message> {
     const form = new FormData();
     form.append('file', file);
     if (caption) form.append('caption', caption);
     const { data } = await api.post<Message>(`/leads/${id}/send_file/`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: onProgress
+        ? (e) => { if (e.total) onProgress(Math.round((e.loaded / e.total) * 100)); }
+        : undefined,
     });
     return data;
   },

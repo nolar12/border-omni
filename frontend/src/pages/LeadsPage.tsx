@@ -336,6 +336,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
   const [noteText, setNoteText] = useState('');
   const [showQR, setShowQR] = useState(false);
   const [sendingFile, setSendingFile] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
   const [fileCaption, setFileCaption] = useState('');
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -800,7 +801,8 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
     try {
       for (const file of pendingFiles) {
         const caption = pendingFiles.length === 1 ? fileCaption : '';
-        const msg = await leadsService.sendFile(lead.id, file, caption);
+        setUploadPct(0);
+        const msg = await leadsService.sendFile(lead.id, file, caption, setUploadPct);
         setMessages(prev => [...prev, msg]);
       }
       setPendingFiles([]);
@@ -810,6 +812,7 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
       setFileError(`❌ ${detail}`);
     } finally {
       setSendingFile(false);
+      setUploadPct(0);
     }
   }
 
@@ -1334,7 +1337,9 @@ function ChatPanel({ leadId, onBack, onDeleted }: { leadId: number; onBack: () =
                           title={pendingFiles.length > 1 ? `Enviar ${pendingFiles.length} arquivos` : 'Enviar arquivo'}
                         >
                           {sendingFile
-                            ? <span className="loading loading-spinner loading-sm" />
+                            ? (uploadPct > 0 && uploadPct < 100
+                                ? <span className="text-xs font-semibold">{uploadPct}%</span>
+                                : <span className="loading loading-spinner loading-sm" />)
                             : <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                           }
                         </button>
