@@ -6,7 +6,7 @@ from apps.channels.views_meta_oauth import MetaOAuthDiscoverView, MetaOAuthFinal
 from apps.advertising.views import (
     AdvertisingAccountViewSet, AdCampaignViewSet, AdvertisingSettingsView,
     GoogleAdsOAuthDiscoverView, GoogleAdsOAuthFinalizeView,
-    PublicAdClickTokenView, LeadCommercialEventView,
+    PublicAdClickTokenView, LeadCommercialEventView, OnyxDigestSummaryView,
 )
 
 from api.views import (
@@ -107,6 +107,7 @@ urlpatterns = [
     path('advertising/google-ads/oauth/discover/', GoogleAdsOAuthDiscoverView.as_view(), name='google_ads_oauth_discover'),
     path('advertising/google-ads/oauth/finalize/', GoogleAdsOAuthFinalizeView.as_view(), name='google_ads_oauth_finalize'),
     path('leads/<int:lead_id>/ad-commercial-event/', LeadCommercialEventView.as_view(), name='lead_ad_commercial_event'),
+    path('advertising/onyx-digest-summary/', OnyxDigestSummaryView.as_view(), name='onyx_digest_summary'),
 
     # Public Omni Ads endpoint (no authentication required) — called by the landing site
     path('public/ads/click-token/', PublicAdClickTokenView.as_view(), name='public_ad_click_token'),

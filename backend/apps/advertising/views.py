@@ -444,3 +444,63 @@ class LeadCommercialEventView(APIView):
         ConversionService().record_event(organization=org, lead=lead, event_type=event_type, value=value)
 
         return Response({'status': 'recorded', 'is_reserved': profile.is_reserved, 'is_purchased': profile.is_purchased})
+
+
+class OnyxDigestSummaryView(APIView):
+    """
+    GET /api/advertising/onyx-digest-summary/?date=YYYY-MM-DD
+
+    Endpoint de LEITURA consumido pelo digest diário do Onyx (projeto separado, 12 Habits/
+    habit-backend) — Onyx puxa daqui uma vez por dia; este projeto nunca chama o Onyx (o
+    endpoint de ingestão de lá exige JWT do dono + owner-gate, incompatível com um cron
+    externo). Protegido por chave compartilhada simples (ONYX_PULL_API_KEY), não por
+    autenticação de usuário — não há usuário autenticado do lado de quem chama.
+
+    Resposta pensada para virar bullets de "### Projeto: <nome>" no digest narrativo do
+    Onyx: métricas do dia + decisões reais do AdAgentDecision (mesma auditoria usada nas
+    respostas do chat de campanha), nunca números inventados.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        expected_key = getattr(settings, 'ONYX_PULL_API_KEY', '')
+        provided_key = request.headers.get('X-Onyx-Pull-Key', '')
+        if not expected_key or provided_key != expected_key:
+            return Response({'error': 'Não autorizado.'}, status=403)
+
+        date_param = request.query_params.get('date')
+        if date_param:
+            try:
+                target_date = timezone.datetime.strptime(date_param, '%Y-%m-%d').date()
+            except ValueError:
+                return Response({'error': 'date deve estar no formato YYYY-MM-DD.'}, status=400)
+        else:
+            target_date = timezone.localdate()
+
+        day_start = timezone.make_aware(timezone.datetime.combine(target_date, timezone.datetime.min.time()))
+        day_end = day_start + timezone.timedelta(days=1)
+
+        campaigns_payload = []
+        for campaign in AdCampaign.objects.filter(status__in=['active', 'paused']).select_related('organization'):
+            decisions = AdAgentDecisionSerializer(
+                campaign.agent_decisions.filter(created_at__gte=day_start, created_at__lt=day_end).order_by('created_at'),
+                many=True,
+            ).data
+            try:
+                snapshot = MetricsService().build_snapshot(campaign, days_back=1)
+            except Exception:
+                logger.exception('OnyxDigestSummaryView: build_snapshot falhou para campaign=%s', campaign.id)
+                snapshot = None
+
+            if not decisions and (not snapshot or not snapshot.get('impressions')):
+                continue  # dia sem nenhuma atividade nesta campanha — não polui o digest
+
+            campaigns_payload.append({
+                'id': campaign.id,
+                'name': campaign.name,
+                'status': campaign.status,
+                'metrics': snapshot,
+                'decisions': decisions,
+            })
+
+        return Response({'date': target_date.isoformat(), 'campaigns': campaigns_payload})

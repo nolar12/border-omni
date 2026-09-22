@@ -258,6 +258,12 @@ GOOGLE_ADS_ENABLED = os.getenv('GOOGLE_ADS_ENABLED', 'False') == 'True'
 # Enquanto True, o GoogleAdsProvider monta e loga o payload mas não chama a API real.
 GOOGLE_ADS_DRY_RUN = os.getenv('GOOGLE_ADS_DRY_RUN', 'True') == 'True'
 
+# Chave compartilhada para o endpoint de leitura consumido pelo digest diário do Onyx
+# (apps.advertising.views.OnyxDigestSummaryView) — Onyx puxa daqui, este projeto nunca
+# chama o Onyx (evita depender do owner-gate/JWT do lado de lá). Sem valor configurado,
+# o endpoint recusa toda requisição.
+ONYX_PULL_API_KEY = os.getenv('ONYX_PULL_API_KEY', '')
+
 # Celery + Redis
 REDIS_URL = os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0')
 CELERY_BROKER_URL = REDIS_URL
