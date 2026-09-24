@@ -141,8 +141,13 @@ class DogMedia(models.Model):
 
 
 class LitterMedia(models.Model):
+    TYPE_IMAGE = 'IMAGE'
+    TYPE_VIDEO = 'VIDEO'
+    TYPE_CHOICES = [(TYPE_IMAGE, 'Imagem'), (TYPE_VIDEO, 'Vídeo')]
+
     litter = models.ForeignKey(Litter, on_delete=models.CASCADE, related_name='media')
-    file = models.ImageField(upload_to=_litter_media_upload)
+    file = models.FileField(upload_to=_litter_media_upload)
+    media_type = models.CharField(max_length=10, choices=TYPE_CHOICES, default=TYPE_IMAGE)
     caption = models.CharField(max_length=200, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
@@ -151,7 +156,7 @@ class LitterMedia(models.Model):
         ordering = ['uploaded_at']
 
     def __str__(self):
-        return f"Foto de {self.litter.name}"
+        return f"{'Vídeo' if self.media_type == self.TYPE_VIDEO else 'Foto'} de {self.litter.name}"
 
 
 class DogHealthRecord(models.Model):

@@ -650,8 +650,8 @@ class LitterMediaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = LitterMedia
-        fields = ['id', 'file', 'file_url', 'caption', 'uploaded_at']
-        read_only_fields = ['id', 'file_url', 'uploaded_at']
+        fields = ['id', 'file', 'file_url', 'media_type', 'caption', 'uploaded_at']
+        read_only_fields = ['id', 'file_url', 'media_type', 'uploaded_at']
 
     def get_file_url(self, obj):
         request = self.context.get('request')
@@ -761,7 +761,7 @@ class LitterListSerializer(serializers.ModelSerializer):
         return obj.mother.name if obj.mother else ''
 
     def get_cover_photo(self, obj):
-        first = obj.media.first()
+        first = obj.media.filter(media_type=LitterMedia.TYPE_IMAGE).first()
         if first:
             request = self.context.get('request')
             if request:
@@ -893,7 +893,7 @@ class PublicLitterSerializer(serializers.ModelSerializer):
         return obj.mother.name if obj.mother else ''
 
     def get_cover_photo(self, obj):
-        first = obj.media.first()
+        first = obj.media.filter(media_type=LitterMedia.TYPE_IMAGE).first()
         if first:
             request = self.context.get('request')
             if request:

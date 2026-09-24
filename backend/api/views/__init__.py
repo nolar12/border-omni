@@ -3752,6 +3752,23 @@ class GenericNoteViewSet(viewsets.ModelViewSet):
 
 # ─── Kennel ───────────────────────────────────────────────────────────────────
 
+def _classify_media_upload(file):
+    """Retorna (is_video, erro). Vídeos até 200 MB; o resto precisa ser imagem válida."""
+    content_type = (getattr(file, 'content_type', '') or '').lower()
+    ext = os.path.splitext(file.name or '')[1].lower()
+    if content_type.startswith('video/') or ext in ('.mp4', '.mov', '.webm', '.m4v', '.3gp'):
+        if file.size > 200 * 1024 * 1024:
+            return True, 'Vídeo muito grande (máximo 200 MB).'
+        return True, None
+    from PIL import Image
+    try:
+        Image.open(file).verify()
+    except Exception:
+        return False, 'Envie uma imagem ou um vídeo válido.'
+    file.seek(0)
+    return False, None
+
+
 class DogViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = None
@@ -3795,20 +3812,10 @@ class DogViewSet(viewsets.ModelViewSet):
         if not file:
             return Response({'detail': 'Arquivo não enviado.'}, status=400)
 
-        content_type = (getattr(file, 'content_type', '') or '').lower()
-        ext = os.path.splitext(file.name or '')[1].lower()
-        if content_type.startswith('video/') or ext in ('.mp4', '.mov', '.webm', '.m4v', '.3gp'):
-            media_type = DogMedia.TYPE_VIDEO
-            if file.size > 200 * 1024 * 1024:
-                return Response({'detail': 'Vídeo muito grande (máximo 200 MB).'}, status=400)
-        else:
-            media_type = DogMedia.TYPE_IMAGE
-            from PIL import Image
-            try:
-                Image.open(file).verify()
-            except Exception:
-                return Response({'detail': 'Envie uma imagem ou um vídeo válido.'}, status=400)
-            file.seek(0)
+        is_video, error = _classify_media_upload(file)
+        if error:
+            return Response({'detail': error}, status=400)
+        media_type = DogMedia.TYPE_VIDEO if is_video else DogMedia.TYPE_IMAGE
 
         media = DogMedia.objects.create(
             dog=dog,
@@ -3860,9 +3867,13 @@ class LitterViewSet(viewsets.ModelViewSet):
         file = request.FILES.get('file')
         if not file:
             return Response({'detail': 'Arquivo não enviado.'}, status=400)
+        is_video, error = _classify_media_upload(file)
+        if error:
+            return Response({'detail': error}, status=400)
         media = LitterMedia.objects.create(
             litter=litter,
             file=file,
+            media_type=LitterMedia.TYPE_VIDEO if is_video else LitterMedia.TYPE_IMAGE,
             caption=request.data.get('caption', ''),
         )
         return Response(LitterMediaSerializer(media, context={'request': request}).data, status=201)

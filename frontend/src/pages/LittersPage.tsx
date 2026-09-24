@@ -138,7 +138,7 @@ function LitterCard({
 
 // ─── Puppies Modal ─────────────────────────────────────────────────────────────
 
-const isVideoMedia = (m: DogMedia) => m.media_type === 'VIDEO';
+const isVideoMedia = (m: { media_type?: 'IMAGE' | 'VIDEO' }) => m.media_type === 'VIDEO';
 
 function MediaThumb({ src, video }: { src: string; video: boolean }) {
   if (!video) return <img src={src} alt="" className="w-full h-full object-cover" />;
@@ -986,6 +986,8 @@ function LitterModal({ litter, allDogs, onClose, onSaved }: LitterModalProps) {
   const [mediaFiles, setMediaFiles] = useState<{ file: File; preview: string }[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxVideo, setLightboxVideo] = useState(false);
+  const openLightbox = (url: string, video = false) => { setLightboxVideo(video); setLightboxUrl(url); };
 
   type LitterCropTarget =
     | { kind: 'existing'; media: LitterMedia }
@@ -1308,10 +1310,10 @@ function LitterModal({ litter, allDogs, onClose, onSaved }: LitterModalProps) {
                 <div className="grid grid-cols-3 gap-3 mb-4">
                   {existingMedia.map(m => (
                     <div key={m.id} className="relative aspect-square rounded-lg overflow-hidden bg-slate-700 group">
-                      <img src={m.file_url ?? m.file} alt="" className="w-full h-full object-cover" />
+                      <MediaThumb src={m.file_url ?? m.file} video={isVideoMedia(m)} />
                       <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-opacity">
                         <button
-                          onClick={() => setLightboxUrl(m.file_url ?? m.file)}
+                          onClick={() => openLightbox(m.file_url ?? m.file, isVideoMedia(m))}
                           className="p-2 rounded-full bg-white/20 hover:bg-white/40 transition-colors"
                           title="Visualizar"
                         >
@@ -1319,7 +1321,7 @@ function LitterModal({ litter, allDogs, onClose, onSaved }: LitterModalProps) {
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
                           </svg>
                         </button>
-                        <button
+                        {!isVideoMedia(m) && <button
                           onClick={() => setLitterCropTarget({ kind: 'existing', media: m })}
                           className="p-2 rounded-full bg-white/20 hover:bg-blue-500/80 transition-colors"
                           title="Editar / Recortar"
@@ -1327,7 +1329,7 @@ function LitterModal({ litter, allDogs, onClose, onSaved }: LitterModalProps) {
                           <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                             <path d="M6 2v14a2 2 0 002 2h14"/><path d="M18 22V8a2 2 0 00-2-2H2"/>
                           </svg>
-                        </button>
+                        </button>}
                         <button
                           onClick={() => removeExistingMedia(m.id)}
                           className="p-2 rounded-full bg-white/20 hover:bg-red-500/80 transition-colors"
@@ -1342,10 +1344,10 @@ function LitterModal({ litter, allDogs, onClose, onSaved }: LitterModalProps) {
                   ))}
                   {mediaFiles.map((m, i) => (
                     <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-slate-700 group">
-                      <img src={m.preview} alt="" className="w-full h-full object-cover" />
+                      <MediaThumb src={m.preview} video={m.file.type.startsWith('video/')} />
                       <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-opacity">
                         <button
-                          onClick={() => setLightboxUrl(m.preview)}
+                          onClick={() => openLightbox(m.preview, m.file.type.startsWith('video/'))}
                           className="p-2 rounded-full bg-white/20 hover:bg-white/40 transition-colors"
                           title="Visualizar"
                         >
@@ -1353,7 +1355,7 @@ function LitterModal({ litter, allDogs, onClose, onSaved }: LitterModalProps) {
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
                           </svg>
                         </button>
-                        <button
+                        {!m.file.type.startsWith('video/') && <button
                           onClick={() => setLitterCropTarget({ kind: 'local', index: i, preview: m.preview, file: m.file })}
                           className="p-2 rounded-full bg-white/20 hover:bg-blue-500/80 transition-colors"
                           title="Editar / Recortar"
@@ -1361,7 +1363,7 @@ function LitterModal({ litter, allDogs, onClose, onSaved }: LitterModalProps) {
                           <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                             <path d="M6 2v14a2 2 0 002 2h14"/><path d="M18 22V8a2 2 0 00-2-2H2"/>
                           </svg>
-                        </button>
+                        </button>}
                         <button
                           onClick={() => setMediaFiles(prev => prev.filter((_, j) => j !== i))}
                           className="p-2 rounded-full bg-white/20 hover:bg-red-500/80 transition-colors"
@@ -1377,9 +1379,10 @@ function LitterModal({ litter, allDogs, onClose, onSaved }: LitterModalProps) {
                 </div>
               )}
               <UploadZone
+                allowVideo
                 onFiles={files => setMediaFiles(prev => [...prev, ...files.map(f => ({ file: f, preview: URL.createObjectURL(f) }))])}
               />
-              {uploadingMedia && <p className="text-blue-400 text-xs text-center mt-2">Enviando fotos…</p>}
+              {uploadingMedia && <p className="text-blue-400 text-xs text-center mt-2">Enviando arquivos… não feche esta tela (vídeos podem demorar)</p>}
             </>
           )}
         </div>
@@ -1412,12 +1415,23 @@ function LitterModal({ litter, allDogs, onClose, onSaved }: LitterModalProps) {
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
-          <img
-            src={lightboxUrl}
-            alt=""
-            className="max-w-[90vw] max-h-[90vh] rounded-xl object-contain shadow-2xl"
-            onClick={e => e.stopPropagation()}
-          />
+          {lightboxVideo ? (
+            <video
+              src={lightboxUrl}
+              controls
+              autoPlay
+              playsInline
+              className="max-w-[90vw] max-h-[90vh] rounded-xl shadow-2xl"
+              onClick={e => e.stopPropagation()}
+            />
+          ) : (
+            <img
+              src={lightboxUrl}
+              alt=""
+              className="max-w-[90vw] max-h-[90vh] rounded-xl object-contain shadow-2xl"
+              onClick={e => e.stopPropagation()}
+            />
+          )}
         </div>
       )}
 
