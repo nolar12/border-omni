@@ -138,6 +138,22 @@ function LitterCard({
 
 // ─── Puppies Modal ─────────────────────────────────────────────────────────────
 
+const isVideoMedia = (m: DogMedia) => m.media_type === 'VIDEO';
+
+function MediaThumb({ src, video }: { src: string; video: boolean }) {
+  if (!video) return <img src={src} alt="" className="w-full h-full object-cover" />;
+  return (
+    <>
+      <video src={src} preload="metadata" muted playsInline className="w-full h-full object-cover" />
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <span className="w-8 h-8 rounded-full bg-black/60 flex items-center justify-center">
+          <svg className="w-4 h-4 text-white ml-0.5" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+        </span>
+      </div>
+    </>
+  );
+}
+
 interface PuppyFormState extends Partial<DogPayload> {
   _mediaFiles?: { file: File; preview: string }[];
 }
@@ -158,6 +174,8 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [expandedPuppyId, setExpandedPuppyId] = useState<number | null>(null);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxVideo, setLightboxVideo] = useState(false);
+  const openLightbox = (url: string, video = false) => { setLightboxVideo(video); setLightboxUrl(url); };
 
   type PuppyCropTarget =
     | { kind: 'existing'; media: DogMedia }
@@ -318,11 +336,19 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
 
   const handleRemoveExistingMedia = async (mediaId: number) => {
     if (!editingPuppy) return;
-    await dogsService.removeMedia(editingPuppy.id, mediaId);
-    setEditingPuppy(prev => prev ? {
-      ...prev,
-      media: prev.media.filter(m => m.id !== mediaId),
-    } : null);
+    const target = editingPuppy.media.find(m => m.id === mediaId);
+    const label = target && isVideoMedia(target) ? 'este vídeo' : 'esta foto';
+    if (!window.confirm(`Excluir ${label} do filhote? Essa ação não pode ser desfeita.`)) return;
+    try {
+      await dogsService.removeMedia(editingPuppy.id, mediaId);
+    } catch (err) {
+      console.error(err);
+      window.alert('Não foi possível excluir. Tente novamente.');
+      return;
+    }
+    const dropMedia = (d: Dog): Dog => ({ ...d, media: d.media.filter(m => m.id !== mediaId) });
+    setEditingPuppy(prev => prev ? dropMedia(prev) : null);
+    setPuppies(prev => prev.map(p => p.id === editingPuppy.id ? dropMedia(p) : p));
   };
 
   const addHealthRecord = async () => {
@@ -482,16 +508,16 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
                       {isExpanded && (
                         <div className="px-3 pb-3 border-t border-slate-700/60 pt-2">
                           {photos.length === 0 ? (
-                            <p className="text-slate-500 text-[10px] text-center py-3">Sem fotos cadastradas.</p>
+                            <p className="text-slate-500 text-[10px] text-center py-3">Sem fotos ou vídeos cadastrados.</p>
                           ) : (
                             <div className="grid grid-cols-3 gap-1.5">
                               {photos.map(photo => (
                                 <button
                                   key={photo.id}
-                                  onClick={() => setLightboxUrl(photo.file_url ?? photo.file)}
-                                  className="aspect-square rounded-lg overflow-hidden bg-slate-700 hover:opacity-90 transition-opacity focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                  onClick={() => openLightbox(photo.file_url ?? photo.file, isVideoMedia(photo))}
+                                  className="relative aspect-square rounded-lg overflow-hidden bg-slate-700 hover:opacity-90 transition-opacity focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 >
-                                  <img src={photo.file_url ?? photo.file} alt="" className="w-full h-full object-cover" />
+                                  <MediaThumb src={photo.file_url ?? photo.file} video={isVideoMedia(photo)} />
                                 </button>
                               ))}
                             </div>
@@ -531,7 +557,7 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
                       formTab === t ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    {t === 'data' ? 'Dados' : t === 'health' ? 'Saúde' : 'Fotos'}
+                    {t === 'data' ? 'Dados' : t === 'health' ? 'Saúde' : 'Fotos e vídeos'}
                   </button>
                 ))}
               </div>
@@ -745,10 +771,10 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
                       <div className="grid grid-cols-3 gap-2 mb-3">
                         {existingMedia.map((m: DogMedia) => (
                           <div key={m.id} className="relative aspect-square rounded-lg overflow-hidden bg-slate-700 group">
-                            <img src={m.file_url ?? m.file} alt="" className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-opacity">
+                            <MediaThumb src={m.file_url ?? m.file} video={isVideoMedia(m)} />
+                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 flex items-center justify-center gap-2 transition-opacity">
                               <button
-                                onClick={() => setLightboxUrl(m.file_url ?? m.file)}
+                                onClick={() => openLightbox(m.file_url ?? m.file, isVideoMedia(m))}
                                 className="p-2 rounded-full bg-white/20 hover:bg-white/40 transition-colors"
                                 title="Visualizar"
                               >
@@ -756,7 +782,7 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
                                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
                                 </svg>
                               </button>
-                              <button
+                              {!isVideoMedia(m) && <button
                                 onClick={() => setPuppyCropTarget({ kind: 'existing', media: m })}
                                 className="p-2 rounded-full bg-white/20 hover:bg-blue-500/80 transition-colors"
                                 title="Editar / Recortar"
@@ -764,7 +790,7 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
                                 <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                                   <path d="M6 2v14a2 2 0 002 2h14"/><path d="M18 22V8a2 2 0 00-2-2H2"/>
                                 </svg>
-                              </button>
+                              </button>}
                               <button
                                 onClick={() => handleRemoveExistingMedia(m.id)}
                                 className="p-2 rounded-full bg-white/20 hover:bg-red-500/80 transition-colors"
@@ -779,10 +805,10 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
                         ))}
                         {(form._mediaFiles ?? []).map((m, i) => (
                           <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-slate-700 group">
-                            <img src={m.preview} alt="" className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-opacity">
+                            <MediaThumb src={m.preview} video={m.file.type.startsWith('video/')} />
+                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 flex items-center justify-center gap-2 transition-opacity">
                               <button
-                                onClick={() => setLightboxUrl(m.preview)}
+                                onClick={() => openLightbox(m.preview, m.file.type.startsWith('video/'))}
                                 className="p-2 rounded-full bg-white/20 hover:bg-white/40 transition-colors"
                                 title="Visualizar"
                               >
@@ -790,7 +816,7 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
                                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
                                 </svg>
                               </button>
-                              <button
+                              {!m.file.type.startsWith('video/') && <button
                                 onClick={() => setPuppyCropTarget({ kind: 'local', index: i, preview: m.preview, file: m.file })}
                                 className="p-2 rounded-full bg-white/20 hover:bg-blue-500/80 transition-colors"
                                 title="Editar / Recortar"
@@ -798,7 +824,7 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
                                 <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                                   <path d="M6 2v14a2 2 0 002 2h14"/><path d="M18 22V8a2 2 0 00-2-2H2"/>
                                 </svg>
-                              </button>
+                              </button>}
                               <button
                                 onClick={() => setForm(f => ({ ...f, _mediaFiles: (f._mediaFiles ?? []).filter((_, j) => j !== i) }))}
                                 className="p-2 rounded-full bg-white/20 hover:bg-red-500/80 transition-colors"
@@ -815,9 +841,10 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
                     )}
                     <UploadZone
                       compact
+                      allowVideo
                       onFiles={files => setForm(f => ({ ...f, _mediaFiles: [...(f._mediaFiles ?? []), ...files.map(f2 => ({ file: f2, preview: URL.createObjectURL(f2) }))] }))}
                     />
-                    {uploadingMedia && <p className="text-blue-400 text-xs text-center mt-2">Enviando fotos…</p>}
+                    {uploadingMedia && <p className="text-blue-400 text-xs text-center mt-2">Enviando arquivos… (vídeos podem demorar)</p>}
                   </>
                 )}
               </div>
@@ -871,12 +898,23 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
           </button>
-          <img
-            src={lightboxUrl}
-            alt=""
-            className="max-w-[90vw] max-h-[90vh] rounded-xl object-contain shadow-2xl"
-            onClick={e => e.stopPropagation()}
-          />
+          {lightboxVideo ? (
+            <video
+              src={lightboxUrl}
+              controls
+              autoPlay
+              playsInline
+              className="max-w-[90vw] max-h-[90vh] rounded-xl shadow-2xl"
+              onClick={e => e.stopPropagation()}
+            />
+          ) : (
+            <img
+              src={lightboxUrl}
+              alt=""
+              className="max-w-[90vw] max-h-[90vh] rounded-xl object-contain shadow-2xl"
+              onClick={e => e.stopPropagation()}
+            />
+          )}
         </div>
       )}
 

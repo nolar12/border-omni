@@ -463,6 +463,7 @@ export interface DogMedia {
   id: number;
   file: string;
   file_url: string | null;
+  media_type?: 'IMAGE' | 'VIDEO';
   caption: string;
   uploaded_at: string;
 }

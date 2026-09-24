@@ -5,9 +5,10 @@ interface UploadZoneProps {
   onFiles: (files: File[]) => void;
   className?: string;
   compact?: boolean;
+  allowVideo?: boolean;
 }
 
-const UploadZone: React.FC<UploadZoneProps> = ({ onFiles, className = '', compact = false }) => {
+const UploadZone: React.FC<UploadZoneProps> = ({ onFiles, className = '', compact = false, allowVideo = false }) => {
   const [dragOver, setDragOver] = useState(false);
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -49,7 +50,11 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onFiles, className = '', compac
 
   const handleIncomingFiles = (raw: FileList | null) => {
     if (!raw) return;
-    const images = Array.from(raw).filter(f => f.type.startsWith('image/'));
+    const all = Array.from(raw);
+    const images = all.filter(f => f.type.startsWith('image/'));
+    // Vídeos não passam pelo editor de recorte: vão direto para o consumidor.
+    const videos = allowVideo ? all.filter(f => f.type.startsWith('video/')) : [];
+    if (videos.length > 0) onFiles(videos);
     if (images.length === 0) return;
     const [first, ...rest] = images;
     openEditor(first, rest, []);
@@ -82,7 +87,7 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onFiles, className = '', compac
             ref={galleryRef}
             type="file"
             multiple
-            accept="image/*"
+            accept={allowVideo ? 'image/*,video/*' : 'image/*'}
             className="hidden"
             onChange={e => { handleIncomingFiles(e.target.files); e.target.value = ''; }}
           />
@@ -95,7 +100,7 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onFiles, className = '', compac
             <line x1="12" y1="4" x2="12" y2="16" />
           </svg>
           <span className={`font-medium ${compact ? 'text-xs' : 'text-sm'} ${dragOver ? 'text-blue-300' : 'text-slate-400'}`}>
-            {dragOver ? 'Solte as fotos aqui' : 'Arraste ou clique para selecionar'}
+            {dragOver ? (allowVideo ? 'Solte as fotos e vídeos aqui' : 'Solte as fotos aqui') : 'Arraste ou clique para selecionar'}
           </span>
           {!compact && <span className="text-xs text-slate-500">Múltiplos arquivos suportados</span>}
         </div>
@@ -111,7 +116,7 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onFiles, className = '', compac
             ref={cameraRef}
             type="file"
             multiple
-            accept="image/*"
+            accept={allowVideo ? 'image/*,video/*' : 'image/*'}
             capture="environment"
             className="hidden"
             onChange={e => { handleIncomingFiles(e.target.files); e.target.value = ''; }}

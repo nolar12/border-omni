@@ -635,8 +635,8 @@ class DogMediaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DogMedia
-        fields = ['id', 'file', 'file_url', 'caption', 'uploaded_at']
-        read_only_fields = ['id', 'file_url', 'uploaded_at']
+        fields = ['id', 'file', 'file_url', 'media_type', 'caption', 'uploaded_at']
+        read_only_fields = ['id', 'file_url', 'media_type', 'uploaded_at']
 
     def get_file_url(self, obj):
         request = self.context.get('request')

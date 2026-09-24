@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import logging
+import os
 from datetime import date
 import requests as http_requests
 from django.contrib.auth.models import User
@@ -3793,9 +3794,26 @@ class DogViewSet(viewsets.ModelViewSet):
         file = request.FILES.get('file')
         if not file:
             return Response({'detail': 'Arquivo não enviado.'}, status=400)
+
+        content_type = (getattr(file, 'content_type', '') or '').lower()
+        ext = os.path.splitext(file.name or '')[1].lower()
+        if content_type.startswith('video/') or ext in ('.mp4', '.mov', '.webm', '.m4v', '.3gp'):
+            media_type = DogMedia.TYPE_VIDEO
+            if file.size > 200 * 1024 * 1024:
+                return Response({'detail': 'Vídeo muito grande (máximo 200 MB).'}, status=400)
+        else:
+            media_type = DogMedia.TYPE_IMAGE
+            from PIL import Image
+            try:
+                Image.open(file).verify()
+            except Exception:
+                return Response({'detail': 'Envie uma imagem ou um vídeo válido.'}, status=400)
+            file.seek(0)
+
         media = DogMedia.objects.create(
             dog=dog,
             file=file,
+            media_type=media_type,
             caption=request.data.get('caption', ''),
         )
         return Response(DogMediaSerializer(media, context={'request': request}).data, status=201)
