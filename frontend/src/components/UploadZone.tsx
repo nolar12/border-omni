@@ -54,7 +54,11 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onFiles, className = '', compac
     const images = all.filter(f => f.type.startsWith('image/'));
     // Vídeos não passam pelo editor de recorte: vão direto para o consumidor.
     const videos = allowVideo ? all.filter(f => f.type.startsWith('video/')) : [];
-    if (videos.length > 0) onFiles(videos);
+    const MAX_VIDEO = 200 * 1024 * 1024;
+    const tooBig = videos.filter(v => v.size > MAX_VIDEO);
+    if (tooBig.length > 0) window.alert(`Vídeo grande demais (máx. 200 MB): ${tooBig.map(v => v.name).join(', ')}`);
+    const okVideos = videos.filter(v => v.size <= MAX_VIDEO);
+    if (okVideos.length > 0) onFiles(okVideos);
     if (images.length === 0) return;
     const [first, ...rest] = images;
     openEditor(first, rest, []);

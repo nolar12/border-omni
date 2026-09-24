@@ -172,6 +172,8 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Dog | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [expandedPuppyId, setExpandedPuppyId] = useState<number | null>(null);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [lightboxVideo, setLightboxVideo] = useState(false);
@@ -268,6 +270,7 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
   const handleSavePuppy = async () => {
     if (!form.name) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const payload: DogPayload = {
         name: form.name!,
@@ -295,11 +298,29 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
 
       if (form._mediaFiles && form._mediaFiles.length > 0) {
         setUploadingMedia(true);
-        for (const m of form._mediaFiles) {
-          await dogsService.addMedia(saved.id, m.file);
+        const pending = [...form._mediaFiles];
+        for (let i = 0; i < pending.length; i++) {
+          const m = pending[i];
+          setUploadPct(0);
+          try {
+            await dogsService.addMedia(saved.id, m.file, undefined, setUploadPct);
+          } catch (err) {
+            console.error(err);
+            // Mantém no formulário só o que ainda não foi enviado e mostra o motivo.
+            const e = err as { response?: { status?: number; data?: { detail?: string } }; message?: string };
+            const reason = e.response?.data?.detail
+              ?? (e.response?.status ? `erro ${e.response.status}` : (e.message ?? 'falha de rede'));
+            setForm(f => ({ ...f, _mediaFiles: pending.slice(i) }));
+            setEditingPuppy(await dogsService.get(saved.id));
+            setSaveError(`Os dados foram salvos, mas o envio de "${m.file.name}" falhou (${reason}). Tente novamente ou use um arquivo menor.`);
+            const refreshed = await dogsService.get(saved.id);
+            setPuppies(prev => prev.map(p => p.id === refreshed.id ? refreshed : p));
+            return;
+          }
         }
         saved = await dogsService.get(saved.id);
         setUploadingMedia(false);
+        setUploadPct(null);
       }
 
       setPuppies(prev => {
@@ -322,6 +343,7 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
     } finally {
       setSaving(false);
       setUploadingMedia(false);
+      setUploadPct(null);
     }
   };
 
@@ -844,7 +866,8 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
                       allowVideo
                       onFiles={files => setForm(f => ({ ...f, _mediaFiles: [...(f._mediaFiles ?? []), ...files.map(f2 => ({ file: f2, preview: URL.createObjectURL(f2) }))] }))}
                     />
-                    {uploadingMedia && <p className="text-blue-400 text-xs text-center mt-2">Enviando arquivos… (vídeos podem demorar)</p>}
+                    {uploadingMedia && <p className="text-blue-400 text-xs text-center mt-2">Enviando arquivos… não feche esta tela (vídeos podem demorar)</p>}
+                    {saveError && <p className="text-red-400 text-xs text-center mt-2">{saveError}</p>}
                   </>
                 )}
               </div>
@@ -859,7 +882,7 @@ function PuppiesModal({ litter, onClose, onChanged }: PuppiesModalProps) {
                   disabled={saving || !form.name}
                   className="flex-1 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold transition-colors"
                 >
-                  {saving ? 'Salvando…' : editingPuppy ? 'Salvar alterações' : 'Cadastrar filhote'}
+                  {saving ? (uploadPct !== null ? `Enviando ${uploadPct}%…` : 'Salvando…') : editingPuppy ? 'Salvar alterações' : 'Cadastrar filhote'}
                 </button>
               </div>
             </div>

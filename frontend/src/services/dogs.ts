@@ -47,12 +47,16 @@ export const dogsService = {
     await api.delete(`/dogs/${id}/`);
   },
 
-  async addMedia(id: number, file: File, caption?: string): Promise<DogMedia> {
+  async addMedia(id: number, file: File, caption?: string, onProgress?: (pct: number) => void): Promise<DogMedia> {
     const form = new FormData();
     form.append('file', file);
     if (caption) form.append('caption', caption);
     const { data } = await api.post<DogMedia>(`/dogs/${id}/add_media/`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0,
+      onUploadProgress: onProgress
+        ? (e) => { if (e.total) onProgress(Math.round((e.loaded / e.total) * 100)); }
+        : undefined,
     });
     return data;
   },
