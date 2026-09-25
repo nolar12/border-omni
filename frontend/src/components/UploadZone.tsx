@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import ImageCropEditor from './ImageCropEditor';
+import { isHevcVideo, transcodeToH264 } from '../utils/videoTranscode';
 
 interface UploadZoneProps {
   onFiles: (files: File[]) => void;
@@ -12,6 +13,9 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onFiles, className = '', compac
   const [dragOver, setDragOver] = useState(false);
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+
+  // Conversão de vídeo HEVC → H.264 em andamento
+  const [converting, setConverting] = useState<{ name: string; index: number; total: number; pct: number } | null>(null);
 
   // Crop-editor queue
   const [queue, setQueue] = useState<File[]>([]);
@@ -48,6 +52,27 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onFiles, className = '', compac
     advance(currentFile ? [...accumulated, currentFile] : accumulated);
   };
 
+  // Converte vídeos HEVC para H.264 (desktop não toca HEVC); se falhar, envia o original.
+  const prepareVideos = async (videos: File[]): Promise<File[]> => {
+    const out: File[] = [];
+    for (let i = 0; i < videos.length; i++) {
+      const v = videos[i];
+      let result = v;
+      try {
+        if (await isHevcVideo(v)) {
+          setConverting({ name: v.name, index: i + 1, total: videos.length, pct: 0 });
+          result = await transcodeToH264(v, pct => setConverting(c => (c ? { ...c, pct } : c)));
+        }
+      } catch (err) {
+        console.error('Falha ao converter vídeo', err);
+        window.alert(`Não foi possível converter "${v.name}" para H.264. Ele será enviado como está e pode não tocar em alguns computadores.`);
+      }
+      out.push(result);
+    }
+    setConverting(null);
+    return out;
+  };
+
   const handleIncomingFiles = (raw: FileList | null) => {
     if (!raw) return;
     const all = Array.from(raw);
@@ -58,7 +83,7 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onFiles, className = '', compac
     const tooBig = videos.filter(v => v.size > MAX_VIDEO);
     if (tooBig.length > 0) window.alert(`Vídeo grande demais (máx. 200 MB): ${tooBig.map(v => v.name).join(', ')}`);
     const okVideos = videos.filter(v => v.size <= MAX_VIDEO);
-    if (okVideos.length > 0) onFiles(okVideos);
+    if (okVideos.length > 0) void prepareVideos(okVideos).then(onFiles);
     if (images.length === 0) return;
     const [first, ...rest] = images;
     openEditor(first, rest, []);
@@ -132,6 +157,23 @@ const UploadZone: React.FC<UploadZoneProps> = ({ onFiles, className = '', compac
           Abrir câmera
         </button>
       </div>
+
+      {converting && (
+        <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-slate-800 border border-slate-600 p-5 text-center space-y-3">
+            <p className="text-white text-sm font-semibold">
+              Convertendo vídeo{converting.total > 1 ? ` (${converting.index}/${converting.total})` : ''}…
+            </p>
+            <p className="text-slate-400 text-xs truncate">{converting.name}</p>
+            <div className="h-2 rounded-full bg-slate-700 overflow-hidden">
+              <div className="h-full bg-blue-500 transition-all" style={{ width: `${converting.pct}%` }} />
+            </div>
+            <p className="text-slate-400 text-xs">
+              {converting.pct}% — pode levar alguns minutos. Não feche esta tela: o vídeo está em HEVC e precisa virar H.264 para tocar em qualquer computador.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Crop editor — renders above all other modals */}
       {currentSrc && (
