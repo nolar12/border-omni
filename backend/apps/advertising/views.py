@@ -492,7 +492,16 @@ class OnyxDigestSummaryView(APIView):
                 logger.exception('OnyxDigestSummaryView: build_snapshot falhou para campaign=%s', campaign.id)
                 snapshot = None
 
-            if not decisions and (not snapshot or not snapshot.get('impressions')):
+            # Métricas vêm do AdMetric local (sync via Google Ads). Se o sync parou (ex.: token
+            # OAuth expirado), zeros no snapshot não significam "dia sem atividade" — sinaliza
+            # defasagem em vez de deixar o digest mostrar R$0 ou omitir a campanha.
+            last_metric = campaign.metrics.order_by('-date').values_list('date', flat=True).first()
+            metrics_stale = (
+                campaign.status == 'active' and bool(campaign.external_campaign_id)
+                and (last_metric is None or (target_date - last_metric).days > 2)
+            )
+
+            if not metrics_stale and not decisions and (not snapshot or not snapshot.get('impressions')):
                 continue  # dia sem nenhuma atividade nesta campanha — não polui o digest
 
             campaigns_payload.append({
@@ -500,6 +509,8 @@ class OnyxDigestSummaryView(APIView):
                 'name': campaign.name,
                 'status': campaign.status,
                 'metrics': snapshot,
+                'metrics_stale': metrics_stale,
+                'last_metric_date': last_metric.isoformat() if last_metric else None,
                 'decisions': decisions,
             })
 

@@ -278,16 +278,19 @@ class CampaignService:
         return campaign
 
     def add_negative_keywords(self, organization, campaign_id: int, keywords: list[str], *,
-                               reason='', hypothesis='', performed_by='user') -> AdCampaign:
+                               match_type='PHRASE', reason='', hypothesis='', performed_by='user') -> AdCampaign:
         campaign = AdCampaign.objects.get(organization=organization, id=campaign_id)
         campaign_resource_name = f'customers/{campaign.advertising_account.customer_id}/campaigns/{campaign.external_campaign_id}'
         snapshot = MetricsService().build_snapshot(campaign)
         try:
-            self._provider(campaign.provider).add_negative_keywords(campaign.advertising_account, campaign_resource_name, keywords)
+            self._provider(campaign.provider).add_negative_keywords(
+                campaign.advertising_account, campaign_resource_name, keywords, match_type=match_type,
+            )
             campaign.error_message = ''
             campaign.save(update_fields=['error_message'])
             self._log_decision(
-                campaign, 'add_negative_keywords', {}, {'negative_keywords_added': keywords},
+                campaign, 'add_negative_keywords', {},
+                {'negative_keywords_added': keywords, 'match_type': match_type},
                 reason=reason, hypothesis=hypothesis, performed_by=performed_by, metrics_snapshot=snapshot,
             )
         except GoogleAdsProviderError as exc:

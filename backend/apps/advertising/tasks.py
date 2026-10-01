@@ -15,15 +15,46 @@ def sync_all_campaign_metrics(self):
     synced = 0
     errors = 0
     for campaign in AdCampaign.objects.filter(status='active'):
+        account = campaign.advertising_account
         try:
             service.sync_campaign_metrics(campaign)
             synced += 1
+            if account.status == 'error':
+                account.status = 'connected'
+                account.metadata = {**account.metadata, 'last_sync_error': ''}
+                account.save(update_fields=['status', 'metadata'])
         except Exception as exc:
             errors += 1
             logger.warning(f'sync_all_campaign_metrics error (campaign={campaign.id}): {exc}')
+            account.status = 'error'
+            account.metadata = {**account.metadata, 'last_sync_error': str(exc)[:200]}
+            account.save(update_fields=['status', 'metadata'])
 
     logger.info(f'sync_all_campaign_metrics done: {synced} synced, {errors} errors')
     return {'synced': synced, 'errors': errors}
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def daily_search_term_review(self):
+    """Diário: nega (EXACT) termos casados por Broad sem citar a raça. Pula contas com token
+    quebrado — sem acesso ao Google não há o que revisar."""
+    from apps.advertising.models import AdCampaign
+    from apps.advertising.services.search_term_review_service import SearchTermReviewService
+
+    reviewed = 0
+    negated = 0
+    for campaign in AdCampaign.objects.filter(status='active').exclude(external_campaign_id='').select_related('advertising_account'):
+        if campaign.advertising_account.status == 'error':
+            logger.warning(f'daily_search_term_review: conta com erro, pulando campaign={campaign.id}')
+            continue
+        try:
+            negated += len(SearchTermReviewService().run(campaign))
+            reviewed += 1
+        except Exception as exc:
+            logger.warning(f'daily_search_term_review error (campaign={campaign.id}): {exc}')
+
+    logger.info(f'daily_search_term_review done: {reviewed} campanhas, {negated} negativas')
+    return {'reviewed': reviewed, 'negated': negated}
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
