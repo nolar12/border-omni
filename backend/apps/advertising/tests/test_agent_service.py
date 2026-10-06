@@ -293,7 +293,9 @@ class AdvertisingAgentServiceTests(TestCase):
 
         from apps.leads.models import Lead
         from apps.advertising.models import AdMetric, AdLeadAttribution
-        AdMetric.objects.create(campaign=self.campaign, date='2026-09-01', impressions=2000, clicks=120, cost=250, conversions=5)
+        from datetime import date, timedelta
+        # Data relativa: uma data fixa sai da janela de 30 dias do snapshot e o teste passa a falhar sozinho.
+        AdMetric.objects.create(campaign=self.campaign, date=date.today() - timedelta(days=5), impressions=2000, clicks=120, cost=250, conversions=5)
         lead = Lead.objects.create(organization=self.org, phone='554891114444', status='QUALIFYING', lead_classification='HOT_LEAD')
         AdLeadAttribution.objects.create(lead=lead, campaign=self.campaign, gclid='g1')
 

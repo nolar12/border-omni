@@ -614,6 +614,37 @@ class CampaignService:
         )
         return campaign
 
+    def update_ads_final_url(self, organization, campaign_id: int, final_url: str, *,
+                              reason='', hypothesis='', performed_by='user') -> AdCampaign:
+        """Aponta TODOS os anúncios ativos da campanha para `final_url`. Registra a URL anterior de cada
+        anúncio na decisão (before) para dar para reverter. Para no primeiro erro da API."""
+        campaign = AdCampaign.objects.get(organization=organization, id=campaign_id)
+        provider = self._provider(campaign.provider)
+        account = campaign.advertising_account
+        snapshot = MetricsService().build_snapshot(campaign)
+        before, changed = {}, []
+        try:
+            for ad in provider.list_ads(account, campaign.external_campaign_id):
+                if ad['status'] != 'ENABLED' or not ad.get('ad_resource_name'):
+                    continue
+                before[ad['ad_resource_name']] = ad.get('final_urls', [])
+                provider.update_ad_final_urls(account, ad['ad_resource_name'], [final_url])
+                changed.append(ad['ad_resource_name'])
+            campaign.error_message = ''
+        except GoogleAdsProviderError as exc:
+            logger.exception('CampaignService.update_ads_final_url failed')
+            campaign.error_message = exc.user_message
+            campaign.save(update_fields=['error_message'])
+            if not changed:
+                return campaign
+        campaign.save(update_fields=['error_message'])
+        self._log_decision(
+            campaign, 'update_ads_final_url', {'final_urls_by_ad': {k: before[k] for k in changed}},
+            {'final_url': final_url, 'ads_changed': changed},
+            reason=reason, hypothesis=hypothesis, performed_by=performed_by, metrics_snapshot=snapshot,
+        )
+        return campaign
+
     def get_campaign_diagnostics(self, campaign: AdCampaign) -> dict:
         return self._provider(campaign.provider).get_campaign_diagnostics(
             campaign.advertising_account, campaign.external_campaign_id,

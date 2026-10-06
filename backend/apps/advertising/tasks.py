@@ -43,6 +43,7 @@ def daily_search_term_review(self):
 
     reviewed = 0
     negated = 0
+    errors = 0
     for campaign in AdCampaign.objects.filter(status='active').exclude(external_campaign_id='').select_related('advertising_account'):
         if campaign.advertising_account.status == 'error':
             logger.warning(f'daily_search_term_review: conta com erro, pulando campaign={campaign.id}')
@@ -51,10 +52,11 @@ def daily_search_term_review(self):
             negated += len(SearchTermReviewService().run(campaign))
             reviewed += 1
         except Exception as exc:
-            logger.warning(f'daily_search_term_review error (campaign={campaign.id}): {exc}')
+            errors += 1
+            logger.error(f'daily_search_term_review FALHOU (campaign={campaign.id}): {exc}')
 
-    logger.info(f'daily_search_term_review done: {reviewed} campanhas, {negated} negativas')
-    return {'reviewed': reviewed, 'negated': negated}
+    logger.info(f'daily_search_term_review done: {reviewed} campanhas, {negated} negativas, {errors} erros')
+    return {'reviewed': reviewed, 'negated': negated, 'errors': errors}
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)

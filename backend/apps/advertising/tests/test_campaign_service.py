@@ -390,6 +390,20 @@ class WriteToolsTests(TestCase):
         CampaignService().set_ad_status(self.org, self.campaign.id, 'customers/1112223335/adGroupAds/555~1', 'PAUSED')
         mock_set_group_status.assert_not_called()
 
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.update_ad_final_urls')
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.list_ads')
+    def test_update_ads_final_url_changes_only_enabled_ads_and_records_previous_url(self, mock_list_ads, mock_update):
+        mock_list_ads.return_value = [
+            {'status': 'ENABLED', 'ad_resource_name': 'customers/1/ads/1', 'final_urls': ['https://site/']},
+            {'status': 'PAUSED', 'ad_resource_name': 'customers/1/ads/2', 'final_urls': ['https://site/']},
+        ]
+        campaign = CampaignService().update_ads_final_url(self.org, self.campaign.id, 'https://site/ninhada/2')
+        self.assertEqual(campaign.error_message, '')
+        mock_update.assert_called_once_with(self.account, 'customers/1/ads/1', ['https://site/ninhada/2'])
+        decision = AdAgentDecision.objects.get(campaign=self.campaign, action='update_ads_final_url')
+        self.assertEqual(decision.before, {'final_urls_by_ad': {'customers/1/ads/1': ['https://site/']}})
+        self.assertEqual(decision.after['ads_changed'], ['customers/1/ads/1'])
+
     @patch('apps.advertising.providers.google_ads.GoogleAdsProvider.update_ad_content')
     def test_update_ad_content_by_resource_edits_a_specific_ad_and_logs_decision(self, mock_update):
         campaign = CampaignService().update_ad_content_by_resource(

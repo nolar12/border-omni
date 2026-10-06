@@ -260,7 +260,7 @@ class KeywordAndAdGroupWriteToolsTests(TestCase):
         result = GoogleAdsProvider().list_ads(self.account, 'ext-1')
         self.assertEqual(result, [{
             'resource_name': 'customers/7778889990/adGroupAds/1~1', 'ad_resource_name': 'customers/7778889990/ads/1',
-            'status': 'ENABLED', 'ad_group_name': 'Comprar', 'ad_group_id': '1',
+            'final_urls': [], 'status': 'ENABLED', 'ad_group_name': 'Comprar', 'ad_group_id': '1',
             'headlines': ['H1'], 'descriptions': ['D1'],
         }])
 
@@ -358,6 +358,16 @@ class SearchTermsAndNegativesTests(TestCase):
         self.assertEqual(result[0]['search_term'], 'border collie grátis')
         self.assertEqual(result[0]['cost'], 12.5)
         self.assertEqual(result[0]['conversions'], 0.0)
+
+    @override_settings(GOOGLE_ADS_ENABLED=True, GOOGLE_ADS_DRY_RUN=False)
+    @patch('apps.advertising.providers.google_ads.GoogleAdsProvider._request')
+    def test_get_search_terms_uses_explicit_dates_not_invalid_literals(self, mock_request):
+        # LAST_3_DAYS não existe no GAQL e derrubou a revisão diária de termos.
+        mock_request.return_value = {'results': []}
+        GoogleAdsProvider().get_search_terms(self.account, 'ext-1', days_back=3)
+        query = mock_request.call_args.kwargs['json']['query']
+        self.assertNotIn('LAST_3_DAYS', query)
+        self.assertIn('BETWEEN', query)
 
     def test_add_negative_keywords_noop_in_dry_run(self):
         # Não deve levantar exceção nem chamar a API real.

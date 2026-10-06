@@ -14,7 +14,7 @@ import hashlib
 import logging
 import re
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 import requests
 from django.conf import settings
@@ -515,7 +515,7 @@ class GoogleAdsProvider(AdvertisingProvider):
             'POST', account, f'customers/{account.customer_id}/googleAds:search',
             json={'query': (
                 'SELECT ad_group_ad.resource_name, ad_group_ad.status, ad_group.name, ad_group.id, '
-                'ad_group_ad.ad.resource_name, '
+                'ad_group_ad.ad.resource_name, ad_group_ad.ad.final_urls, '
                 'ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions '
                 f'FROM ad_group_ad WHERE campaign.id = {external_campaign_id}'
             )},
@@ -531,6 +531,7 @@ class GoogleAdsProvider(AdvertisingProvider):
                 # (erro real: RESOURCE_NAME_MALFORMED ao usar um no lugar do outro).
                 'resource_name': ad['resourceName'],
                 'ad_resource_name': ad.get('ad', {}).get('resourceName', ''),
+                'final_urls': ad.get('ad', {}).get('finalUrls', []),
                 'status': ad['status'],
                 'ad_group_name': row['adGroup'].get('name', ''),
                 'ad_group_id': row['adGroup'].get('id', ''),
@@ -634,6 +635,10 @@ class GoogleAdsProvider(AdvertisingProvider):
         """Termos de busca reais que dispararam o anúncio — base para negativação e novas keywords."""
         if not _is_live():
             return []
+        # GAQL só aceita literais fixos (LAST_7_DAYS, LAST_14_DAYS, LAST_30_DAYS…) — LAST_3_DAYS
+        # dá erro e derrubou a revisão diária por 5 dias. Datas explícitas servem para qualquer janela.
+        end = date.today()
+        start = end - timedelta(days=days_back)
         data = self._request(
             'POST', account, f'customers/{account.customer_id}/googleAds:search',
             json={'query': (
@@ -641,7 +646,7 @@ class GoogleAdsProvider(AdvertisingProvider):
                 'segments.keyword.info.match_type, metrics.clicks, metrics.cost_micros, '
                 'metrics.conversions, metrics.impressions '
                 f'FROM search_term_view WHERE campaign.id = {external_campaign_id} '
-                f'AND segments.date DURING LAST_{days_back}_DAYS '
+                f"AND segments.date BETWEEN '{start.isoformat()}' AND '{end.isoformat()}' "
                 'ORDER BY metrics.cost_micros DESC LIMIT 100'
             )},
         )
@@ -807,6 +812,19 @@ class GoogleAdsProvider(AdvertisingProvider):
                     },
                 },
                 'updateMask': 'responsive_search_ad.headlines,responsive_search_ad.descriptions',
+            }]},
+        )
+
+    def update_ad_final_urls(self, account, ad_resource_name: str, final_urls: list[str]) -> None:
+        """Troca a URL final de um anúncio existente (muda o destino do clique; o Google reanalisa o anúncio)."""
+        if not _is_live():
+            logger.info(f'[GOOGLE_ADS_DRY_RUN] update_ad_final_urls ad={ad_resource_name} final_urls={final_urls}')
+            return
+        self._request(
+            'POST', account, f'customers/{account.customer_id}/ads:mutate',
+            json={'operations': [{
+                'update': {'resourceName': ad_resource_name, 'finalUrls': final_urls},
+                'updateMask': 'final_urls',
             }]},
         )
 
